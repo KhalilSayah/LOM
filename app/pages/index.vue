@@ -28,6 +28,14 @@ async function submit() {
       const { data, error: err } = await supabase.auth.signUp({
         email: email.value.trim(),
         password: password.value,
+        options: {
+          // Without this the confirmation link goes wherever Supabase's Site URL points,
+          // which is localhost until someone remembers to change it. Sending the current
+          // origin means a link opened from the deployed site comes back to the deployed
+          // site, and one opened from a dev machine comes back there. Supabase still has
+          // to allow the URL: Authentication > URL Configuration > Redirect URLs.
+          emailRedirectTo: `${window.location.origin}/confirm`,
+        },
       });
       if (err) throw err;
       // With email confirmation on, there is no session yet and the manager has mail.
@@ -93,7 +101,7 @@ useHead({ title: 'LOM — League of Managers' });
 
       <p v-if="error" class="notice notice--bad">{{ error }}</p>
       <p v-else-if="check" class="notice">
-        Check your inbox to confirm the address, then come back and sign in.
+        Check your inbox. The link signs you in and brings you straight back here.
       </p>
 
       <button class="btn btn--block" type="submit" :disabled="busy">
