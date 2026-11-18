@@ -9,7 +9,7 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "catalogue:build": "node scripts/build-catalogue.mjs",
-    "catalogue:push": "node --env-file-if-exists=.env scripts/push-catalogue.mjs",
+    "catalogue:push": "node --env-file-if-exists=.env.local --env-file-if-exists=.env scripts/push-catalogue.mjs",
     "ingest": "node scripts/ingest-leaguepedia.mjs",
     "cards:demo": "node packages/card-engine/build-demo.mjs",
     "cards:pack": "node packages/card-engine/build-demo.mjs --pack",
