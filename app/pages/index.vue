@@ -30,7 +30,6 @@ const email = ref('');
 const password = ref('');
 const busy = ref(false);
 const error = ref('');
-const check = ref(false);
 
 watchEffect(() => {
   if (user.value) navigateTo('/pack');
@@ -38,7 +37,6 @@ watchEffect(() => {
 
 async function submit() {
   error.value = '';
-  check.value = false;
 
   if (!email.value.trim() || password.value.length < 8) {
     error.value = 'Enter your email and a password of at least 8 characters.';
@@ -48,28 +46,19 @@ async function submit() {
   busy.value = true;
   try {
     if (mode.value === 'up') {
-      const { data, error: err } = await supabase.auth.signUp({
+      // Created server-side with the admin API so the account comes out already confirmed:
+      // no mail, no rate limit, and no dependency on a dashboard toggle this app cannot
+      // reach. Then sign in normally with the password we already have.
+      await $fetch('/api/auth/signup', {
+        method: 'POST',
+        body: { email: email.value.trim(), password: password.value },
+      });
+
+      const { error: signInError } = await supabase.auth.signInWithPassword({
         email: email.value.trim(),
         password: password.value,
-        options: {
-          // Without this the confirmation link goes wherever Supabase's Site URL points,
-          // which is localhost until someone remembers to change it. Sending the current
-          // origin means a link opened from the deployed site comes back to the deployed
-          // site, and one opened from a dev machine comes back there. Supabase still has
-          // to allow the URL: Authentication > URL Configuration > Redirect URLs.
-          emailRedirectTo: `${window.location.origin}/confirm`,
-        },
       });
-      if (err) throw err;
-
-      // Signing up is meant to sign you in. LOM is a friends-only league, the built-in
-      // SMTP is capped at a handful of mails an hour, and a confirmation step mostly adds
-      // a place for this to break — so Supabase is set up with "Confirm email" off and a
-      // session comes back here.
-      //
-      // If it does not, that setting is still on. Say so plainly rather than leaving
-      // someone staring at a form that looked like it worked.
-      if (!data.session) { check.value = true; return; }
+      if (signInError) throw signInError;
     } else {
       const { error: err } = await supabase.auth.signInWithPassword({
         email: email.value.trim(),
@@ -79,7 +68,8 @@ async function submit() {
     }
     await navigateTo('/pack');
   } catch (e: any) {
-    const raw = e?.message || 'That did not work. Try again.';
+    const raw = e?.data?.statusMessage || e?.statusMessage || e?.message
+      || 'That did not work. Try again.';
     error.value = readable(raw);
     // Offering "create account" to someone who already has one is a dead end.
     if (/already/i.test(raw)) mode.value = 'in';
@@ -133,12 +123,7 @@ useHead({ title: 'LOM — League of Managers' });
       </div>
 
       <p v-if="error" class="notice notice--bad">{{ error }}</p>
-      <p v-else-if="check" class="notice">
-        Account created, but this project still has email confirmation switched on, so
-        it is waiting on a link. Check your inbox — or turn it off in Supabase under
-        <strong>Authentication &rsaquo; Providers &rsaquo; Email &rsaquo; Confirm email</strong>
-        and sign in.
-      </p>
+
 
       <button class="btn btn--block" type="submit" :disabled="busy">
         {{ busy ? 'One moment' : mode === 'up' ? 'Create account' : 'Sign in' }}
