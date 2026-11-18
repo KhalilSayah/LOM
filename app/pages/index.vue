@@ -2,6 +2,29 @@
 const supabase = useSupabaseClient();
 const user = useSupabaseUser();
 
+/**
+ * Supabase's auth errors are written for whoever wired the project up, not for whoever is
+ * trying to sign in. The rate-limit one is the sharpest: it means the project's built-in
+ * SMTP is capped for the hour, which has nothing to do with the person reading it and is
+ * fixed by turning email confirmation off.
+ */
+const MESSAGES: Array<[RegExp, string]> = [
+  [/email rate limit exceeded|over_email_send_rate_limit/i,
+    'Too many confirmation emails from this project in the last hour. Turn off '
+    + 'email confirmation in Supabase (Authentication > Providers > Email), or wait an hour.'],
+  [/user already registered|already been registered/i,
+    'That email already has an account. Sign in instead.'],
+  [/invalid login credentials/i, 'Wrong email or password.'],
+  [/email not confirmed/i, 'This account still needs confirming. Check your inbox.'],
+  [/password should be at least/i, 'Use a longer password — at least 8 characters.'],
+  [/failed to fetch|network/i, 'Could not reach the server. Check your connection.'],
+];
+
+function readable(message: string): string {
+  for (const [pattern, text] of MESSAGES) if (pattern.test(message)) return text;
+  return message;
+}
+
 const mode = ref<'in' | 'up'>('in');
 const email = ref('');
 const password = ref('');
@@ -49,7 +72,10 @@ async function submit() {
     }
     await navigateTo('/pack');
   } catch (e: any) {
-    error.value = e?.message || 'That did not work. Try again.';
+    const raw = e?.message || 'That did not work. Try again.';
+    error.value = readable(raw);
+    // Offering "create account" to someone who already has one is a dead end.
+    if (/already/i.test(raw)) mode.value = 'in';
   } finally {
     busy.value = false;
   }
