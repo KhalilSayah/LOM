@@ -12,7 +12,7 @@ const BANDS = ['ICON', 'LEGENDARY', 'EPIC', 'RARE', 'COMMON'];
 async function load() {
   if (!managerId.value) return;
   const [{ data: p }, { data: rows }] = await Promise.all([
-    supabase.from('profiles').select('handle, display_name, created_at').eq('id', managerId.value).maybeSingle(),
+    supabase.from('profiles').select('handle, display_name, share_code, created_at').eq('id', managerId.value).maybeSingle(),
     supabase.from('collection_cards').select('card_definitions(rarity)').eq('profile_id', managerId.value),
   ]);
   profile.value = p;
@@ -46,6 +46,10 @@ useHead({ title: 'Profile — LOM' });
       <p class="profile__handle">{{ profile?.handle || '—' }}</p>
       <p class="muted profile__email">{{ user?.email }}</p>
     </section>
+
+    <div class="profile__block">
+      <ShareCode :code="profile?.share_code ?? null" :handle="profile?.handle ?? null" />
+    </div>
 
     <section class="panel profile__block">
       <p class="eyebrow">Collection</p>
