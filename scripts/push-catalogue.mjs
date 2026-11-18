@@ -33,15 +33,17 @@ const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_KEY;
 
 if (!url || !key) {
-  console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.
-');
-  console.error('Put them in .env (gitignored), either by hand from');
-  console.error('Supabase > Project settings > API, or with:
-');
-  console.error('  npx vercel link && npx vercel env pull .env.local
-');
-  console.error('The service_role key bypasses row-level security. It belongs in that file');
-  console.error('and in your host's environment, nowhere else.');
+  console.error([
+    'Missing SUPABASE_URL or SUPABASE_SERVICE_KEY.',
+    '',
+    'Put them in .env (gitignored), either by hand from',
+    'Supabase > Project settings > API, or with:',
+    '',
+    '  npx vercel link && npx vercel env pull .env.local',
+    '',
+    'The secret / service_role key bypasses row-level security. It belongs in that',
+    "file and in your host's environment, nowhere else.",
+  ].join('\n'));
   process.exit(1);
 }
 
