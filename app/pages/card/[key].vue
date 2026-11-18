@@ -4,6 +4,7 @@ import { toCard } from '~~/shared/cardShape';
 const route = useRoute();
 const supabase = useSupabaseClient();
 const user = useSupabaseUser();
+const managerId = useManagerId();
 
 const held = ref<any>(null);
 const loading = ref(true);
@@ -28,12 +29,12 @@ const ACCOLADES: Record<string, string> = {
   DOMESTIC_TITLE: 'Domestic title',
 };
 
-onMounted(async () => {
-  if (!user.value) return;
+async function load() {
+  if (!managerId.value) return;
   const { data } = await supabase
     .from('collection_cards')
     .select(SELECT)
-    .eq('profile_id', user.value.id)
+    .eq('profile_id', managerId.value)
     .eq('card.card_key', route.params.key as string)
     .limit(1);
 
@@ -41,7 +42,9 @@ onMounted(async () => {
   if (!row) missing.value = true;
   else held.value = { ...row, card: toCard(row.card) };
   loading.value = false;
-});
+}
+
+watch(managerId, load, { immediate: true });
 
 useHead(() => ({
   title: held.value

@@ -28,6 +28,7 @@ export const ART_VARIANTS = {
   card: { w: 420, h: 588, fit: 'cover', note: 'full card face at 2x of the 210pt print trim' },
   thumb: { w: 168, h: 235, fit: 'cover', note: 'collection grid at 2x of 84pt' },
   square: { w: 64, h: 64, fit: 'cover', note: 'champion pool tile at 2x of 32pt' },
+  splash: { w: 1215, h: 717, fit: 'cover', note: 'the full landscape splash, detail views only' },
 };
 
 /** "Lee Sin" -> "LeeSin". Real cards carry champion_key from the pipeline; this is a fallback. */
@@ -36,8 +37,19 @@ export function championKey(name) {
 }
 
 const ddragon = {
-  // Data Dragon ships one size; the variant is ignored here and honoured in production.
-  splash: (key) => `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${key}_0.jpg`,
+  /**
+   * Data Dragon has two sizes of champion art and the smaller one is the better fit:
+   *
+   *   splash   1215x717 landscape, ~145 KB — has to be cropped hard for a 63:88 card
+   *   loading   308x560 portrait,   ~37 KB — already the shape of the card
+   *
+   * A pack reveal that waits on 145 KB is a pack reveal that shows an empty card, so the
+   * card face takes the loading art and only an explicit 'splash' request gets the big one.
+   * Production serves pre-sized WebP derivatives instead; see docs/11.
+   */
+  splash: (key, variant) => (variant === 'splash'
+    ? `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${key}_0.jpg`
+    : `https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${key}_0.jpg`),
   square: (key) => `https://ddragon.leagueoflegends.com/cdn/${DDRAGON_VERSION.current}/img/champion/${key}.png`,
   // No default. A portrait only appears once a specific file has been cleared and
   // registered, which is the whole point of keeping this separate from champion art.
@@ -76,12 +88,18 @@ export function portraitUrl(cardKey, variant = 'card') {
  * @param {string} [variant]
  * @returns {string[]}
  */
-export function cardImageUrls(card, variant = 'card') {
+export function cardImageUrls(card, variant = 'card', opts = {}) {
   const urls = [
     card.portraitUrl || portraitUrl(card.cardKey, variant),
     card.artUrl || splashUrl(card.artChampionKey, variant),
-    ...(card.championPool || []).slice(0, 4).map((c) => squareUrl(c.key || championKey(c.champion))),
   ];
+  // The pool tiles sit at the foot of the card behind a `loading="lazy"` attribute. They
+  // are four more requests and nobody notices them arriving a beat late, so anything that
+  // is waiting on art before it can proceed should not wait on these.
+  if (!opts.essentialOnly) {
+    urls.push(...(card.championPool || []).slice(0, 4)
+      .map((c) => squareUrl(c.key || championKey(c.champion))));
+  }
   return /** @type {string[]} */ (urls.filter(Boolean));
 }
 
@@ -95,14 +113,14 @@ export function cardImageUrls(card, variant = 'card') {
  * not a broken opening.
  *
  * @param {object|object[]} cards one normalised card, or several
- * @param {{variant?:string, timeout?:number}} [opts]
+ * @param {{variant?:string, timeout?:number, essentialOnly?:boolean}} [opts]
  * @returns {Promise<{ok:number, failed:number}>}
  */
 export function preloadCards(cards, opts = {}) {
   const variant = opts.variant || 'card';
   const timeout = opts.timeout ?? 6000;
   const list = Array.isArray(cards) ? cards : [cards];
-  const urls = [...new Set(list.flatMap((c) => cardImageUrls(c, variant)))];
+  const urls = [...new Set(list.flatMap((c) => cardImageUrls(c, variant, opts)))];
 
   if (!urls.length || typeof Image === 'undefined') {
     return Promise.resolve({ ok: 0, failed: 0 });

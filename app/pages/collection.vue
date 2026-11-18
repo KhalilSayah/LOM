@@ -3,6 +3,7 @@ import { toCard } from '~~/shared/cardShape';
 
 const supabase = useSupabaseClient();
 const user = useSupabaseUser();
+const managerId = useManagerId();
 
 const ROLES = ['TOP', 'JNG', 'MID', 'BOT', 'SUP'];
 const BANDS = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON'];
@@ -25,12 +26,12 @@ const SELECT = `
 `;
 
 async function load() {
-  if (!user.value) return;
+  if (!managerId.value) return;
   loading.value = true;
   const { data, error: err } = await supabase
     .from('collection_cards')
     .select(SELECT)
-    .eq('profile_id', user.value.id)
+    .eq('profile_id', managerId.value)
     .order('acquired_at', { ascending: false });
 
   if (err) error.value = err.message;
@@ -38,7 +39,7 @@ async function load() {
   loading.value = false;
 }
 
-onMounted(load);
+watch(managerId, load, { immediate: true });
 
 const cards = computed(() => rows.value.map((r: any) => ({
   id: r.id,

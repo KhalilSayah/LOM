@@ -35,6 +35,16 @@ const TIMING = {
   flip: 760,
 };
 
+/**
+ * How long the card is allowed to hang face-down waiting for its art.
+ *
+ * The reveal is the one moment in the game that is pure theatre, and a card that turns
+ * over blank and fills in a beat later ruins it. So the rise holds until the image has
+ * decoded — but never past this, because a stalled CDN must not mean a pack that cannot
+ * be opened. Past the cap the card turns anyway and paints when it lands.
+ */
+const ART_HOLD_MS = 5000;
+
 const PACK_CREST = '<svg viewBox="0 0 64 64" aria-hidden="true">'
   + '<path d="M32 3 L58 17 V47 L32 61 L6 47 V17 Z" fill="none" stroke="currentColor" stroke-width="2"/>'
   + '<path d="M32 15 L47 23.5 V40.5 L32 49 L17 40.5 V23.5 Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55"/>'
@@ -62,6 +72,7 @@ function motes(n) {
  *   autoArm?: boolean,
  *   onPhase?: (phase: string) => void,
  *   onReveal?: (card: object) => void,
+ *   onHeld?: (ms: number) => void,
  *   onKeep?: (card: object) => void,
  * }} [opts]
  */
@@ -144,8 +155,12 @@ export function createPack(card, opts = {}) {
     opts.onPhase?.(next);
   }
 
-  /** Decoded art, so the turn-over never shows an empty frame. */
-  let artReady = preloadCards(data, { variant: 'card' });
+  /**
+   * Decoded art, so the turn-over never shows an empty frame. Only the card's own art is
+   * waited on: the four pool tiles at the foot are lazy and nobody notices them arriving
+   * late, so making the reveal wait on four more requests would cost the thing it protects.
+   */
+  let artReady = preloadCards(data, { variant: 'card', essentialOnly: true, timeout: ART_HOLD_MS });
 
   function arm() {
     if (phase !== 'idle') return;
@@ -159,6 +174,7 @@ export function createPack(card, opts = {}) {
     if (reduced) {
       // No theatre: the card is simply there, face up, with the band shown.
       setPhase('done');
+      artReady.then(() => {});
       built.el.classList.remove('is-flipped');
       hint.textContent = `${theme.label} — ${data.playerName} ${data.season}`;
       opts.onReveal?.(data);
@@ -170,17 +186,22 @@ export function createPack(card, opts = {}) {
 
     at(TIMING.charge, () => setPhase('tear'));
     at(TIMING.charge + TIMING.tear, () => setPhase('rise'));
-    at(TIMING.charge + TIMING.tear + TIMING.rise, () => {
+    at(TIMING.charge + TIMING.tear + TIMING.rise, async () => {
+      // Hold at `rise` — the card is out of the pack and face down, which reads as
+      // anticipation rather than as a wait — until the art is ready or the cap expires.
+      const held = Date.now();
+      await Promise.race([artReady, new Promise((r) => setTimeout(r, ART_HOLD_MS))]);
+      if (phase !== 'rise') return;   // reset() or destroy() happened while we waited
+
       setPhase('flip');
-      // The art had the whole charge to decode; if a slow CDN is still working, the card
-      // turns over anyway and the image paints when it lands. Never block the reveal.
-      artReady.then(() => {});
       built.el.classList.remove('is-flipped');
       opts.onReveal?.(data);
-    });
-    at(TIMING.charge + TIMING.tear + TIMING.rise + TIMING.flip, () => {
-      setPhase('done');
-      hint.textContent = `${data.playerName} ${data.season} — ${theme.label}, ${data.ovr} OVR`;
+      opts.onHeld?.(Date.now() - held);
+
+      at(TIMING.flip, () => {
+        setPhase('done');
+        hint.textContent = `${data.playerName} ${data.season} — ${theme.label}, ${data.ovr} OVR`;
+      });
     });
   }
 
@@ -189,7 +210,7 @@ export function createPack(card, opts = {}) {
     built.el.classList.add('is-flipped');
     built.controller?.reset();
     setPhase('idle');
-    artReady = preloadCards(data, { variant: 'card' });
+    artReady = preloadCards(data, { variant: 'card', essentialOnly: true, timeout: ART_HOLD_MS });
     requestAnimationFrame(() => requestAnimationFrame(arm));
   }
 

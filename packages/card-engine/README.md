@@ -179,7 +179,7 @@ Three sources, in precedence order:
 | # | Source | When |
 |---|---|---|
 | 1 | **Player photo** — season-matched headshot | `node fetch-portraits.mjs`. Composited over a blurred champion splash. See the warning below. |
-| 2 | **Champion splash** from Data Dragon | The default. Uses the card's signature champion — the one it played most that season, `championPool[0]`. |
+| 2 | **Champion art** from Data Dragon | The default. Uses the card's signature champion — the one it played most that season, `championPool[0]`. The card face takes the *loading* art (308x560 portrait, ~37 KB), not the splash (1215x717 landscape, ~145 KB): it is a quarter of the weight and already the shape of a card. Ask for the `splash` variant explicitly where the big one is wanted. |
 | 3 | Generated SVG | Fallback when neither is available. |
 
 Champion art is the right default rather than a compromise. Data Dragon is Riot's own CDN and

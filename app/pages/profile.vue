@@ -1,6 +1,7 @@
 <script setup lang="ts">
 const supabase = useSupabaseClient();
 const user = useSupabaseUser();
+const managerId = useManagerId();
 
 const profile = ref<any>(null);
 const counts = ref<Record<string, number>>({});
@@ -8,11 +9,11 @@ const total = ref(0);
 
 const BANDS = ['ICON', 'LEGENDARY', 'EPIC', 'RARE', 'COMMON'];
 
-onMounted(async () => {
-  if (!user.value) return;
+async function load() {
+  if (!managerId.value) return;
   const [{ data: p }, { data: rows }] = await Promise.all([
-    supabase.from('profiles').select('handle, display_name, created_at').eq('id', user.value.id).maybeSingle(),
-    supabase.from('collection_cards').select('card_definitions(rarity)').eq('profile_id', user.value.id),
+    supabase.from('profiles').select('handle, display_name, created_at').eq('id', managerId.value).maybeSingle(),
+    supabase.from('collection_cards').select('card_definitions(rarity)').eq('profile_id', managerId.value),
   ]);
   profile.value = p;
   const tally: Record<string, number> = {};
@@ -22,7 +23,9 @@ onMounted(async () => {
   }
   counts.value = tally;
   total.value = (rows || []).length;
-});
+}
+
+watch(managerId, load, { immediate: true });
 
 async function signOut() {
   await supabase.auth.signOut();
