@@ -1,0 +1,230 @@
+/**
+ * Pack opening.
+ *
+ * The one moment in LOM where a card is not information but an event. docs/01-game-loop.md
+ * gives a pack after a match; this is what that looks like.
+ *
+ * The sequence is a state machine, not a single animation, because the interesting part is
+ * the pause: the pack charges, the light builds, and the player does not yet know what they
+ * have. Each phase is a `data-phase` value on the scene and every visual response lives in
+ * pack.css — same split as tilt.js, so the timing can be retuned without touching the look
+ * and the look retuned without touching the timing.
+ *
+ *   armed    pack has slid in and is waiting to be tapped
+ *   charge   pressed: the pack swells, the seam lights, the rays start turning
+ *   tear     the top comes away and light spills out of the opening
+ *   rise     the card lifts out of the pack, still face down
+ *   flip     it turns over; the rarity burst fires on the same frame
+ *   done     card is interactive, actions are available
+ *
+ * The art is preloaded during `armed` and `charge`, so by the time the card turns over the
+ * image is already decoded. A pack that reveals a blank card and paints it a beat later is
+ * the one failure this whole screen cannot survive.
+ */
+
+import { RARITY_THEMES, themeVars } from './rarity.js';
+import { roleGlyph, esc } from './artwork.js';
+import { preloadCards } from './assets.js';
+import { createCard, normaliseCard } from './card.js';
+
+/** phase -> ms until the next phase. */
+const TIMING = {
+  charge: 620,
+  tear: 440,
+  rise: 540,
+  flip: 760,
+};
+
+const PACK_CREST = '<svg viewBox="0 0 64 64" aria-hidden="true">'
+  + '<path d="M32 3 L58 17 V47 L32 61 L6 47 V17 Z" fill="none" stroke="currentColor" stroke-width="2"/>'
+  + '<path d="M32 15 L47 23.5 V40.5 L32 49 L17 40.5 V23.5 Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55"/>'
+  + '</svg>';
+
+/** @param {number} n */
+function motes(n) {
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    const angle = (360 / n) * i + (i % 3) * 7;
+    const dist = 38 + ((i * 37) % 46);
+    const delay = (i % 5) * 26;
+    const size = 2 + ((i * 13) % 5) * 0.6;
+    out += `<span class="lom-burst__mote" style="--a:${angle}deg;--d:${dist}%;--t:${delay}ms;--s:${size}px"></span>`;
+  }
+  return out;
+}
+
+/**
+ * Build a pack-opening scene for one card.
+ *
+ * @param {object} card raw or normalised card data
+ * @param {{
+ *   label?: string,
+ *   autoArm?: boolean,
+ *   onPhase?: (phase: string) => void,
+ *   onReveal?: (card: object) => void,
+ *   onKeep?: (card: object) => void,
+ * }} [opts]
+ */
+export function createPack(card, opts = {}) {
+  const data = normaliseCard(card);
+  const theme = RARITY_THEMES[data.rarity] || RARITY_THEMES.COMMON;
+  const reduced = typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const scene = document.createElement('div');
+  scene.className = 'lom-pack-scene';
+  scene.dataset.phase = 'idle';
+  scene.dataset.rarity = data.rarity;
+  scene.setAttribute('style', themeVars(data.rarity));
+
+  scene.innerHTML = `
+    <div class="lom-pack-scene__sky" aria-hidden="true">
+      <span class="lom-rays"></span>
+      <span class="lom-bloom"></span>
+    </div>
+
+    <div class="lom-pack-scene__floor">
+
+      <div class="lom-pack" role="button" tabindex="0"
+           aria-label="${esc(opts.label || 'Unopened pack')} — press to open">
+        <span class="lom-pack__lid" aria-hidden="true">
+          <span class="lom-pack__tear"></span>
+        </span>
+        <span class="lom-pack__body" aria-hidden="true">
+          <span class="lom-pack__foil"></span>
+          <span class="lom-pack__crest">${PACK_CREST}</span>
+          <span class="lom-pack__word">LOM</span>
+          <span class="lom-pack__sub">${esc(opts.label || 'Player pack')}</span>
+          <span class="lom-pack__strip">1 card</span>
+        </span>
+        <span class="lom-pack__slit" aria-hidden="true"></span>
+      </div>
+
+      <div class="lom-pack-scene__slot">
+        <span class="lom-burst" aria-hidden="true">
+          <span class="lom-burst__ring"></span>
+          <span class="lom-burst__flash"></span>
+          ${motes(18)}
+        </span>
+      </div>
+
+    </div>
+
+    <p class="lom-pack-scene__hint" aria-live="polite">Tap the pack to open</p>
+
+    <div class="lom-pack-scene__banner" aria-hidden="true">
+      <span class="lom-pack-scene__band">${theme.symbol} ${theme.label}</span>
+    </div>
+
+    <div class="lom-pack-scene__actions">
+      <button type="button" class="lom-btn lom-btn--ghost" data-act="again">Open another</button>
+      <button type="button" class="lom-btn" data-act="keep">Add to collection</button>
+    </div>
+  `;
+
+  const packEl = /** @type {HTMLElement} */ (scene.querySelector('.lom-pack'));
+  const slot = /** @type {HTMLElement} */ (scene.querySelector('.lom-pack-scene__slot'));
+  const hint = /** @type {HTMLElement} */ (scene.querySelector('.lom-pack-scene__hint'));
+
+  // The card exists from the start, face down inside the pack. Building it on reveal would
+  // cost a layout and a decode at the exact moment the animation must not stutter.
+  const built = createCard(data, { interactive: true, flip: true });
+  built.el.classList.add('is-flipped');
+  built.stage.classList.add('lom-pack-scene__card');
+  slot.appendChild(built.stage);
+
+  let phase = 'idle';
+  let timers = [];
+  const at = (ms, fn) => timers.push(setTimeout(fn, ms));
+  const clear = () => { timers.forEach(clearTimeout); timers = []; };
+
+  function setPhase(next) {
+    phase = next;
+    scene.dataset.phase = next;
+    opts.onPhase?.(next);
+  }
+
+  /** Decoded art, so the turn-over never shows an empty frame. */
+  let artReady = preloadCards(data, { variant: 'card' });
+
+  function arm() {
+    if (phase !== 'idle') return;
+    setPhase('armed');
+    hint.textContent = 'Tap the pack to open';
+  }
+
+  function open() {
+    if (phase !== 'armed') return;
+
+    if (reduced) {
+      // No theatre: the card is simply there, face up, with the band shown.
+      setPhase('done');
+      built.el.classList.remove('is-flipped');
+      hint.textContent = `${theme.label} — ${data.playerName} ${data.season}`;
+      opts.onReveal?.(data);
+      return;
+    }
+
+    setPhase('charge');
+    hint.textContent = '';
+
+    at(TIMING.charge, () => setPhase('tear'));
+    at(TIMING.charge + TIMING.tear, () => setPhase('rise'));
+    at(TIMING.charge + TIMING.tear + TIMING.rise, () => {
+      setPhase('flip');
+      // The art had the whole charge to decode; if a slow CDN is still working, the card
+      // turns over anyway and the image paints when it lands. Never block the reveal.
+      artReady.then(() => {});
+      built.el.classList.remove('is-flipped');
+      opts.onReveal?.(data);
+    });
+    at(TIMING.charge + TIMING.tear + TIMING.rise + TIMING.flip, () => {
+      setPhase('done');
+      hint.textContent = `${data.playerName} ${data.season} — ${theme.label}, ${data.ovr} OVR`;
+    });
+  }
+
+  function reset() {
+    clear();
+    built.el.classList.add('is-flipped');
+    built.controller?.reset();
+    setPhase('idle');
+    artReady = preloadCards(data, { variant: 'card' });
+    requestAnimationFrame(() => requestAnimationFrame(arm));
+  }
+
+  packEl.addEventListener('click', open);
+  packEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+
+  scene.querySelector('[data-act="keep"]')?.addEventListener('click', () => opts.onKeep?.(data));
+  scene.querySelector('[data-act="again"]')?.addEventListener('click', reset);
+
+  if (opts.autoArm !== false) {
+    // One frame so the slide-in transition has a state to animate from.
+    requestAnimationFrame(() => requestAnimationFrame(arm));
+  }
+
+  return {
+    el: scene,
+    card: data,
+    controller: built.controller,
+    arm,
+    open,
+    reset,
+    get phase() { return phase; },
+    destroy() { clear(); built.controller?.destroy(); scene.remove(); },
+  };
+}
+
+/**
+ * @param {HTMLElement} container
+ * @param {object} card
+ * @param {object} [opts]
+ */
+export function mountPack(container, card, opts = {}) {
+  const pack = createPack(card, opts);
+  container.appendChild(pack.el);
+  return pack;
+}

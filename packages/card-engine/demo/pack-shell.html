@@ -1,0 +1,217 @@
+<title>LOM Pack Opening</title>
+<meta charset="utf-8">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap">
+
+<style>
+/* The pack screen is a game screen, not a document: one dark world, no light theme.
+   Layout is a single column — the scene is the page, the rail under it annotates. */
+:root {
+  --bg: #05080e;
+  --bg-panel: #0c111c;
+  --line: rgba(255, 255, 255, 0.09);
+  --ink: #eaf0fa;
+  --ink-dim: #93a2bc;
+  --ink-faint: #5c6a86;
+  --accent: #6fe3d4;
+  --font-display: 'Chakra Petch', 'Arial Narrow', sans-serif;
+  --font-body: 'Barlow', system-ui, -apple-system, sans-serif;
+  --font-label: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(85% 50% at 50% -10%, rgba(70, 150, 180, 0.2), transparent 70%),
+    radial-gradient(70% 40% at 85% 105%, rgba(120, 80, 190, 0.14), transparent 70%),
+    var(--bg);
+}
+
+.wrap {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 36px;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.topbar h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.topbar p {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 13px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.scene-host { margin: 0 -8px; }
+
+/* the phase rail: what the state machine is doing, as it does it */
+.rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.rail span {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: var(--bg-panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.rail span.is-on {
+  color: #04131a;
+  background: var(--accent);
+  box-shadow: none;
+}
+.rail span.is-past { color: var(--ink-dim); }
+
+.note {
+  margin: 16px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  max-width: 68ch;
+}
+.note b { color: var(--ink); font-weight: 600; }
+.note code {
+  font-family: ui-monospace, 'SFMono-Regular', monospace;
+  font-size: 0.88em;
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 20px);
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #04131a;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 20;
+}
+.toast.is-on { opacity: 1; transform: translate(-50%, 0); }
+
+/*@CARD_CSS@*/
+</style>
+
+<div class="wrap">
+
+  <header class="topbar">
+    <h1>Pack opening</h1>
+    <p>LOM · card engine</p>
+  </header>
+
+  <div class="scene-host" id="scene"></div>
+
+  <div class="rail" id="rail" aria-hidden="true"></div>
+
+  <p class="note">
+    One card, one pack. The sequence is a state machine in <code>src/pack.js</code>; every
+    visual response lives in <code>src/pack.css</code> and keys off <code>data-phase</code>,
+    so timing and look are tuned separately. The card's art is preloaded and decoded while
+    the pack is still sealed, which is why the turn-over never shows an empty frame.
+    <b>Reduced motion skips the theatre</b> and goes straight to the revealed card.
+  </p>
+
+  <p class="note">
+    Stats on this card are the illustrative sample from <code>samples/cards.js</code>, not
+    derived from match data.
+  </p>
+
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+//@ENGINE@
+
+const PHASES = ['idle', 'armed', 'charge', 'tear', 'rise', 'flip', 'done'];
+
+const rail = document.getElementById('rail');
+rail.innerHTML = PHASES.map((p) => `<span data-p="${p}">${p}</span>`).join('');
+
+function paintRail(phase) {
+  const i = PHASES.indexOf(phase);
+  for (const el of rail.children) {
+    const j = PHASES.indexOf(el.dataset.p);
+    el.classList.toggle('is-on', j === i);
+    el.classList.toggle('is-past', j < i);
+  }
+}
+
+const toast = document.getElementById('toast');
+let toastTimer = 0;
+function say(text) {
+  toast.textContent = text;
+  toast.classList.add('is-on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('is-on'), 2200);
+}
+
+const card = SAMPLE_CARDS.find((c) => c.cardKey === 'faker-2016') || SAMPLE_CARDS[0];
+
+const pack = mountPack(document.getElementById('scene'), card, {
+  label: 'Icon pack',
+  onPhase: paintRail,
+  onKeep: (c) => say(`${c.playerName} ${c.season} added`),
+});
+
+paintRail(pack.phase);
+</script>

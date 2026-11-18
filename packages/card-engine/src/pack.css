@@ -1,0 +1,454 @@
+/* ===========================================================================
+   LOM pack opening
+   Every visual response keys off [data-phase] on .lom-pack-scene; pack.js only
+   advances the phase. Rarity comes in through the same --r-* variables the card
+   uses, so an ICON pack and a COMMON pack are one stylesheet.
+
+   Phases: idle -> armed -> charge -> tear -> rise -> flip -> done
+   =========================================================================== */
+
+.lom-pack-scene {
+  --pack-w: min(62vw, 240px);
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto auto;
+  justify-items: center;
+  gap: 0;
+  min-height: min(84vh, 620px);
+  padding: 2vh 16px 3vh;
+  overflow: hidden;
+  isolation: isolate;
+  font-family: 'Barlow', system-ui, -apple-system, sans-serif;
+  color: var(--r-ink);
+}
+
+/* --- sky: the light behind everything ------------------------------------ */
+
+.lom-pack-scene__sky {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.lom-rays,
+.lom-bloom {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, -50%) scale(0.4);
+  opacity: 0;
+  transition: opacity 0.5s ease, transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.lom-rays {
+  width: 190vmax;
+  height: 190vmax;
+  background: repeating-conic-gradient(from 0deg,
+    color-mix(in srgb, var(--r-accent) 16%, transparent) 0deg 2.2deg,
+    transparent 2.2deg 15deg);
+  filter: blur(0.6px);
+  -webkit-mask-image: radial-gradient(closest-side, #000 8%, rgba(0, 0, 0, 0.55) 34%, transparent 72%);
+  mask-image: radial-gradient(closest-side, #000 8%, rgba(0, 0, 0, 0.55) 34%, transparent 72%);
+  animation: lom-spin 28s linear infinite;
+  animation-play-state: paused;
+}
+
+.lom-bloom {
+  width: 120vmin;
+  height: 120vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    color-mix(in srgb, var(--r-accent) 55%, transparent) 0%,
+    color-mix(in srgb, var(--r-accent) 18%, transparent) 32%,
+    transparent 66%);
+  filter: blur(6px);
+}
+
+@keyframes lom-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+[data-phase='charge'] .lom-rays { opacity: 0.42; transform: translate(-50%, -50%) scale(0.85) rotate(8deg); animation-play-state: running; }
+[data-phase='tear'] .lom-rays,
+[data-phase='rise'] .lom-rays { opacity: 0.7; transform: translate(-50%, -50%) scale(1); animation-play-state: running; }
+[data-phase='flip'] .lom-rays { opacity: 0.8; transform: translate(-50%, -50%) scale(1.06); animation-play-state: running; }
+[data-phase='done'] .lom-rays { opacity: 0.2; transform: translate(-50%, -50%) scale(1); animation-play-state: running; }
+
+[data-phase='charge'] .lom-bloom { opacity: 0.5; transform: translate(-50%, -50%) scale(0.7); }
+[data-phase='tear'] .lom-bloom { opacity: 0.95; transform: translate(-50%, -50%) scale(1.05); }
+[data-phase='rise'] .lom-bloom,
+[data-phase='flip'] .lom-bloom { opacity: 0.8; transform: translate(-50%, -50%) scale(1); }
+[data-phase='done'] .lom-bloom { opacity: 0.45; transform: translate(-50%, -50%) scale(0.9); }
+
+/* --- the floor: pack and card share one stacking area -------------------- */
+
+.lom-pack-scene__floor {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: min(58vh, 430px);
+  perspective: 1400px;
+}
+
+/* --- the pack ------------------------------------------------------------ */
+
+.lom-pack {
+  position: absolute;
+  width: var(--pack-w);
+  aspect-ratio: 63 / 96;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  transform-style: preserve-3d;
+  transform: translateY(42vh) rotate(-4deg) scale(0.92);
+  opacity: 0;
+  transition:
+    transform 0.72s cubic-bezier(0.18, 0.84, 0.28, 1),
+    opacity 0.4s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.lom-pack:focus-visible { outline: 2px solid var(--r-accent); outline-offset: 10px; border-radius: 4px; }
+
+[data-phase='armed'] .lom-pack { transform: translateY(0) rotate(0deg) scale(1); opacity: 1; }
+[data-phase='armed'] .lom-pack:hover { transform: translateY(-6px) rotate(0deg) scale(1.02); }
+
+[data-phase='charge'] .lom-pack {
+  opacity: 1;
+  transform: translateY(-10px) scale(1.06);
+  animation: lom-pack-shake 0.62s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+@keyframes lom-pack-shake {
+  0%, 100% { translate: 0 0; }
+  15% { translate: -2px 0; }
+  30% { translate: 3px 0; }
+  45% { translate: -4px 0; }
+  60% { translate: 4px 0; }
+  75% { translate: -3px 0; }
+  90% { translate: 2px 0; }
+}
+
+[data-phase='tear'] .lom-pack { opacity: 1; transform: translateY(-14px) scale(1.07); }
+[data-phase='rise'] .lom-pack { opacity: 1; transform: translateY(-6px) scale(1.04); }
+[data-phase='flip'] .lom-pack { opacity: 0.32; transform: translateY(26px) scale(0.96); }
+[data-phase='done'] .lom-pack { opacity: 0; transform: translateY(60px) scale(0.9); pointer-events: none; }
+
+.lom-pack__body,
+.lom-pack__lid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: block;
+  border-radius: 0.5em;
+  background:
+    linear-gradient(158deg,
+      color-mix(in srgb, var(--r-frame-c) 92%, #000) 0%,
+      var(--r-frame-a) 44%,
+      var(--r-frame-b) 100%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--r-edge) 60%, transparent),
+    inset 0 0 2.4em rgba(0, 0, 0, 0.55),
+    0 1.4em 2.6em rgba(0, 0, 0, 0.6);
+}
+
+.lom-pack__body {
+  top: 17%;
+  bottom: 0;
+  display: grid;
+  grid-template-rows: 1fr auto auto auto;
+  justify-items: center;
+  align-content: center;
+  gap: 0.3em;
+  padding: 8% 10% 10%;
+  overflow: hidden;
+  font-size: calc(var(--pack-w) / 12);
+}
+
+.lom-pack__lid {
+  top: 0;
+  height: 19%;
+  border-radius: 0.5em 0.5em 0.1em 0.1em;
+  transform-origin: 50% 100%;
+  transition: transform 0.44s cubic-bezier(0.3, 0.1, 0.2, 1), opacity 0.44s ease;
+  z-index: 2;
+}
+.lom-pack__tear {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: -1px;
+  height: 0.5em;
+  background:
+    repeating-linear-gradient(135deg,
+      color-mix(in srgb, var(--r-edge) 70%, transparent) 0 3px,
+      transparent 3px 7px);
+  opacity: 0.6;
+}
+
+[data-phase='tear'] .lom-pack__lid,
+[data-phase='rise'] .lom-pack__lid,
+[data-phase='flip'] .lom-pack__lid,
+[data-phase='done'] .lom-pack__lid {
+  transform: translateY(-120%) rotate(-9deg);
+  opacity: 0;
+}
+
+/* light escaping from the opened pack */
+.lom-pack__slit {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 16%;
+  height: 0.5em;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 3em 1.2em color-mix(in srgb, var(--r-accent) 80%, transparent);
+  opacity: 0;
+  transform: scaleX(0.3);
+  transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  z-index: 3;
+}
+[data-phase='charge'] .lom-pack__slit { opacity: 0.35; transform: scaleX(0.6); }
+[data-phase='tear'] .lom-pack__slit { opacity: 1; transform: scaleX(1); }
+[data-phase='rise'] .lom-pack__slit { opacity: 0.8; transform: scaleX(1.05); }
+[data-phase='flip'] .lom-pack__slit,
+[data-phase='done'] .lom-pack__slit { opacity: 0; }
+
+/* the wrapper's own foil, so a sealed ICON pack already looks like one */
+.lom-pack__foil {
+  position: absolute;
+  inset: 0;
+  mix-blend-mode: color-dodge;
+  opacity: calc(var(--r-foil-opacity, 0) * 0.65);
+  background-image:
+    repeating-linear-gradient(104deg,
+      rgba(255, 70, 90, 0.5) 0%, rgba(255, 196, 70, 0.5) 5%, rgba(118, 255, 140, 0.5) 10%,
+      rgba(70, 214, 255, 0.5) 15%, rgba(158, 110, 255, 0.5) 20%, rgba(255, 70, 90, 0.5) 25%);
+  background-size: 300% 300%;
+  animation: lom-foil-drift 7s ease-in-out infinite alternate;
+}
+@keyframes lom-foil-drift {
+  from { background-position: 18% 12%; }
+  to { background-position: 76% 82%; }
+}
+
+.lom-pack__crest { display: block; width: 3.4em; height: 3.4em; color: var(--r-accent); opacity: 0.92; }
+.lom-pack__crest svg { width: 100%; height: 100%; }
+.lom-pack__word {
+  font-family: 'Chakra Petch', 'Arial Narrow', sans-serif;
+  font-size: 1.7em;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #fff;
+}
+.lom-pack__sub {
+  font-size: 0.56em;
+  font-weight: 600;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--r-accent);
+  text-align: center;
+}
+.lom-pack__strip {
+  margin-top: 0.5em;
+  padding: 0.3em 0.9em;
+  border-radius: 999px;
+  font-size: 0.5em;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.42);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--r-edge) 45%, transparent);
+}
+
+/* --- the card slot ------------------------------------------------------- */
+
+.lom-pack-scene__slot {
+  position: relative;
+  width: var(--pack-w);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.lom-pack-scene__card {
+  width: 100%;
+  opacity: 0;
+  transform: translateY(14%) scale(0.86);
+  transition:
+    transform 0.56s cubic-bezier(0.17, 0.82, 0.3, 1),
+    opacity 0.3s ease;
+  will-change: transform;
+}
+
+[data-phase='rise'] .lom-pack-scene__card { opacity: 1; transform: translateY(-14%) scale(0.94); }
+[data-phase='flip'] .lom-pack-scene__card { opacity: 1; transform: translateY(-16%) scale(1.04); }
+[data-phase='done'] .lom-pack-scene__card {
+  opacity: 1;
+  transform: translateY(-14%) scale(1);
+  pointer-events: auto;
+}
+
+/* --- the burst ----------------------------------------------------------- */
+
+.lom-burst {
+  position: absolute;
+  inset: 0;
+  display: block;
+  pointer-events: none;
+  opacity: 0;
+}
+[data-phase='flip'] .lom-burst,
+[data-phase='done'] .lom-burst { opacity: 1; }
+
+.lom-burst__flash,
+.lom-burst__ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0.2);
+  opacity: 0;
+}
+.lom-burst__flash {
+  width: 120%;
+  aspect-ratio: 1;
+  background: radial-gradient(circle, #fff 0%, color-mix(in srgb, var(--r-accent) 70%, transparent) 26%, transparent 60%);
+}
+.lom-burst__ring {
+  width: 60%;
+  aspect-ratio: 1;
+  border: 2px solid color-mix(in srgb, var(--r-accent) 85%, transparent);
+}
+
+[data-phase='flip'] .lom-burst__flash { animation: lom-flash 0.62s ease-out forwards; }
+[data-phase='flip'] .lom-burst__ring { animation: lom-ring 0.78s cubic-bezier(0.1, 0.8, 0.2, 1) forwards; }
+
+@keyframes lom-flash {
+  0% { opacity: 0.95; transform: translate(-50%, -50%) scale(0.3); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+@keyframes lom-ring {
+  0% { opacity: 0.9; transform: translate(-50%, -50%) scale(0.2); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(2.1); }
+}
+
+.lom-burst__mote {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--s, 3px);
+  height: var(--s, 3px);
+  border-radius: 50%;
+  background: var(--r-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--r-accent) 80%, transparent);
+  opacity: 0;
+}
+[data-phase='flip'] .lom-burst__mote {
+  animation: lom-mote 0.9s cubic-bezier(0.15, 0.75, 0.3, 1) var(--t, 0ms) forwards;
+}
+@keyframes lom-mote {
+  0% { opacity: 0; transform: rotate(var(--a)) translateX(0) scale(0.6); }
+  18% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--a)) translateX(var(--d)) scale(1); }
+}
+
+/* --- rarity banner ------------------------------------------------------- */
+
+.lom-pack-scene__banner {
+  display: grid;
+  place-items: center;
+  min-height: 2.4em;
+  margin-top: 0.6em;
+}
+.lom-pack-scene__band {
+  padding: 0.42em 1.5em;
+  border-radius: 999px;
+  font-family: 'Chakra Petch', 'Arial Narrow', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--r-accent);
+  background: rgba(4, 12, 16, 0.6);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--r-edge) 55%, transparent),
+              0 0 2.4em color-mix(in srgb, var(--r-accent) 28%, transparent);
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+[data-phase='flip'] .lom-pack-scene__band,
+[data-phase='done'] .lom-pack-scene__band { opacity: 1; transform: translateY(0) scale(1); }
+
+/* --- hint and actions ---------------------------------------------------- */
+
+.lom-pack-scene__hint {
+  margin: 0;
+  min-height: 1.6em;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--r-ink) 62%, transparent);
+  text-align: center;
+  transition: opacity 0.3s ease;
+}
+[data-phase='idle'] .lom-pack-scene__hint { opacity: 0; }
+[data-phase='armed'] .lom-pack-scene__hint { animation: lom-pulse 2.4s ease-in-out infinite; }
+@keyframes lom-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+.lom-pack-scene__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 14px;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.4s ease 0.1s, transform 0.4s ease 0.1s;
+  pointer-events: none;
+}
+[data-phase='done'] .lom-pack-scene__actions { opacity: 1; transform: none; pointer-events: auto; }
+
+.lom-btn {
+  appearance: none;
+  border: 0;
+  padding: 0.75em 1.5em;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  color: #04131a;
+  background: var(--r-accent);
+  box-shadow: 0 0.6em 1.4em color-mix(in srgb, var(--r-accent) 26%, transparent);
+}
+.lom-btn:hover { filter: brightness(1.08); }
+.lom-btn:focus-visible { outline: 2px solid var(--r-ink); outline-offset: 3px; }
+.lom-btn--ghost {
+  color: var(--r-ink);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--r-edge) 45%, transparent);
+}
+
+/* --- motion preferences --------------------------------------------------
+   Reduced motion gets the result, not the show: pack.js jumps straight to the
+   revealed phase and everything here resolves to its end state. */
+
+@media (prefers-reduced-motion: reduce) {
+  .lom-pack-scene *,
+  .lom-pack-scene *::before,
+  .lom-pack-scene *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+  .lom-pack { display: none; }
+  .lom-pack-scene__card { opacity: 1; transform: none; }
+  .lom-rays { opacity: 0.25; }
+  .lom-bloom { opacity: 0.4; }
+  .lom-pack-scene__band { opacity: 1; transform: none; }
+  .lom-pack-scene__actions { opacity: 1; transform: none; pointer-events: auto; }
+}

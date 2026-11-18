@@ -1,0 +1,162 @@
+/**
+ * Upload data/catalogue.json into Supabase and make it the active catalogue.
+ *
+ *   SUPABASE_URL=... SUPABASE_SERVICE_KEY=... node scripts/push-catalogue.mjs
+ *   node scripts/push-catalogue.mjs --file data/catalogue.test.json --no-activate
+ *
+ * Idempotent: re-running with the same semver updates the rows in place. Activation is a
+ * separate step so a catalogue can be loaded and inspected before anyone opens a pack
+ * against it.
+ *
+ * Needs the service-role key. It writes to tables the anon key cannot touch, which is the
+ * point: the catalogue is not user data.
+ */
+
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createClient } from '@supabase/supabase-js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, '..');
+
+const argv = process.argv.slice(2);
+const flag = (name, fallback = null) => {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
+};
+const FILE = flag('file', 'data/catalogue.json');
+const ACTIVATE = !argv.includes('--no-activate');
+const CHUNK = 200;
+
+const url = process.env.SUPABASE_URL;
+const key = process.env.SUPABASE_SERVICE_KEY;
+
+if (!url || !key) {
+  console.error('Set SUPABASE_URL and SUPABASE_SERVICE_KEY.');
+  console.error('Both are in Supabase > Project settings > API. The service key is secret:');
+  console.error('pass it on the command line, do not commit it.');
+  process.exit(1);
+}
+
+const db = createClient(url, key, { auth: { persistSession: false } });
+
+const catalogue = JSON.parse(readFileSync(join(root, FILE), 'utf8'));
+const { semver, cards } = catalogue;
+
+console.log(`${FILE}: ${cards.length} cards, catalogue ${semver} (${catalogue.source})`);
+
+// --- 1. the version row ------------------------------------------------------
+
+const { data: version, error: versionError } = await db
+  .from('catalogue_versions')
+  .upsert(
+    {
+      semver,
+      source: catalogue.source || 'SEED',
+      notes: catalogue.notes || null,
+      built_at: catalogue.builtAt || new Date().toISOString(),
+    },
+    { onConflict: 'semver' },
+  )
+  .select('id, semver')
+  .single();
+
+if (versionError) {
+  console.error('catalogue_versions:', versionError.message);
+  process.exit(1);
+}
+
+// --- 2. card definitions -----------------------------------------------------
+
+const definitions = cards.map((c) => ({
+  catalogue_version_id: version.id,
+  card_key: c.cardKey,
+  kind: c.kind || 'PLAYER',
+  player_name: c.playerName,
+  real_name: c.realName || null,
+  season: c.season,
+  team: c.team,
+  region: c.region,
+  role: c.role,
+  ovr: c.ovr,
+  rarity: c.rarity,
+  sub_stats: c.subStats,
+  accolades: c.accolades || [],
+  season_summary: c.seasonSummary || {},
+  provenance: c.provenance || {},
+  art_champion_key: c.artChampionKey,
+  art_focus: c.artFocus,
+}));
+
+let written = 0;
+for (let i = 0; i < definitions.length; i += CHUNK) {
+  const slice = definitions.slice(i, i + CHUNK);
+  const { error } = await db
+    .from('card_definitions')
+    .upsert(slice, { onConflict: 'catalogue_version_id,card_key' });
+  if (error) {
+    console.error(`card_definitions [${i}..]:`, error.message);
+    process.exit(1);
+  }
+  written += slice.length;
+  process.stdout.write(`\r  cards ${written}/${definitions.length}`);
+}
+process.stdout.write('\n');
+
+// --- 3. champion pools -------------------------------------------------------
+
+const { data: ids, error: idsError } = await db
+  .from('card_definitions')
+  .select('id, card_key')
+  .eq('catalogue_version_id', version.id);
+
+if (idsError) {
+  console.error('reading back card ids:', idsError.message);
+  process.exit(1);
+}
+
+const idByKey = new Map(ids.map((r) => [r.card_key, r.id]));
+
+const pool = cards.flatMap((c) => (c.championPool || []).map((p) => ({
+  card_definition_id: idByKey.get(c.cardKey),
+  champion_key: p.championKey,
+  champion_name: p.championName,
+  games: p.games,
+  winrate: p.winrate,
+  mastery: p.mastery,
+  slot: p.slot ?? 0,
+})).filter((p) => p.card_definition_id));
+
+let pooled = 0;
+for (let i = 0; i < pool.length; i += CHUNK * 2) {
+  const slice = pool.slice(i, i + CHUNK * 2);
+  const { error } = await db
+    .from('card_champion_pool')
+    .upsert(slice, { onConflict: 'card_definition_id,champion_key' });
+  if (error) {
+    console.error(`card_champion_pool [${i}..]:`, error.message);
+    process.exit(1);
+  }
+  pooled += slice.length;
+  process.stdout.write(`\r  pool  ${pooled}/${pool.length}`);
+}
+process.stdout.write('\n');
+
+// --- 4. activate -------------------------------------------------------------
+
+if (ACTIVATE) {
+  // The partial unique index allows exactly one active row, so stand the old one down first.
+  await db.from('catalogue_versions').update({ is_active: false }).eq('is_active', true);
+  const { error } = await db
+    .from('catalogue_versions')
+    .update({ is_active: true })
+    .eq('id', version.id);
+  if (error) {
+    console.error('activating:', error.message);
+    process.exit(1);
+  }
+  console.log(`\ncatalogue ${semver} is now active — packs roll against it.`);
+} else {
+  console.log(`\ncatalogue ${semver} loaded but not active (--no-activate).`);
+}

@@ -1,0 +1,227 @@
+# 02 — Cards & Collection
+
+## 1. Card taxonomy
+
+```
+Card
+ +-- PlayerCard        a player-season, e.g. faker-2024          (the heart of the game)
+ +-- CoachCard         a passive team modifier applied in sim
+ +-- MasteryToken      +N mastery for one card on one champion
+ +-- CreditPack        soft currency
+```
+
+Only `PlayerCard` goes in a lineup. The others are consumables or passives.
+
+## 2. PlayerCard anatomy
+
+A PlayerCard is **immutable catalogue data** (`card_definitions`) plus **per-manager mutable
+state** (`manager_cards`: level, XP, mastery deltas from tokens). The catalogue row is
+produced entirely by the data pipeline ([03](03-data-pipeline.md)).
+
+### 2.1 Identity
+
+| Field | Example | Source |
+|---|---|---|
+| `card_key` | `faker-2024` | generated: `slug(player) + "-" + season` |
+| `player_name` | `Faker` | Leaguepedia |
+| `real_name` | `Lee Sang-hyeok` | Leaguepedia (optional, may be absent) |
+| `season` | `2024` | derived from match dates |
+| `team` | `T1` | most games played that season |
+| `region` | `LCK` | team's league |
+| `role` | `MID` | most games played that season |
+| `portrait_url` | Supabase Storage key | see [03 section 8](03-data-pipeline.md) on image rights |
+
+### 2.2 Ratings
+
+One **OVR** (40-99) plus six sub-stats (1-99). All are computed, never authored.
+
+| Sub-stat | Plain meaning | Drives in sim |
+|---|---|---|
+| `laning` | Wins the first 15 minutes | Lane-phase power, plate/first-tower rolls |
+| `teamfight` | Damage and impact in 5v5 | Teamfight contest power (mid/late) |
+| `mechanics` | Raw individual execution | Skirmish and 1v1/2v2 contest power, solo kills |
+| `macro` | Map movement, objective setup, rotations | Objective contest power, roam events |
+| `vision` | Ward control and denial | Ambush/pick probability both ways, objective setup |
+| `consistency` | How little the performance varies | Shrinks this player's per-event variance |
+
+`clutch` is deliberately **not** a sub-stat — it is modelled as a derived modifier applied only
+in late-game and elimination contexts, because treating it as a flat stat would double-count
+teamfight. See [04 section 5.4](04-simulation-engine.md).
+
+### 2.3 Champion pool
+
+An array of up to 15 entries, ordered by games played:
+
+```jsonc
+"champion_pool": [
+  { "champion": "Azir",    "games": 31, "mastery": 94, "winrate": 0.58 },
+  { "champion": "Orianna", "games": 22, "mastery": 88, "winrate": 0.64 },
+  { "champion": "Ahri",    "games": 14, "mastery": 79, "winrate": 0.50 }
+]
+```
+
+Champions outside the pool are **not forbidden** — they are drafted at `mastery = 0`, which is
+a severe penalty (see section 2.4). This keeps the draft open while making the collection matter.
+
+### 2.4 Effective rating on a champion
+
+The single most important formula in the game. Used by the sim for every contest.
+
+```
+masteryFactor(m)  = 0.70 + 0.30 * (m / 100)          # 0.70 at m=0, 1.00 at m=100
+roleFit(champ, slot) = 1.00  native role
+                     = 0.90  flex (champion has >=10% pro presence in that role, same season)
+                     = 0.72  off-role
+
+effRating(card, champ, slot) =
+    clamp( (ovr + levelBonus) * masteryFactor(mastery) * roleFit(champ, slot), 30, 99 )
+```
+
+A 92 OVR mid on an unmastered champion lands at ~64 — roughly a low-tier card. A 78 OVR mid on
+a 95-mastery main lands at ~77. That crossover is the design goal: **pool depth beats raw OVR**.
+
+`levelBonus` is `0.4 * (level - 1)`, max `+3.6` (see [01 section 5](01-game-loop.md)).
+
+### 2.5 Synergy / chemistry
+
+A small team-level bonus, capped so it can never dominate:
+
+| Condition | Bonus |
+|---|---|
+| Two cards shared a real team in the same season (e.g. `faker-2024` + `keria-2024`) | +1.5 effRating each |
+| Three or more such cards | +2.5 each (does not stack with the above) |
+| All five from the same region | +1.0 each |
+| All five from the same season year | +1.0 each |
+
+Max total chemistry: **+4.5** per player. Chemistry is shown on the lineup screen as a
+connection graph — it is a *nice to have*, not a *must build around*.
+
+### 2.6 Non-player cards
+
+**CoachCard** — a passive applied to the whole team while equipped. One coach slot per lineup.
+
+| Example | Effect |
+|---|---|
+| `Draft Specialist` | +1 effective ban (your 6th ban is auto-chosen from the opponent's top pools) |
+| `Early Game Coach` | +6% team power in phase EARLY |
+| `Objective Caller` | +8% to dragon/baron contest rolls |
+| `Vision Coach` | +10 team vision score, improves pick-event odds |
+
+Coaches are **fictional archetypes**, not real people. This avoids both data problems and
+likeness problems, and it keeps them from competing with player cards for collection attention.
+
+**MasteryToken** — `+12 mastery` for one owned card on one champion, cap 100. Tokens are
+typed: `MID`, `JNG`, etc., and a generic `ANY` at lower drop rate.
+
+**CreditPack** — 100 / 250 / 600 Credits.
+
+## 3. Rarity
+
+Rarity is a **presentation and drop-rate axis derived from OVR plus accolades**, not an
+independent power axis. It exists so pack openings have a readable moment of excitement.
+
+| Tier | OVR band | Extra condition | Catalogue share (target) |
+|---|---|---|---|
+| `COMMON` | 40-67 | — | 45% |
+| `RARE` | 68-76 | — | 30% |
+| `EPIC` | 77-84 | — | 17% |
+| `LEGENDARY` | 85-91 | — | 6.5% |
+| `ICON` | 92-99 | **and** won Worlds, an international final, or a season MVP | 1.5% |
+
+An ICON-band OVR without the accolade stays LEGENDARY. This is what keeps "Faker 2016" and
+"Faker 2021" feeling different, and what makes the ICON shelf a short, memorable list.
+
+The catalogue shares are enforced by the rating normalisation in
+[03 section 6](03-data-pipeline.md) — if the distribution drifts, the band cutoffs are
+recalibrated, not the ratings.
+
+## 4. Starter squad
+
+On league start every manager gets exactly 5 PlayerCards, one per role, drawn with these
+constraints:
+
+- OVR band **72-80** (RARE/low-EPIC). Nobody starts with an ICON.
+- Each card has **>= 3** champions at mastery >= 70, so the first drafts are playable.
+- No two managers in a league get the same `card_key`.
+- Seeded by `league_id` so a league's starter grant is reproducible and auditable.
+- Plus: 1 `STANDARD` coach card, 3 generic mastery tokens, 500 Credits.
+
+## 5. Packs
+
+### 5.1 Entitlement
+
+- 1 free pack per manager per league-day, created at the 00:00 day roll.
+- Unclaimed packs **bank up to 3**. Beyond that, the oldest expires. This forgives a weekend
+  away without letting someone hoard a month of packs into one opening.
+- Purchased packs (300 Credits) do not bank and are capped at 2/day.
+
+### 5.2 Pack contents
+
+A v1 pack is **one slot**, rolled against this table:
+
+| Outcome | Weight |
+|---|---|
+| PlayerCard | 62% |
+| MasteryToken (role-typed) | 18% |
+| MasteryToken (ANY) | 5% |
+| CoachCard | 5% |
+| CreditPack | 10% |
+
+PlayerCard rarity roll, given a PlayerCard outcome:
+
+| Tier | Base | With pity |
+|---|---|---|
+| COMMON | 52% | |
+| RARE | 30% | |
+| EPIC | 13% | |
+| LEGENDARY | 4.4% | guaranteed by pack 40 since last Legendary+ |
+| ICON | 0.6% | guaranteed by pack 150 since last ICON |
+
+**Pity counters** are per manager, persisted, and reset on trigger. They are visible in the UI
+("Legendary in at most 12 packs") because hidden pity is just anxiety.
+
+**Role weighting.** 30% of PlayerCard pulls are biased toward the manager's *thinnest* role
+(fewest owned cards). Nobody should be stuck starting a 68 OVR jungler on day 9 because the
+RNG never gave them one.
+
+### 5.3 Duplicates
+
+Pulling a card you own does not give a second copy. Instead:
+
+- The card gains **+250 XP** (roughly 1.5 levels at low level).
+- You receive a role-typed mastery token.
+- If the card is already level 10: 300 Credits instead.
+
+No dust/shard currency in v1 — one currency is enough.
+
+## 6. Collection screen requirements
+
+- Default view: grid, grouped by role, sorted by OVR descending.
+- Filters: role, rarity, region, season year, team, "has mastery on champion X".
+- Search by player name or champion name.
+- Card detail shows: portrait, OVR, six sub-stats as a radar, full champion pool with mastery
+  bars, level/XP bar, real-season box-score summary (games, KDA, GD@15, DPM), accolades, and a
+  **data provenance line** ("Derived from 68 games, LCK + Worlds 2024 — source: Oracle's
+  Elixir / Leaguepedia").
+- Comparison mode: pin two cards side by side. This is the group-chat screenshot feature.
+
+## 7. Balance guards
+
+| Risk | Guard |
+|---|---|
+| Collection snowball decides the season | `masteryFactor` floor of 0.70 and the sim's logistic compression ([04 section 9](04-simulation-engine.md)) |
+| One manager hoards a role | Thinnest-role pack weighting (section 5.2) |
+| Chemistry forces mono-team squads | Chemistry capped at +4.5, which is less than one mastery tier |
+| Card levels create power creep | +3.6 OVR max, hard cap, no prestige in v1 |
+| ICON cards feel mandatory | ICON OVR advantage over LEGENDARY is <= 8 OVR, worth ~4% win probability per [04 section 9](04-simulation-engine.md) |
+
+## 8. Open questions
+
+- **Multi-slot packs.** One slot is clean but a 3-slot pack feels better to open. Decide after
+  the first pack-opening animation prototype.
+- **Should duplicates be tradeable within a league?** Trading is a v2 feature, but duplicate
+  gifting might be a cheap early social hook.
+- **Coach card depth.** Four archetypes may be too few to bother with a coach slot at all;
+  consider folding coaches into v2 if they feel vestigial in playtest.
+- **Mastery cap at 100.** Should token spend be able to push a card above its real-season pool
+  breadth, or is that a lore violation worth enforcing?

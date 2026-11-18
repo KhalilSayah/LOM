@@ -1,0 +1,15 @@
+node_modules
+.nuxt
+.output
+.data
+dist
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.vercel
+.vscode
+packages/card-engine/assets/ddragon
+packages/card-engine/assets/portraits
+packages/card-engine/dist
