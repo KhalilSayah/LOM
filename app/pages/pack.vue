@@ -6,6 +6,7 @@ interface PackStatus {
   hour: number;
   timeZone: string;
   available: boolean;
+  catalogue: string | null;
   claim: null | { rarity: string; wasDuplicate: boolean; xpAwarded: number; card: any };
   pity: { sinceLegendary: number; sinceIcon: number; packsOpened: number; legendaryIn: number; iconIn: number };
   collectionCount: number;
@@ -108,6 +109,15 @@ useHead({ title: 'Pack — LOM' });
       </p>
     </section>
 
+    <!-- no cards loaded yet -->
+    <section v-else-if="status && !status.catalogue" class="empty">
+      <h2>No catalogue loaded</h2>
+      <p>
+        There are no cards to roll against yet. Build one and push it to Supabase:
+        <code>npm run catalogue:build</code> then <code>npm run catalogue:push</code>.
+      </p>
+    </section>
+
     <!-- a pack is waiting -->
     <section v-else-if="status?.available" class="waiting">
       <div class="waiting__art" aria-hidden="true">
@@ -166,6 +176,15 @@ useHead({ title: 'Pack — LOM' });
 
 <style scoped>
 .pack-skeleton { height: 58vh; }
+
+.empty code {
+  font-family: ui-monospace, 'SFMono-Regular', monospace;
+  font-size: 0.86em;
+  padding: 0.12em 0.4em;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--ink);
+}
 
 .waiting {
   display: grid;
