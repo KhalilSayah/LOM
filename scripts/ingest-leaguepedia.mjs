@@ -93,7 +93,21 @@ async function cargo(params, cacheKey) {
   let body;
   for (let attempt = 0; ; attempt++) {
     lastCall = Date.now();
-    const res = await fetch(url, { headers: { 'User-Agent': UA } });
+
+    // A dropped socket mid-run is ordinary over a job this long, and it arrives as a thrown
+    // TypeError rather than a status, so it needs catching separately or one blip ends a
+    // multi-hour ingest.
+    let res;
+    try {
+      res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(45000) });
+    } catch (err) {
+      if (attempt >= 5) throw new Error(`cargo: ${err instanceof Error ? err.message : String(err)}`);
+      const backoff = 5000 * (attempt + 1);
+      process.stdout.write(`
+  network error, waiting ${backoff / 1000}s... `);
+      await sleep(backoff);
+      continue;
+    }
 
     if (res.status === 429 || res.status >= 500) {
       if (attempt >= 5) throw new Error(`cargo: HTTP ${res.status} after ${attempt + 1} attempts`);

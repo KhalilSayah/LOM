@@ -8,6 +8,8 @@ dist
 !.env.example
 .DS_Store
 *.log
+data/catalogue.json
+data/catalogue.*.json
 .vercel
 .vscode
 packages/card-engine/assets/ddragon

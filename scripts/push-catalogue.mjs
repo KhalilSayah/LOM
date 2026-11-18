@@ -106,17 +106,27 @@ process.stdout.write('\n');
 
 // --- 3. champion pools -------------------------------------------------------
 
-const { data: ids, error: idsError } = await db
-  .from('card_definitions')
-  .select('id, card_key')
-  .eq('catalogue_version_id', version.id);
+// PostgREST caps a response at 1000 rows, so this has to be paged. Without it a full
+// catalogue silently loses the champion pool of every card past the first thousand.
+const idByKey = new Map();
+for (let from = 0; ; from += 1000) {
+  const { data: ids, error: idsError } = await db
+    .from('card_definitions')
+    .select('id, card_key')
+    .eq('catalogue_version_id', version.id)
+    .range(from, from + 999);
 
-if (idsError) {
-  console.error('reading back card ids:', idsError.message);
-  process.exit(1);
+  if (idsError) {
+    console.error('reading back card ids:', idsError.message);
+    process.exit(1);
+  }
+  for (const row of ids) idByKey.set(row.card_key, row.id);
+  if (ids.length < 1000) break;
 }
 
-const idByKey = new Map(ids.map((r) => [r.card_key, r.id]));
+if (idByKey.size !== cards.length) {
+  console.warn(`! read back ${idByKey.size} ids for ${cards.length} cards`);
+}
 
 const pool = cards.flatMap((c) => (c.championPool || []).map((p) => ({
   card_definition_id: idByKey.get(c.cardKey),

@@ -44,6 +44,18 @@ npm run ingest -- --years 2023..2025 --leagues LCK,LEC,LCS,LPL
 SUPABASE_URL=... SUPABASE_SERVICE_KEY=... npm run catalogue:push
 ```
 
+`data/catalogue.json` is a build artifact and is not committed — both producers regenerate
+it in one command, and the copy that matters is the one in Supabase.
+
+For the whole history, run it a year at a time so each season is normalised against its own
+cohort rather than against every era at once:
+
+```bash
+scripts/ingest-all.sh 2013 2026          # resumable; skips years already done
+node scripts/merge-catalogues.mjs        # .data/years/*.json -> data/catalogue.json
+SUPABASE_URL=... SUPABASE_SERVICE_KEY=... npm run catalogue:push
+```
+
 The ingest walks every official Primary tournament for those years, aggregates each
 player-season, and maps role-cohort percentiles onto the band shares in
 [docs/02](docs/02-cards-and-collection.md). It is deliberately slow — Leaguepedia rate-limits
