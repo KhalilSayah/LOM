@@ -61,7 +61,14 @@ async function submit() {
         },
       });
       if (err) throw err;
-      // With email confirmation on, there is no session yet and the manager has mail.
+
+      // Signing up is meant to sign you in. LOM is a friends-only league, the built-in
+      // SMTP is capped at a handful of mails an hour, and a confirmation step mostly adds
+      // a place for this to break — so Supabase is set up with "Confirm email" off and a
+      // session comes back here.
+      //
+      // If it does not, that setting is still on. Say so plainly rather than leaving
+      // someone staring at a form that looked like it worked.
       if (!data.session) { check.value = true; return; }
     } else {
       const { error: err } = await supabase.auth.signInWithPassword({
@@ -127,7 +134,10 @@ useHead({ title: 'LOM — League of Managers' });
 
       <p v-if="error" class="notice notice--bad">{{ error }}</p>
       <p v-else-if="check" class="notice">
-        Check your inbox. The link signs you in and brings you straight back here.
+        Account created, but this project still has email confirmation switched on, so
+        it is waiting on a link. Check your inbox — or turn it off in Supabase under
+        <strong>Authentication &rsaquo; Providers &rsaquo; Email &rsaquo; Confirm email</strong>
+        and sign in.
       </p>
 
       <button class="btn btn--block" type="submit" :disabled="busy">

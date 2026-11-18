@@ -22,11 +22,15 @@ npm run dev              # http://localhost:3000
 2. **SQL Editor** → paste `supabase/migrations/0001_init.sql` → Run. That creates the
    catalogue, collection and pack tables, the row-level security policies, and the trigger
    that gives every new account a profile.
-3. **Authentication → Providers → Email**: on. For a friends-only build, turn
-   *Confirm email* off so sign-up signs you straight in; leave it on and new managers get a
-   confirmation mail first.
-4. **Authentication → URL Configuration**: set the Site URL to your Vercel domain, and add
-   `http://localhost:3000` to the redirect allow-list.
+3. **Authentication → Providers → Email**: on, and turn **Confirm email off**. Signing up
+   then signs you straight in. The built-in SMTP is capped at a few messages an hour, so a
+   confirmation step on a friends-only league buys nothing and gives `email rate limit
+   exceeded` the moment you test signup twice. The app expects a session back from
+   `signUp` and explains itself if the setting is still on.
+4. **Authentication → URL Configuration**: set the Site URL to your Vercel domain, and put
+   both `https://<your-domain>/**` and `http://localhost:3000/**` on the Redirect URLs
+   allow-list. Password resets go through those, and anything not on the list falls back to
+   the Site URL — which is how a link ends up pointing at localhost.
 5. **Project Settings → API**: copy the Project URL, the `anon` key and the `service_role`
    key into `.env`.
 
