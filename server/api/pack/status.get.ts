@@ -1,4 +1,5 @@
-import { serverSupabaseUser, serverSupabaseServiceRole } from '#supabase/server';
+import { serverSupabaseServiceRole } from '#supabase/server';
+import { requireManager } from '~~/server/utils/auth';
 import { configuredWindow } from '~~/server/utils/packDay';
 import { PITY } from '~~/server/utils/roll';
 import { CARD_SELECT, toCard } from '~~/shared/cardShape';
@@ -10,9 +11,7 @@ import { CARD_SELECT, toCard } from '~~/shared/cardShape';
  * the current time.
  */
 export default defineEventHandler(async (event) => {
-  const user = await serverSupabaseUser(event);
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Sign in first' });
-
+  const manager = await requireManager(event);
   const config = useRuntimeConfig();
   const db = serverSupabaseServiceRole(event);
   const window = configuredWindow(config);
@@ -21,16 +20,16 @@ export default defineEventHandler(async (event) => {
     db.from('pack_claims')
       .select(`pack_day, claimed_at, rarity, was_duplicate, xp_awarded,
                card_definitions ( ${CARD_SELECT} )`)
-      .eq('profile_id', user.id)
+      .eq('profile_id', manager.id)
       .eq('pack_day', window.packDay)
       .maybeSingle(),
     db.from('pity_counters')
       .select('since_legendary, since_icon, packs_opened')
-      .eq('profile_id', user.id)
+      .eq('profile_id', manager.id)
       .maybeSingle(),
     db.from('collection_cards')
       .select('id', { count: 'exact', head: true })
-      .eq('profile_id', user.id),
+      .eq('profile_id', manager.id),
     db.from('catalogue_versions')
       .select('semver')
       .eq('is_active', true)
