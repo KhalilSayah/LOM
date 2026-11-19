@@ -162,12 +162,29 @@ function accoladesFor(t, place) {
   return [];
 }
 
+/**
+ * What winning is worth, on top of what the scoreboard measured.
+ *
+ * docs/03 section 6.3 sets these at 3 / 2 / 1 with a cap of 4, and docs/03 section 12 asks
+ * whether they belong in OVR at all. The answer here is that they have to count for more
+ * than the doc's figures, because of what the measured part cannot see: Faker's two
+ * Worlds-winning seasons rate 74 on the box score, since his damage and gold sit below the
+ * median of his own cohort while his value — shotcalling, tempo, making four other players
+ * better — appears in no column Leaguepedia carries.
+ *
+ * --accolade-scale multiplies the doc's weights and its cap together, so their relative
+ * shape is kept and only their size against the measured part changes. 1 is the doc as
+ * written. Raising it trades a little honesty for recognisability, and it lifts every player
+ * on a winning roster, not just the famous one — which is the cost docs/03 section 12 is
+ * pointing at.
+ */
+const ACCOLADE_SCALE = Number(flag('accolade-scale', '2.5'));
 const ACCOLADE_BONUS = {
-  WORLDS_WINNER: 3.0,
-  INTERNATIONAL_FINALIST: 2.0,
-  DOMESTIC_TITLE: 1.0,
+  WORLDS_WINNER: 3.0 * ACCOLADE_SCALE,
+  INTERNATIONAL_FINALIST: 2.0 * ACCOLADE_SCALE,
+  DOMESTIC_TITLE: 1.0 * ACCOLADE_SCALE,
 };
-const ACCOLADE_CAP = 4.0;
+const ACCOLADE_CAP = 4.0 * ACCOLADE_SCALE;
 
 // --- weighted statistics ------------------------------------------------------
 
