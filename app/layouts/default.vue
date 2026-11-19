@@ -15,7 +15,11 @@ const { packReady } = usePackSignal();
       </NuxtLink>
       <NuxtLink to="/collection">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h7v8H4zm9 0h7v5h-7zM4 13h7v8H4zm9-3h7v11h-7z"/></svg>
-        Collection
+        Cards
+      </NuxtLink>
+      <NuxtLink to="/roster">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3.2 3.2 0 1 0 0 6.4A3.2 3.2 0 0 0 12 3ZM5 10.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Zm14 0a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2ZM12 11c-2.9 0-5.2 1.7-5.2 3.8V21h10.4v-6.2c0-2.1-2.3-3.8-5.2-3.8ZM5 12c-2.2 0-4 1.3-4 3V21h3.8v-6.2c0-1 .4-2 1.1-2.7A5 5 0 0 0 5 12Zm14 0c-.3 0-.6 0-.9.1.7.7 1.1 1.7 1.1 2.7V21H23v-6c0-1.7-1.8-3-4-3Z"/></svg>
+        Roster
       </NuxtLink>
       <NuxtLink to="/discovery">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm3.9 6.1-2.2 5-5 2.2 2.2-5 5-2.2ZM12 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>
