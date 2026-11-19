@@ -96,28 +96,48 @@ Sections, top to bottom:
 
 ```
 ┌──────────────────────────────────┐
-│  LINEUP · vs Sam · tonight 20:30 │
+│  ROSTER                    4 / 5 │
 ├──────────────────────────────────┤
-│  TOP  [ Zeus 2023      ] 86  ▸   │
-│  JNG  [ Oner 2024      ] 83  ▸   │
-│  MID  [ Faker 2024     ] 91  ▸   │
-│  BOT  [ Gumayusi 2024  ] 88  ▸   │
-│  SUP  [ Keria 2024     ] 92  ▸   │
+│  RATING 84.2  CHEM +3.5  POOL 41 │
 ├──────────────────────────────────┤
-│  CHEMISTRY  +3.5                 │
-│  ●━━●━━●━━●  T1 2024 ×4          │
+│  TOP   JNG   MID   BOT   SUP     │
+│ ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌ - ┐    │
+│ │art│ │art│ │art│ │art│ │ + │    │  <- five slots, all visible
+│ └───┘ └───┘ └───┘ └───┘ └ - ┘    │
+│   86    83    91    88    ··     │
 ├──────────────────────────────────┤
-│  STRATEGY   ⚡ Aggressive  ▾      │
-│  COACH      Early Game Coach ▾   │
+│  ┌────────┐  SUP                 │
+│  │        │  Keria 2024          │  <- the slot in focus, full size
+│  │  card  │  T1 · 7 deep · LV 3  │
+│  │        │  +2.5 chemistry      │
+│  └────────┘  [ Take out ]        │
+├──────────────────────────────────┤
+│  YOUR SUP CARDS (12)   [search]  │
+│  ┌──┐┌──┐┌──┐┌──┐┌──┐┌──┐        │  <- tap one to place it
+│  └──┘└──┘└──┘└──┘└──┘└──┘        │
 ├──────────────────────────────────┤
 │  Combined pool covers 41 champs  │
 │  Weakest coverage: JNG (6)       │
 └──────────────────────────────────┘
 ```
 
-Tapping a slot opens a role-filtered card picker sorted by OVR, with mastery-depth shown. The
-**pool coverage** line at the bottom is a small feature with a large teaching effect: it tells
-you, before the draft, where you are vulnerable to bans.
+A board, not a list. This screen used to be five text rows — `TOP [ Zeus 2023 ] 86 ▸` — and
+rows are wrong for a collecting game: the art, the frame and the rarity are most of why a
+card is worth owning, and none of them survive being flattened into a line of text. A lineup
+is also the thing a manager shows people, which a list is not.
+
+Tapping a slot **selects** it rather than opening a picker over the top. A modal hides the
+board you are trying to build, and comparing two options through one costs a round trip each
+way. Selecting filters the cards underneath to that role, sorted by OVR, and shows whatever
+is in the slot at full size above them — so the card you are about to replace and the cards
+you might replace it with are on screen together.
+
+A card already in another slot is dimmed and labelled with the slot it is in, rather than
+hidden: moving someone from BOT to MID is a thing people do deliberately, and it should not
+require emptying the other slot first.
+
+The **pool coverage** line is a small feature with a large teaching effect: it tells you,
+before the draft, where you are vulnerable to bans.
 
 Locking: the screen shows a countdown to lineup lock at `M - 30s` and goes read-only after.
 

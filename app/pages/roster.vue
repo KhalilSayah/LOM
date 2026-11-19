@@ -4,23 +4,27 @@ import { ROLES, chemistryFor, coverageFor, averageRating, DEPTH_MASTERY } from '
 /**
  * The roster: five slots, one per role, filled from cards you own.
  *
- * Text rows rather than card art. docs/09 section 6 draws it this way and it is
- * right: this screen is a comparison — who is in, what they bring, where the holes
- * are — and five pieces of card art answer none of those questions while pushing the
- * chemistry and coverage readouts off the first screen.
+ * This was a list of text rows, which is how docs/09 section 6 sketches it. The sketch is
+ * wrong for this game. A lineup in a collecting game is the thing you show people, and five
+ * rows of "Zeus 2023 · 86" show nothing — the art, the frame and the rarity are most of why
+ * a card is worth owning, and none of them survive being flattened into a row.
  *
- * Every change saves on the tap. The slot updates locally first and rolls back if
- * the endpoint refuses, so picking a card feels like picking a card and not like
- * filing a form.
+ * So it is a board: five slots you can see at once, your cards underneath, tap one to put it
+ * in. Tapping a slot selects it rather than opening a modal, because a modal hides the board
+ * you are trying to build and makes comparing two options a round trip.
+ *
+ * The readouts that justified the rows — chemistry, pool coverage — stay. They sit above the
+ * board where they still answer "is this lineup any good", and they update as you place.
  */
 
 const data = ref<any>(null);
 const loading = ref(true);
 const error = ref('');
-
-const picking = ref<string | null>(null);
-const search = ref('');
 const saving = ref(false);
+const search = ref('');
+
+/** The slot being filled. Never null: the board always has one slot in focus. */
+const selectedRole = ref<string>(ROLES[0] as string);
 
 const message = (e: any, fallback: string) =>
   e?.statusMessage || e?.data?.statusMessage || e?.data?.message || fallback;
@@ -29,6 +33,9 @@ async function load() {
   try {
     data.value = await $fetch<any>('/api/roster');
     error.value = '';
+    // Open on the first hole, which is what someone arriving here wants to fix.
+    const empty = ROLES.find((r) => !data.value?.roster?.[r]);
+    if (empty) selectedRole.value = empty;
   } catch (e: any) {
     error.value = message(e, 'Could not load your roster.');
   } finally {
@@ -38,7 +45,6 @@ async function load() {
 
 onMounted(load);
 
-/** The five slots as the rules module wants them: role -> card, nulls included. */
 const slots = computed<Record<string, any>>(() => {
   const out: Record<string, any> = {};
   for (const role of ROLES) out[role] = data.value?.roster?.[role]?.card ?? null;
@@ -51,13 +57,15 @@ const chemistry = computed(() => chemistryFor(slots.value));
 const coverage = computed(() => coverageFor(slots.value));
 const rating = computed(() => averageRating(slots.value));
 const filledCount = computed(() => ROLES.filter((r) => slots.value[r]).length);
-
 const owned = computed<any[]>(() => data.value?.owned ?? []);
 
-/** What can go in the slot being picked for: right role, sorted by the obvious pick. */
-const candidates = computed(() => {
-  const role = picking.value;
-  if (!role) return [];
+/** The card the preview is showing: whatever is in the slot you have selected. */
+const previewCard = computed(() => slots.value[selectedRole.value]);
+const previewHeld = computed(() => held(selectedRole.value));
+
+/** Your cards for the selected role, best first. */
+const bench = computed(() => {
+  const role = selectedRole.value;
   const q = search.value.trim().toLowerCase();
 
   return owned.value
@@ -74,8 +82,12 @@ const candidates = computed(() => {
 const depth = (card: any) =>
   (card.championPool || []).filter((p: any) => p.mastery >= DEPTH_MASTERY).length;
 
-function openPicker(role: string) {
-  picking.value = role;
+/** Which slot, if any, a card is already in — so the board can say so instead of duplicating it. */
+const slotOf = (entryId: string) =>
+  ROLES.find((r) => data.value?.roster?.[r]?.id === entryId) ?? null;
+
+function select(role: string) {
+  selectedRole.value = role;
   search.value = '';
 }
 
@@ -93,7 +105,6 @@ async function choose(role: string, entry: any | null) {
     }
   }
   data.value.roster[role] = entry;
-  picking.value = null;
 
   saving.value = true;
   try {
@@ -118,7 +129,7 @@ useHead({ title: 'Roster — LOM' });
   <main class="page">
     <header class="topbar">
       <h1>Roster</h1>
-      <span class="topbar__meta">{{ filledCount }} / 5</span>
+      <span class="topbar__meta tnum">{{ filledCount }} / 5</span>
     </header>
 
     <p v-if="error" class="notice notice--bad">{{ error }}</p>
@@ -143,40 +154,110 @@ useHead({ title: 'Roster — LOM' });
         </div>
       </section>
 
-      <ul class="slots">
+      <!-- the five, all visible at once -->
+      <ul class="board">
         <li v-for="role in ROLES" :key="role">
-          <button class="slot" type="button" @click="openPicker(role)">
-            <span class="slot__role">{{ role }}</span>
+          <button
+            class="tile"
+            :class="{ 'is-selected': selectedRole === role, 'is-empty': !slots[role] }"
+            type="button"
+            :aria-pressed="selectedRole === role"
+            @click="select(role)"
+          >
+            <span class="tile__role">{{ role }}</span>
 
-            <span v-if="slots[role]" class="slot__card">
-              <span class="slot__name">
-                {{ slots[role].playerName }}
-                <span v-if="slots[role].season" class="slot__season">{{ slots[role].season }}</span>
-              </span>
-              <span class="muted slot__meta">
-                {{ slots[role].team || 'Unknown team' }}
-                · {{ depth(slots[role]) }} deep
-                <template v-if="held(role)?.level > 1"> · LV {{ held(role).level }}</template>
-              </span>
-              <span v-if="chemistry.byRole[role].bonus" class="slot__chem">
-                +{{ chemistry.byRole[role].bonus }} · {{ chemistry.byRole[role].reasons.join(' · ') }}
-              </span>
+            <span v-if="slots[role]" class="tile__art">
+              <LomCard :card="slots[role]" compact :interactive="false" />
+            </span>
+            <span v-else class="tile__hole" aria-hidden="true">+</span>
+
+            <span class="tile__foot tnum" :class="slots[role] ? `is-${slots[role].rarity.toLowerCase()}` : ''">
+              {{ slots[role] ? slots[role].ovr : '··' }}
             </span>
 
-            <span v-else class="slot__empty">Pick a {{ role }}</span>
-
-            <span class="slot__ovr tnum" :class="slots[role] ? `is-${slots[role].rarity.toLowerCase()}` : ''">
-              {{ slots[role] ? slots[role].ovr : '··' }}
+            <span v-if="chemistry.byRole[role].bonus" class="tile__chem tnum">
+              +{{ chemistry.byRole[role].bonus }}
             </span>
           </button>
         </li>
       </ul>
 
+      <!-- the slot in focus, full size -->
+      <section class="preview">
+        <template v-if="previewCard">
+          <div class="preview__card">
+            <LomCard :card="previewCard" />
+          </div>
+          <div class="preview__side">
+            <p class="eyebrow">{{ selectedRole }}</p>
+            <h2 class="preview__name">
+              {{ previewCard.playerName }}
+              <span v-if="previewCard.season" class="preview__season">{{ previewCard.season }}</span>
+            </h2>
+            <p class="muted preview__meta">
+              {{ previewCard.team || 'Unknown team' }} · {{ depth(previewCard) }} champion{{ depth(previewCard) === 1 ? '' : 's' }} deep
+              <template v-if="previewHeld?.level > 1"> · level {{ previewHeld.level }}</template>
+            </p>
+            <p v-if="chemistry.byRole[selectedRole].bonus" class="preview__chem">
+              +{{ chemistry.byRole[selectedRole].bonus }} chemistry ·
+              {{ chemistry.byRole[selectedRole].reasons.join(' · ') }}
+            </p>
+            <button class="btn btn--ghost preview__clear" type="button" :disabled="saving" @click="choose(selectedRole, null)">
+              Take out of the lineup
+            </button>
+          </div>
+        </template>
+        <p v-else class="muted preview__empty">
+          No {{ selectedRole }} picked. Choose one below.
+        </p>
+      </section>
+
+      <!-- everything you own for that slot -->
+      <section class="bench">
+        <div class="bench__head">
+          <p class="eyebrow">Your {{ selectedRole }} cards <span class="faint">({{ bench.length }})</span></p>
+          <input
+            v-model="search"
+            class="bench__search"
+            type="search"
+            :placeholder="`Search ${selectedRole.toLowerCase()}s`"
+          >
+        </div>
+
+        <ul v-if="bench.length" class="bench__grid">
+          <li v-for="entry in bench" :key="entry.id">
+            <button
+              class="pick"
+              :class="{ 'is-in': slotOf(entry.id) === selectedRole, 'is-elsewhere': slotOf(entry.id) && slotOf(entry.id) !== selectedRole }"
+              type="button"
+              :disabled="saving"
+              @click="choose(selectedRole, entry)"
+            >
+              <LomCard :card="entry.card" compact :interactive="false" />
+              <span class="pick__tag">
+                <span class="tnum">{{ entry.card.ovr }}</span>
+                <span v-if="slotOf(entry.id) === selectedRole">in</span>
+                <span v-else-if="slotOf(entry.id)">{{ slotOf(entry.id) }}</span>
+              </span>
+            </button>
+          </li>
+        </ul>
+
+        <p v-else class="muted bench__none">
+          <template v-if="search">Nothing matches “{{ search }}”.</template>
+          <template v-else>
+            You own no {{ selectedRole }} cards yet. Open a pack, or buy a
+            <NuxtLink to="/shop">Signing pack</NuxtLink> — five cards, one for every lane.
+          </template>
+        </p>
+      </section>
+
       <section class="panel read">
         <p class="eyebrow">What this roster covers</p>
         <p class="read__line">
           <template v-if="coverage.champions">
-            {{ coverage.champions }} champions at mastery {{ DEPTH_MASTERY }} or better.
+            {{ coverage.champions }} champion{{ coverage.champions === 1 ? '' : 's' }} at mastery
+            {{ DEPTH_MASTERY }} or better.
             <template v-if="coverage.weakest">
               Thinnest: {{ coverage.weakest.role }} with {{ coverage.weakest.champions }}.
             </template>
@@ -211,198 +292,185 @@ useHead({ title: 'Roster — LOM' });
         </p>
       </div>
     </template>
-
-    <!-- Picker -->
-    <div v-if="picking" class="picker" role="dialog" aria-modal="true" :aria-label="`Pick a ${picking}`">
-      <div class="picker__scrim" @click="picking = null" />
-      <div class="picker__sheet">
-        <header class="picker__head">
-          <h2>{{ picking }}</h2>
-          <button class="btn btn--quiet" type="button" @click="picking = null">Close</button>
-        </header>
-
-        <input
-          v-model="search" class="picker__search" type="search"
-          placeholder="Player, team or champion" :aria-label="`Search your ${picking} cards`"
-        >
-
-        <button
-          v-if="slots[picking]" class="picker__clear" type="button"
-          @click="choose(picking, null)"
-        >
-          Empty this slot
-        </button>
-
-        <ul v-if="candidates.length" class="picker__list">
-          <li v-for="entry in candidates" :key="entry.id">
-            <button
-              class="pick" type="button"
-              :aria-current="held(picking)?.id === entry.id"
-              @click="choose(picking!, entry)"
-            >
-              <span class="pick__main">
-                <span class="pick__name">
-                  {{ entry.card.playerName }}
-                  <span v-if="entry.card.season" class="slot__season">{{ entry.card.season }}</span>
-                </span>
-                <span class="muted pick__meta">
-                  {{ entry.card.team || 'Unknown team' }} · {{ depth(entry.card) }} deep
-                  <template v-if="entry.level > 1"> · LV {{ entry.level }}</template>
-                </span>
-              </span>
-              <span class="pick__ovr tnum" :class="`is-${entry.card.rarity.toLowerCase()}`">
-                {{ entry.card.ovr }}
-              </span>
-            </button>
-          </li>
-        </ul>
-
-        <div v-else class="empty picker__empty">
-          <h2>No {{ picking }} cards</h2>
-          <p>Nothing in your collection plays there yet.</p>
-          <NuxtLink class="btn" to="/pack" @click="picking = null">Go to the pack</NuxtLink>
-        </div>
-      </div>
-    </div>
   </main>
 </template>
 
 <style scoped>
-.sheet-skeleton { height: 320px; border-radius: var(--radius); }
+.sheet-skeleton { height: 60vh; }
 
-.totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.totals__cell { text-align: center; }
-.totals__n { font-family: var(--font-display); font-size: 27px; font-weight: 700; margin: 4px 0 0; }
-.totals__n.is-on { color: var(--accent); }
+.totals { display: flex; justify-content: space-between; gap: 10px; }
+.totals__cell { text-align: center; flex: 1; }
+.totals__n { font-size: 22px; font-weight: 700; }
+.totals__n.is-on { color: var(--good, #7df0dc); }
 
-.slots { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
-.slot {
-  width: 100%;
+/* --- the board ----------------------------------------------------------- */
+
+.board {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 70px;
-  padding: 12px 14px;
-  text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--ink);
-  font: inherit;
-  cursor: pointer;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
 }
-.slot:hover { border-color: var(--line-strong); }
-.slot__role {
-  font-family: var(--font-label);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: var(--ink-faint);
-}
-.slot__card { display: grid; gap: 2px; min-width: 0; }
-.slot__name { font-family: var(--font-display); font-size: 17px; font-weight: 700; }
-.slot__season { color: var(--ink-dim); font-weight: 600; }
-.slot__meta, .pick__meta { font-size: 12.5px; }
-.slot__chem {
-  font-family: var(--font-label);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-top: 2px;
-}
-.slot__empty { color: var(--ink-faint); font-size: 15px; }
-.slot__ovr, .pick__ovr { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
 
-.is-common { color: var(--r-common); }
-.is-rare { color: var(--r-rare); }
-.is-epic { color: var(--r-epic); }
-.is-legendary { color: var(--r-legendary); }
-.is-icon { color: var(--r-icon); }
-
-.read { margin-top: 12px; }
-.read__line { font-size: 13.5px; line-height: 1.6; margin: 8px 0 0; }
-.read__eyebrow { margin-top: 14px; }
-.read__chem { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 5px; font-size: 13.5px; }
-.read__chem strong { font-weight: 700; }
-
-.foot { margin: 18px 0 0; text-align: center; display: grid; gap: 10px; justify-items: center; }
-.foot__note { font-size: 12.5px; line-height: 1.5; margin: 0; max-width: 34em; }
-
-.picker { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; }
-.picker__scrim { position: absolute; inset: 0; background: rgba(4, 6, 12, 0.72); }
-.picker__sheet {
+.tile {
   position: relative;
   width: 100%;
-  max-height: 86vh;
-  overflow-y: auto;
-  padding: 16px 16px calc(20px + env(safe-area-inset-bottom, 0px));
-  background: var(--surface);
-  border-top: 1px solid var(--line-strong);
-  border-radius: 14px 14px 0 0;
-}
-@media (min-width: 640px) {
-  .picker { align-items: center; justify-content: center; }
-  .picker__sheet { max-width: 520px; border-radius: 14px; border: 1px solid var(--line-strong); }
-}
-.picker__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.picker__head h2 {
-  font-family: var(--font-label);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  margin: 0;
-}
-.picker__search {
-  width: 100%;
-  min-height: 44px;
-  margin-top: 12px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--sunken);
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 16px;
-}
-.picker__search:focus { border-color: var(--accent); outline: none; }
-.picker__clear {
-  width: 100%;
-  margin-top: 10px;
-  padding: 10px;
-  background: transparent;
-  border: 1px dashed var(--line-strong);
-  border-radius: 8px;
-  color: var(--ink-dim);
-  font: inherit;
-  font-size: 13.5px;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 6px 4px 5px;
+  border-radius: 10px;
+  border: 1px solid var(--line, #2b3448);
+  background: var(--surface-1, #141a26);
   cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, background 0.15s;
 }
-.picker__clear:hover { color: var(--bad); border-color: var(--bad); }
+.tile:hover { border-color: var(--line-bright, #49566b); }
+.tile.is-selected {
+  border-color: var(--accent, #67d3f2);
+  background: var(--surface-2, #1b2230);
+  transform: translateY(-2px);
+}
+.tile.is-empty { border-style: dashed; }
 
-.picker__list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
-.pick {
+.tile__role {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim, #8fa3c0);
+}
+/* The card engine sizes itself: width 100% of its host, aspect-ratio 63/88, with the art
+   deliberately overflowing the frame and cropped. Constrain the host and nothing else —
+   forcing width on the inner img fights card.css and flattens the artwork. */
+.tile__art { display: block; width: 100%; }
+
+.tile__hole {
+  display: grid;
+  place-items: center;
   width: 100%;
+  aspect-ratio: 5 / 7;
+  font-size: 20px;
+  color: var(--ink-dim, #8fa3c0);
+  opacity: 0.5;
+}
+
+.tile__foot { font-size: 12px; font-weight: 700; }
+.tile__foot.is-common { color: #8fa3c0; }
+.tile__foot.is-rare { color: #67d3f2; }
+.tile__foot.is-epic { color: #c08cff; }
+.tile__foot.is-legendary { color: #f5cf6a; }
+.tile__foot.is-icon { color: #7df0dc; }
+
+.tile__chem {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--good, #7df0dc);
+}
+
+/* --- preview ------------------------------------------------------------- */
+
+.preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-1, #141a26);
+  border: 1px solid var(--line, #2b3448);
+}
+.preview__card { max-width: 240px; margin: 0 auto; width: 100%; }
+.preview__side { display: grid; gap: 4px; align-content: start; }
+.preview__name { font-size: 19px; }
+.preview__season { color: var(--ink-dim, #8fa3c0); font-weight: 400; }
+.preview__meta { font-size: 13px; }
+.preview__chem { font-size: 13px; color: var(--good, #7df0dc); }
+.preview__clear { margin-top: 8px; justify-self: start; }
+.preview__empty { text-align: center; padding: 20px 0; }
+
+@media (min-width: 620px) {
+  .preview { grid-template-columns: 240px 1fr; align-items: start; }
+  .preview__card { margin: 0; }
+}
+
+/* --- bench --------------------------------------------------------------- */
+
+.bench { margin-top: 16px; }
+.bench__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 60px;
-  padding: 10px 12px;
-  text-align: left;
-  background: var(--sunken);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--ink);
-  font: inherit;
-  cursor: pointer;
+  gap: 10px;
+  margin-bottom: 8px;
 }
-.pick:hover { border-color: var(--line-strong); }
-.pick[aria-current='true'] { border-color: var(--accent); }
-.pick__main { display: grid; gap: 2px; min-width: 0; }
-.pick__name { font-family: var(--font-display); font-size: 16px; font-weight: 700; }
-.picker__empty { margin-top: 16px; }
+.bench__search {
+  flex: 0 1 180px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line, #2b3448);
+  background: var(--surface-1, #141a26);
+  color: var(--ink, #e4ebf6);
+  font: inherit;
+  font-size: 13px;
+}
+
+.bench__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.pick {
+  position: relative;
+  width: 100%;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s;
+}
+.pick:hover { transform: translateY(-2px); }
+.pick:disabled { cursor: progress; opacity: 0.7; }
+.pick.is-in { border-color: var(--accent, #67d3f2); }
+.pick.is-elsewhere { opacity: 0.55; }
+.pick :deep(.lom-card-host) { display: block; width: 100%; }
+
+.pick__tag {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 0 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink, #e4ebf6);
+  background: linear-gradient(to top, rgba(6, 10, 16, 0.92), rgba(6, 10, 16, 0));
+  border-radius: 0 0 8px 8px;
+}
+
+.bench__none { padding: 16px 0; text-align: center; font-size: 13px; }
+
+/* --- readouts ------------------------------------------------------------ */
+
+.read { margin-top: 16px; }
+.read__line { font-size: 13px; }
+.read__eyebrow { margin-top: 10px; }
+.read__chem { list-style: none; padding: 0; margin: 4px 0 0; font-size: 13px; display: grid; gap: 2px; }
+
+.foot { margin-top: 18px; display: grid; gap: 8px; justify-items: center; text-align: center; }
+.foot__note { font-size: 12px; max-width: 42ch; }
 </style>
