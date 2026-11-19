@@ -127,12 +127,21 @@ function draw() {
   const h = el.clientHeight;
   if (!w || !h) return;
 
-  if (el.width !== Math.round(w * dpr)) {
-    el.width = Math.round(w * dpr);
-    el.height = Math.round(h * dpr);
+  // Both axes, every frame. Guarding on width alone left the backing store at its
+  // old height when the art loaded and changed the element's aspect ratio: the canvas
+  // kept the pixels from the square frames below what the new, shorter drawing
+  // cleared, and the map appeared twice.
+  const needW = Math.round(w * dpr);
+  const needH = Math.round(h * dpr);
+  if (el.width !== needW || el.height !== needH) {
+    el.width = needW;
+    el.height = needH;
   }
+
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+  // The whole backing store, not the box we are about to draw into, so nothing from a
+  // previous size can survive underneath.
+  ctx.clearRect(0, 0, el.width, el.height);
 
   const p = (x: number, y: number) => project(w, h, x, y);
   // Marker sizes follow the short edge, so they stay the same size relative to the
