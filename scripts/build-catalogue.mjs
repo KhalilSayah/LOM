@@ -1261,6 +1261,66 @@ for (const year of YEARS_IN_SCOPE) {
  * single rank step, so only the first-ranked player could ever reach it. The result was a
  * pile of cards at exactly 99, nothing at all between 92 and 98, and a cliff down to 91.
  */
+/**
+ * Career standing: what a player has already been counts toward what their card is worth.
+ *
+ * A season rated on its own is a snapshot, and snapshots are unkind to long careers. Faker's
+ * 2021 came out at 61 and his 2026 at 64, below the median of a catalogue he otherwise sits
+ * at the top of — which is what the box score for those seasons says, and which nobody who
+ * has watched a decade of League would accept as the whole truth. Someone who has been the
+ * best in the world does not become an ordinary player in one quiet year; they decline, and
+ * the decline takes time.
+ *
+ * So a season is lifted toward the best the player had previously reached, by a fraction of
+ * the gap, with that peak losing CAREER_DECAY points of pull for every year since. A player
+ * who was never near the top has nothing to be lifted toward and is unaffected; a player
+ * falling off from a great season falls gradually instead of off a cliff.
+ *
+ * Two things keep this from becoming a thumb on the scale:
+ *
+ * - It only ever lifts. A bad season is never rated above what the player actually did; it
+ *   is rated above what the season alone would say, which is a different claim.
+ * - It is causal. Only seasons at or before this one count, so a card is never improved by
+ *   something that had not happened yet. Faker 2014 is not flattered by 2015.
+ *
+ * The peak tracks the unlifted rating, so a long decline cannot compound into a plateau.
+ * Every lifted card says so in its provenance.
+ */
+const CAREER_WEIGHT = Number(flag('career-weight', '0.45'));
+const CAREER_DECAY = Number(flag('career-decay', '2.5'));
+
+{
+  const careers = new Map();
+  for (const r of rated) {
+    if (!careers.has(r.a.key)) careers.set(r.a.key, []);
+    careers.get(r.a.key).push(r);
+  }
+
+  for (const seasons of careers.values()) {
+    seasons.sort((x, y) => x.a.year - y.a.year);
+    // Every season's own rating, before any lifting, to measure standing against.
+    const own = seasons.map((r) => r.a.rawOvr);
+
+    seasons.forEach(({ a }, i) => {
+      // The best any earlier season still vouches for, each decayed by its own age. Taking
+      // the strongest decayed season rather than decaying from the all-time peak is what
+      // makes a recent good year count: Faker's 2015 is eleven years from his 2026 card and
+      // has faded, while his 2025 has not, and it is 2025 that should be holding him up.
+      let standing = -Infinity;
+      let fromYear = null;
+      for (let j = 0; j < i; j++) {
+        const decayed = own[j] - CAREER_DECAY * (a.year - seasons[j].a.year);
+        if (decayed > standing) { standing = decayed; fromYear = seasons[j].a.year; }
+      }
+      if (fromYear != null && standing > own[i]) {
+        a.careerLift = CAREER_WEIGHT * (standing - own[i]);
+        a.careerPeakYear = fromYear;
+        a.rawOvr = own[i] + a.careerLift;
+      }
+    });
+  }
+}
+
 const rankedAll = percentiles(rated.map((r) => r.a.rawOvr));
 rated.forEach((r, i) => { r.a.percentile = rankedAll[i]; });
 
@@ -1332,6 +1392,11 @@ rated.forEach((r, i) => { r.a.percentile = rankedAll[i]; });
           cohort: `${role} ${a.year} (n=${cohortSize})`,
           accoladeBonus: a.bonus,
           leagueStrengthAdj: Number(a.regionAdj.toFixed(1)),
+          // A card that was held up by what the player had already been should say so,
+          // rather than let the season take credit for it.
+          ...(a.careerLift ? {
+            careerStanding: `+${a.careerLift.toFixed(1)} carried from their ${a.careerPeakYear} peak`,
+          } : {}),
           // Columns the source never reported for this player-season. Anything listed here
           // scored neutral rather than measured, and the sub-stats built on it are weaker.
           ...(a.incomplete.length ? { unreported: a.incomplete } : {}),
