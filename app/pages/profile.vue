@@ -66,9 +66,10 @@ useHead({ title: 'Profile — LOM' });
     <section class="panel profile__block">
       <p class="eyebrow">About the numbers</p>
       <p class="muted profile__note">
-        Cards are real player-seasons. Where a card's ratings come from the seed catalogue
-        they are editorial, not derived from match data — the back of every card carries its
-        own provenance line.
+        Cards are real player-seasons, rated from the games those players actually played.
+        Match data from Oracle's Elixir, aggregated and released by Tim Sevenhuysen. The back
+        of every card carries its own provenance line, including anything its season was
+        measured without.
       </p>
     </section>
 

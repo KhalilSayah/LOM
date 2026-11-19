@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
   const db = serverSupabaseServiceRole(event);
   const window = configuredWindow(config);
 
-  const [{ data: claim }, { data: pity }, { count }, { data: catalogue }] = await Promise.all([
+  const [{ data: claim }, { data: pity }, { count }, { data: catalogue }, { data: profile }] = await Promise.all([
     db.from('pack_claims')
       .select(`pack_day, claimed_at, rarity, was_duplicate, xp_awarded,
                card_definitions ( ${CARD_SELECT} )`)
@@ -34,6 +34,10 @@ export default defineEventHandler(async (event) => {
       .select('semver')
       .eq('is_active', true)
       .maybeSingle(),
+    db.from('profiles')
+      .select('credits')
+      .eq('id', manager.id)
+      .maybeSingle(),
   ]);
 
   const counters = pity || { since_legendary: 0, since_icon: 0, packs_opened: 0 };
@@ -47,6 +51,7 @@ export default defineEventHandler(async (event) => {
     hour: window.hour,
     timeZone: window.timeZone,
     catalogue: catalogue?.semver ?? null,
+    credits: profile?.credits ?? 0,
     // Nothing to roll against yet: the UI explains that instead of offering a button that
     // fails at the endpoint.
     available: !claim && Boolean(catalogue),
