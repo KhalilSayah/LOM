@@ -28,6 +28,8 @@ interface Shop {
   packs: ShopPack[];
 }
 
+useHead({ title: 'Packs — LOM' });
+
 const BANDS = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON'] as const;
 
 const shop = ref<Shop | null>(null);
