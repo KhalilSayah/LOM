@@ -16,7 +16,8 @@
     "catalogue:seed": "node scripts/build-seed-catalogue.mjs",
     "sim:match": "node packages/sim/cli.mjs",
     "sim:balance": "node packages/sim/balance.mjs",
-    "sim:test": "node --test packages/sim/test/*.test.mjs"
+    "sim:test": "node --test packages/sim/test/*.test.mjs",
+    "map:fetch": "node scripts/fetch-map.mjs"
   },
   "dependencies": {
     "@nuxtjs/supabase": "2.1.0",
