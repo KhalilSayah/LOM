@@ -254,7 +254,7 @@ function ovrFromPercentile(p) {
  * minutes, none of which exist here, so what is measured is farm and economy for the four
  * farming roles and involvement for supports. The provenance on every card says so.
  */
-const BLENDS = {
+const LP_BLENDS = {
   TOP: {
     laning: { cspm: 0.45, gpm: 0.35, goldShare: 0.20 },
     teamfight: { dpm: 0.45, dmgShare: 0.35, kp: 0.20 },
@@ -312,7 +312,7 @@ const OVR_WEIGHTS = {
 const SUB_KEYS = ['laning', 'teamfight', 'mechanics', 'macro', 'vision', 'consistency'];
 
 /** Metrics that are better when lower are inverted at source, so every z-score points up. */
-const METRICS = [
+const LP_METRICS = [
   'dpm', 'gpm', 'cspm', 'vspm', 'kp', 'dmgShare', 'goldShare',
   'invDeaths', 'kda', 'goldEff', 'towers', 'objectives', 'steadiness', 'volume',
 ];
@@ -397,8 +397,8 @@ function aggregateYear(bundle) {
         // tier-weighted mean of real games. Each metric keeps its own arrays because they
         // do not all have the same number of observations: a row missing its damage still
         // contributes a vision score, and vice versa.
-        raw: Object.fromEntries(METRICS.map((m) => [m, []])),
-        wts: Object.fromEntries(METRICS.map((m) => [m, []])),
+        raw: Object.fromEntries(LP_METRICS.map((m) => [m, []])),
+        wts: Object.fromEntries(LP_METRICS.map((m) => [m, []])),
       };
       byPlayer.set(link, a);
     }
@@ -518,11 +518,11 @@ function aggregateYear(bundle) {
  * source never reported for this player stays null rather than becoming 0, so the cohort can
  * leave it out instead of ranking the player last on a column nobody measured.
  */
-function finalise(a) {
+function finalise(a, metricList) {
   const metrics = {};
-  for (const m of METRICS) {
+  for (const m of metricList) {
     if (m === 'steadiness' || m === 'volume') continue;
-    metrics[m] = a.raw[m].length ? weightedMean(a.raw[m], a.wts[m]) : null;
+    metrics[m] = a.raw[m]?.length ? weightedMean(a.raw[m], a.wts[m]) : null;
   }
   // A player with 18 games has not demonstrated consistency whatever their variance looks
   // like, which is why docs/03 section 6.2 blends volume into it.
@@ -530,8 +530,364 @@ function finalise(a) {
   metrics.volume = Math.min(1, a.weighted / 40);
   // Named on the card, so a reader can see which numbers rest on a column the source did
   // not carry for them.
-  a.incomplete = METRICS.filter((m) => metrics[m] == null);
+  a.incomplete = metricList.filter((m) => metrics[m] == null);
+
+  // Measured, but not all season. An LPL player in 2023 has no lane stats from the LPL,
+  // whose games carry no timeline, yet picks them up at MSI and Worlds — so the figure is
+  // real but drawn from a dozen games against the best teams in the world rather than from
+  // the eighty he played at home. Saying only "reported" would overstate it.
+  a.thin = metricList.filter((m) => {
+    const n = a.raw[m]?.length || 0;
+    return n > 0 && n < 0.5 * a.games;
+  });
   return metrics;
+}
+
+// =============================================================================
+// Oracle's Elixir
+//
+// The same six sub-stats, but built from the columns docs/03 section 6.2 actually asks for
+// rather than from proxies. Gold, XP and CS difference at 15 minutes make `laning` a
+// measurement. Wards placed and cleared make `vision` one. Damage taken per minute restores
+// the term the support teamfight blend was missing. Nothing here is a stand-in.
+// =============================================================================
+
+const OE_METRICS = [
+  'gd15', 'xd15', 'cd15', 'g15', 'c15',
+  'dpm', 'dmgShare', 'dmgTaken', 'kp', 'invDeaths', 'kda', 'goldEff', 'cspm', 'gpm',
+  'towers', 'objectives',
+  'vspm', 'wpm', 'wcpm', 'ctrlWards',
+  'steadiness', 'volume',
+];
+
+/** docs/03 section 6.2, transcribed as written. */
+const OE_BLENDS = {
+  TOP: {
+    laning: { gd15: 0.45, xd15: 0.30, cd15: 0.25 },
+    teamfight: { dpm: 0.45, dmgShare: 0.35, kp: 0.20 },
+    mechanics: { goldEff: 0.40, invDeaths: 0.35, kda: 0.25 },
+    macro: { towers: 0.40, cspm: 0.30, objectives: 0.30 },
+    vision: { vspm: 0.50, wpm: 0.30, wcpm: 0.20 },
+    consistency: { steadiness: 0.70, volume: 0.30 },
+  },
+  JNG: {
+    laning: { gd15: 0.40, xd15: 0.35, c15: 0.25 },
+    teamfight: { dpm: 0.35, dmgShare: 0.25, kp: 0.40 },
+    mechanics: { goldEff: 0.35, invDeaths: 0.35, kda: 0.30 },
+    macro: { objectives: 0.50, towers: 0.30, gd15: 0.20 },
+    vision: { vspm: 0.40, wpm: 0.25, wcpm: 0.35 },
+    consistency: { steadiness: 0.70, volume: 0.30 },
+  },
+  MID: {
+    laning: { gd15: 0.45, xd15: 0.30, cd15: 0.25 },
+    teamfight: { dpm: 0.45, dmgShare: 0.35, kp: 0.20 },
+    mechanics: { goldEff: 0.40, invDeaths: 0.35, kda: 0.25 },
+    macro: { towers: 0.40, cspm: 0.30, objectives: 0.30 },
+    vision: { vspm: 0.50, wpm: 0.30, wcpm: 0.20 },
+    consistency: { steadiness: 0.70, volume: 0.30 },
+  },
+  BOT: {
+    laning: { gd15: 0.40, xd15: 0.25, cd15: 0.35 },
+    teamfight: { dpm: 0.50, dmgShare: 0.35, kp: 0.15 },
+    mechanics: { goldEff: 0.45, invDeaths: 0.30, kda: 0.25 },
+    macro: { towers: 0.35, cspm: 0.35, objectives: 0.30 },
+    vision: { vspm: 0.50, wpm: 0.30, wcpm: 0.20 },
+    consistency: { steadiness: 0.70, volume: 0.30 },
+  },
+  SUP: {
+    laning: { gd15: 0.55, xd15: 0.45 },
+    // Damage taken is used straight here rather than inverted: soaking damage is the job.
+    // docs/03 section 6.1 inverts it only for the roles where taking damage means losing.
+    teamfight: { dmgTaken: 0.25, kp: 0.35, vspm: 0.40 },
+    mechanics: { invDeaths: 0.40, kda: 0.35, goldEff: 0.25 },
+    macro: { objectives: 0.45, towers: 0.35, wcpm: 0.20 },
+    vision: { vspm: 0.40, wpm: 0.25, wcpm: 0.20, ctrlWards: 0.15 },
+    consistency: { steadiness: 0.70, volume: 0.30 },
+  },
+};
+
+const OE_POSITION = { top: 'TOP', jng: 'JNG', mid: 'MID', bot: 'BOT', sup: 'SUP' };
+
+/**
+ * Leagues that were renamed rather than replaced. Collapsing them keeps one player's career
+ * in one league: Faker's 2015 season is filed under "OGN", which was simply what the LCK was
+ * called then, and a card reading OGN against LCK a year later is a distinction nobody wants.
+ */
+const LEAGUE_ALIAS = {
+  OGN: 'LCK', 'LCK CL': 'LCKC',
+  'NA LCS': 'LCS', 'EU LCS': 'LEC',
+};
+const league = (lg) => LEAGUE_ALIAS[lg] || lg;
+
+/**
+ * Which leagues get cards, after aliasing.
+ *
+ * docs/03 section 12 calls this out: every minor league in the catalogue triples its size
+ * with players nobody recognises, and the league-strength term cannot discipline a league
+ * that never plays anyone else — a Polish Ultraliga season has no cross-league games, so it
+ * scores no adjustment and its best player lands beside Worlds winners. Restricting to the
+ * leagues that actually meet each other is what makes a rating comparable at all.
+ *
+ * International events are always kept: they are where the leagues are compared.
+ */
+const DEFAULT_LEAGUES = 'LCK,LPL,LEC,LCS,LMS,LTA N,LTA S,LTA,LCP';
+const KEEP_LEAGUES = new Set(
+  flag('leagues', DEFAULT_LEAGUES).split(',').map((s) => s.trim()).filter(Boolean),
+);
+const keptLeague = (lg) => KEEP_LEAGUES.has(league(lg)) || OE_INTERNATIONAL.has(lg);
+
+// Leaguepedia's tournament metadata does not exist here; the league code carries it all.
+const OE_INTERNATIONAL = new Set(['WLDs', 'MSI', 'EWC', 'FST', 'IWCI', 'MSC', 'WSCI', 'IEM']);
+const OE_MAJOR = new Set(['LCK', 'LPL', 'LEC', 'LCS', 'NA LCS', 'EU LCS', 'LMS', 'LTA', 'LTA N', 'LTA S', 'LCP']);
+
+function oeTier(row) {
+  const lg = row.lg;
+  if (OE_INTERNATIONAL.has(lg)) return { tier: 'INTERNATIONAL', weight: 1.35 };
+  if (OE_MAJOR.has(lg)) {
+    return row.po === '1'
+      ? { tier: 'MAJOR_PLAYOFF', weight: 1.15 }
+      : { tier: 'MAJOR_REGULAR', weight: 1.0 };
+  }
+  return { tier: 'MINOR', weight: 0.8 };
+}
+
+/**
+ * Who won what, derived from the games themselves.
+ *
+ * Oracle's Elixir carries no placements table, but it does not need one: the champion of an
+ * event is whoever won its last game. Taking the latest-dated game of a league's playoffs,
+ * or of an international event, gives the winner and the runner-up directly. That works for
+ * every season in the file, which is the point — Leaguepedia's placements only cover the
+ * years already pulled, and the classics are exactly the years that were not.
+ */
+function oeTitles(rows) {
+  const byLeague = new Map();
+  for (const r of rows) {
+    const intl = OE_INTERNATIONAL.has(r.lg);
+    if (!intl && r.po !== '1') continue;
+    if (!byLeague.has(r.lg)) byLeague.set(r.lg, []);
+    byLeague.get(r.lg).push(r);
+  }
+
+  const titles = new Map();
+  for (const [league, lgRows] of byLeague) {
+    let latest = null;
+    for (const r of lgRows) if (r.d && (!latest || r.d > latest)) latest = r.d;
+    if (!latest) continue;
+    const finalGame = lgRows.find((r) => r.d === latest)?.g;
+    if (!finalGame) continue;
+
+    const winners = new Set();
+    const losers = new Set();
+    for (const r of lgRows) {
+      if (r.g !== finalGame || !r.t) continue;
+      (r.w === '1' ? winners : losers).add(r.t);
+    }
+    if (!winners.size) continue;
+
+    const isWorlds = league === 'WLDs';
+    const isIntl = OE_INTERNATIONAL.has(league);
+    titles.set(league, {
+      champion: [...winners][0],
+      runnerUp: [...losers][0] || null,
+      championAccolades: isWorlds
+        ? ['WORLDS_WINNER', 'INTERNATIONAL_FINALIST']
+        : isIntl ? ['INTERNATIONAL_FINALIST'] : ['DOMESTIC_TITLE'],
+      runnerUpAccolades: isIntl ? ['INTERNATIONAL_FINALIST'] : [],
+    });
+  }
+  return titles;
+}
+
+/** League strength from cross-league results at international events (see regionStrength). */
+function oeStrength(rows) {
+  const teamLeague = new Map();
+  for (const r of rows) {
+    if (OE_INTERNATIONAL.has(r.lg) || !r.t) continue;
+    if (!teamLeague.has(r.t)) teamLeague.set(r.t, new Map());
+    bump(teamLeague.get(r.t), r.lg);
+  }
+  const leagueOf = (team) => {
+    const m = teamLeague.get(team);
+    return m ? modal(m) : null;
+  };
+
+  // One entry per international game: which teams played and which won.
+  const games = new Map();
+  for (const r of rows) {
+    if (!OE_INTERNATIONAL.has(r.lg) || !r.t || !r.g) continue;
+    if (!games.has(r.g)) games.set(r.g, new Map());
+    games.get(r.g).set(r.t, r.w === '1');
+  }
+
+  const record = new Map();
+  const note = (league, won) => {
+    if (!record.has(league)) record.set(league, { games: 0, wins: 0 });
+    const rec = record.get(league);
+    rec.games += 1;
+    rec.wins += won ? 1 : 0;
+  };
+
+  for (const teams of games.values()) {
+    const sides = [...teams];
+    if (sides.length !== 2) continue;
+    const [[t1, w1], [t2]] = sides;
+    const l1 = leagueOf(t1);
+    const l2 = leagueOf(t2);
+    if (!l1 || !l2 || l1 === l2) continue;
+    note(l1, w1);
+    note(l2, !w1);
+  }
+
+  const PRIOR = 10;
+  const strength = new Map();
+  for (const [league, rec] of record) {
+    strength.set(league, {
+      winrate: (rec.wins + 0.5 * PRIOR) / (rec.games + PRIOR),
+      games: rec.games,
+      raw: rec.wins / rec.games,
+    });
+  }
+  return strength;
+}
+
+/** One player-season per (player, year), from Oracle's Elixir rows. */
+function aggregateOe(rows, teamObjectives, titles) {
+  const byPlayer = new Map();
+
+  for (const r of rows) {
+    const role = OE_POSITION[r.pos];
+    const name = r.p;
+    if (!role || !name) continue;
+
+    const minutes = num(r.len) / 60;
+    if (minutes <= 5) continue;
+    const { tier, weight } = oeTier(r);
+    const intl = OE_INTERNATIONAL.has(r.lg);
+
+    // playerid is stable across name changes and regions, which is what docs/03 section 4
+    // wants as the primary identity key. A few old rows have none, so the handle stands in.
+    const key = r.pid || `name:${name}`;
+
+    let a = byPlayer.get(key);
+    if (!a) {
+      a = {
+        key,
+        link: name,
+        handle: name,
+        year: Number(r.y),
+        games: 0,
+        domestic: 0,
+        weighted: 0,
+        wins: 0,
+        totals: { k: 0, d: 0, a: 0 },
+        roles: new Map(),
+        teams: new Map(),
+        regions: new Map(),
+        events: new Map(),
+        tiers: new Map(),
+        leagueTeams: new Set(),
+        accolades: new Set(),
+        champs: new Map(),
+        composites: [],
+        raw: Object.fromEntries(OE_METRICS.map((m) => [m, []])),
+        wts: Object.fromEntries(OE_METRICS.map((m) => [m, []])),
+      };
+      byPlayer.set(key, a);
+    }
+
+    const kills = num(r.k);
+    const deaths = num(r.de);
+    const assists = num(r.a);
+    const teamkills = num(r.tk);
+    const win = r.w === '1';
+    const kp = teamkills > 0 ? (kills + assists) / teamkills : null;
+    const dmgShare = r.dsh != null ? num(r.dsh) : null;
+
+    a.games += 1;
+    if (!intl) a.domestic += 1;
+    a.weighted += weight;
+    a.wins += win ? 1 : 0;
+    a.totals.k += kills;
+    a.totals.d += deaths;
+    a.totals.a += assists;
+    bump(a.roles, role, weight);
+    if (r.t) bump(a.teams, r.t, weight);
+    if (!intl && r.lg) bump(a.regions, r.lg, weight);
+    bump(a.events, r.lg, 1);
+    bump(a.tiers, tier, 1);
+    if (r.lg && r.t) a.leagueTeams.add(`${r.lg}\u0000${r.t}`);
+
+    if (r.c) {
+      const c = a.champs.get(r.c) || { games: 0, wins: 0, composites: [] };
+      c.games += 1;
+      c.wins += win ? 1 : 0;
+      a.champs.set(r.c, c);
+    }
+
+    if (kp != null && dmgShare != null) {
+      const composite = 0.40 * kp + 0.35 * dmgShare + 0.25 * (win ? 1 : 0);
+      a.composites.push(composite);
+      if (r.c) a.champs.get(r.c).composites.push(composite);
+    }
+
+    const obs = (metric, value) => {
+      if (value == null || !Number.isFinite(value)) return;
+      a.raw[metric].push(value);
+      a.wts[metric].push(weight);
+    };
+
+    // Oracle's Elixir already expresses these per minute against the real game length, so
+    // they are taken as given rather than recomputed.
+    const give = (metric, field) => obs(metric, r[field] == null ? null : num(r[field]));
+
+    /**
+     * For these, a literal zero is not an observation. Nobody finishes a real game having
+     * dealt no damage, earned no gold or farmed nothing, so a 0 means the column was not
+     * recorded — vision score reads 0 for every row before Riot exposed it, which is why
+     * 2015 cards were printing "VS/min 0.00" on the back as though it were measured.
+     */
+    const giveNonZero = (metric, field) => obs(metric, present(r[field]) ? num(r[field]) : null);
+    giveNonZero('dpm', 'dpm');
+    giveNonZero('gpm', 'gpm');
+    giveNonZero('cspm', 'cspm');
+    giveNonZero('vspm', 'vspm');
+    giveNonZero('wpm', 'wpm');
+    giveNonZero('dmgTaken', 'dtpm');
+    // Wards cleared and control wards bought are genuinely zero in plenty of real games.
+    give('wcpm', 'wcpm');
+    give('gd15', 'gd15');
+    give('xd15', 'xd15');
+    give('cd15', 'cd15');
+    give('g15', 'g15');
+    give('c15', 'c15');
+    obs('dmgShare', dmgShare);
+    obs('kp', kp);
+    obs('invDeaths', -deaths);
+    obs('kda', (kills + assists) / Math.max(1, deaths));
+    obs('ctrlWards', r.cw == null ? null : num(r.cw) / minutes);
+    obs('goldEff', present(r.gpm) && present(r.dpm) ? num(r.dpm) / num(r.gpm) : null);
+
+    const objectives = teamObjectives.get(`${r.g}\u0000${r.t}`);
+    if (objectives) {
+      obs('towers', objectives.towers);
+      obs('objectives', objectives.barons + objectives.dragons);
+    }
+  }
+
+  // Titles are per league, so a player collects one by having played for the team that won
+  // the last game of that league's season.
+  for (const a of byPlayer.values()) {
+    for (const [league, t] of titles) {
+      if (a.leagueTeams.has(`${league}\u0000${t.champion}`)) {
+        for (const acc of t.championAccolades) a.accolades.add(acc);
+      } else if (t.runnerUp && a.leagueTeams.has(`${league}\u0000${t.runnerUp}`)) {
+        for (const acc of t.runnerUpAccolades) a.accolades.add(acc);
+      }
+    }
+  }
+
+  return byPlayer;
 }
 
 // --- 1b. how strong was each league that season -------------------------------
@@ -622,7 +978,7 @@ const regionAdjustment = (strength, region) => {
  * z-scores inside one (role, year) cohort, weighted by how many weighted games each member
  * played, clamped to +/-3 so one freak season cannot drag the whole cohort's scale.
  */
-function cohortZ(members, metrics) {
+function cohortZ(members, metrics, metricList) {
   const weights = members.map((m) => m.weighted);
 
   /**
@@ -639,8 +995,13 @@ function cohortZ(members, metrics) {
   const trust = members.map((m) => Math.sqrt(m.weighted / (m.weighted + VOLUME_PRIOR)));
 
   const z = new Map();
-  for (const metric of METRICS) {
-    const values = members.map((m) => metrics.get(m.link)[metric]);
+  // Which metrics this cohort has any data for at all. A column the source never carried
+  // for an entire season — vision score before Riot exposed it, say — must not quietly
+  // drag every blend it appears in toward the middle; blend() renormalises around it.
+  const available = new Set();
+
+  for (const metric of metricList) {
+    const values = members.map((m) => metrics.get(m.key)[metric]);
 
     // The cohort's mean and deviation come only from the players the source actually
     // reported this metric for. Including the others as zeroes would drag the mean down and
@@ -648,6 +1009,7 @@ function cohortZ(members, metrics) {
     const seen = values.map((v, i) => [v, weights[i]]).filter(([v]) => v != null);
     const mean = weightedMean(seen.map((s) => s[0]), seen.map((s) => s[1]));
     const sd = weightedStdev(seen.map((s) => s[0]), seen.map((s) => s[1]), mean);
+    if (seen.length && sd > 1e-9) available.add(metric);
 
     // `volume` is the measure of sample size itself, so shrinking it by sample size would
     // say a player with few games is of average volume, which is exactly backwards.
@@ -659,11 +1021,25 @@ function cohortZ(members, metrics) {
     });
     z.set(metric, column);
   }
+  z.available = available;
   return z;
 }
 
-const blend = (spec, z, i) =>
-  Object.entries(spec).reduce((acc, [metric, w]) => acc + w * (z.get(metric)?.[i] ?? 0), 0);
+/**
+ * Blend z-scores into one sub-stat, renormalising over the terms the cohort actually has.
+ *
+ * Dropping a missing term instead of renormalising would shrink the sub-stat toward 50 for
+ * everyone, which reads as "this whole season was unremarkable" rather than "we measured
+ * this with fewer columns". Vision in 2016 is the case that matters: Riot exposed no vision
+ * score at all, so the doc's .50 vspm term is simply absent and the remaining wards-placed
+ * and wards-cleared terms carry it.
+ */
+function blend(spec, z, i) {
+  const terms = Object.entries(spec).filter(([metric]) => z.available.has(metric));
+  const total = terms.reduce((acc, [, w]) => acc + w, 0);
+  if (!total) return 0;
+  return terms.reduce((acc, [metric, w]) => acc + (w / total) * (z.get(metric)[i] ?? 0), 0);
+}
 
 const statFromZ = (zv) => Math.round(clamp(50 + 14 * zv, 1, 99));
 
@@ -701,14 +1077,68 @@ if (!existsSync(IN_DIR)) {
   process.exit(1);
 }
 
-const files = readdirSync(IN_DIR).filter((f) => /^leaguepedia-\d{4}\.json$/.test(f)).sort();
+const oeFiles = readdirSync(IN_DIR).filter((f) => /^oe-\d{4}\.json$/.test(f)).sort();
+const lpFiles = readdirSync(IN_DIR).filter((f) => /^leaguepedia-\d{4}\.json$/.test(f)).sort();
+
+/**
+ * Oracle's Elixir wins where both are present, and it is not close: it measures the three
+ * sub-stats Leaguepedia can only approximate, and it goes back to 2014 rather than to
+ * whatever was scraped. Leaguepedia remains the path for anyone who has not downloaded the
+ * CSVs, since those are a deliberate manual step. --source forces either one.
+ */
+const SOURCE = flag('source', oeFiles.length ? 'oe' : 'leaguepedia');
+const files = SOURCE === 'oe' ? oeFiles : lpFiles;
+
 if (!files.length) {
-  console.error(`no leaguepedia-{year}.json bundles in ${IN_DIR}\n\nPull some first:  npm run ingest -- --years 2020..2026`);
+  console.error(SOURCE === 'oe'
+    ? `no oe-{year}.json bundles in ${IN_DIR}\n\nParse the CSVs first:  npm run ingest:oe`
+    : `no leaguepedia-{year}.json bundles in ${IN_DIR}\n\nPull some first:  npm run ingest -- --years 2020..2026`);
   process.exit(1);
 }
 
+console.log(`source  ${SOURCE === 'oe' ? "Oracle's Elixir" : 'Leaguepedia'}`);
 console.log(`in      ${IN_DIR} (${files.length} year bundles)`);
 console.log(`floor   ${MIN_GAMES} weighted games, ${Math.round(MIN_ROLE_SHARE * 100)}% in one role\n`);
+
+/**
+ * Gather one season's rows. A file named for a year also holds the odd row from the seasons
+ * either side of it — a January tournament that Leaguepedia and Riot assign to the previous
+ * year, mostly — so the year is read off each row rather than off the filename, and the
+ * neighbouring files are checked too.
+ */
+function collectOeYear(year) {
+  const rows = [];
+  const teamObjectives = new Map();
+  const hashes = {};
+
+  for (const delta of [-1, 0, 1]) {
+    const file = `oe-${year + delta}.json`;
+    if (!oeFiles.includes(file)) continue;
+    const bundle = JSON.parse(readFileSync(join(IN_DIR, file), 'utf8'));
+
+    const mine = new Set();
+    for (const r of bundle.rows) {
+      if (Number(r.y) !== year || !keptLeague(r.lg)) continue;
+      // Alias here, once, so tiering, titles, league strength and the card's own region all
+      // agree about what league a row belongs to.
+      r.lg = league(r.lg);
+      rows.push(r);
+      mine.add(r.g);
+    }
+    if (!mine.size) continue;
+    hashes[bundle.sourceFile] = bundle.sha256;
+
+    for (const t of bundle.teams || []) {
+      if (!mine.has(t.g)) continue;
+      teamObjectives.set(`${t.g}\u0000${t.t}`, {
+        towers: num(t.tow),
+        barons: num(t.bar),
+        dragons: num(t.drg),
+      });
+    }
+  }
+  return { rows, teamObjectives, hashes };
+}
 
 const cards = [];
 /** Every rated player-season, held back until all years are in so one ranking can cover them. */
@@ -717,18 +1147,36 @@ const sourceHashes = {};
 const coveredYears = [];
 const SEMVER = process.env.CATALOGUE_SEMVER || null;
 
-for (const file of files) {
-  const text = readFileSync(join(IN_DIR, file), 'utf8');
-  const bundle = JSON.parse(text);
-  coveredYears.push(bundle.year);
-  sourceHashes[file] = createHash('sha256').update(text).digest('hex').slice(0, 16);
+const YEARS_IN_SCOPE = files.map((f) => Number(f.match(/(\d{4})/)[1])).sort((a, b) => a - b);
+const metricList = SOURCE === 'oe' ? OE_METRICS : LP_METRICS;
+const blendTable = SOURCE === 'oe' ? OE_BLENDS : LP_BLENDS;
 
-  const realNames = new Map();
-  for (const p of bundle.players || []) {
-    realNames.set(p.OverviewPage, { handle: p.ID || null, name: p.Name || null, country: p.Country || null });
+for (const year of YEARS_IN_SCOPE) {
+  let byPlayer;
+  let strength;
+  let realNames = new Map();
+
+  if (SOURCE === 'oe') {
+    const { rows, teamObjectives, hashes } = collectOeYear(year);
+    if (!rows.length) continue;
+    Object.assign(sourceHashes, hashes);
+    const titles = oeTitles(rows);
+    strength = oeStrength(rows);
+    byPlayer = aggregateOe(rows, teamObjectives, titles);
+  } else {
+    const file = `leaguepedia-${year}.json`;
+    const text = readFileSync(join(IN_DIR, file), 'utf8');
+    const bundle = JSON.parse(text);
+    sourceHashes[file] = createHash('sha256').update(text).digest('hex').slice(0, 16);
+    for (const p of bundle.players || []) {
+      realNames.set(p.OverviewPage, { handle: p.ID || null, name: p.Name || null, country: p.Country || null });
+    }
+    byPlayer = aggregateYear(bundle);
+    for (const a of byPlayer.values()) a.key = a.link;
+    strength = regionStrength(bundle, new Map(bundle.tournaments.map((t) => [t.page, t])));
   }
 
-  const byPlayer = aggregateYear(bundle);
+  coveredYears.push(year);
 
   // Inclusion, docs/03 section 5: enough games to mean anything, and enough of them in one
   // role to call the player that role. Someone who split a year between jungle and support
@@ -750,26 +1198,28 @@ for (const file of files) {
     kept.push(a);
   }
 
-  const strength = regionStrength(bundle, new Map(bundle.tournaments.map((t) => [t.page, t])));
+  // Only the leagues with a real sample are worth printing; a league that played two
+  // cross-region games tells nobody anything.
   for (const [region, s] of [...strength].sort((x, y) => y[1].winrate - x[1].winrate)) {
+    if (s.games < 15) continue;
     console.log(`  ${String(region).padEnd(15)} ${(s.raw * 100).toFixed(0).padStart(3)}% of `
-      + `${String(s.games).padStart(3)} cross-region games -> `
+      + `${String(s.games).padStart(3)} cross-league games -> `
       + `${regionAdjustment(strength, region) >= 0 ? '+' : ''}${regionAdjustment(strength, region).toFixed(1)} OVR`);
   }
 
-  const metrics = new Map(kept.map((a) => [a.link, finalise(a)]));
+  const metrics = new Map(kept.map((a) => [a.key, finalise(a, metricList)]));
 
   let yearCards = 0;
   for (const role of ROLES) {
     const cohort = kept.filter((a) => a.role === role);
     if (!cohort.length) continue;
     if (cohort.length < 20) {
-      warn(`${bundle.year} ${role}: cohort of ${cohort.length}. docs/03 section 6.4 calls a `
+      warn(`${year} ${role}: cohort of ${cohort.length}. docs/03 section 6.4 calls a `
         + 'cohort under 20 too small for z-scores to mean much — these ratings are noisy.');
     }
 
-    const z = cohortZ(cohort, metrics);
-    const spec = BLENDS[role];
+    const z = cohortZ(cohort, metrics, metricList);
+    const spec = blendTable[role];
 
     // Sub-stats first, then OVR from them, because docs/03 section 6.3 defines OVR as a
     // weighted sum of the sub-stats rather than a separate blend of the raw metrics.
@@ -791,7 +1241,7 @@ for (const file of files) {
     yearCards += cohort.length;
   }
 
-  console.log(`${bundle.year}: ${byPlayer.size} player-seasons -> ${yearCards} cards `
+  console.log(`${year}: ${byPlayer.size} player-seasons -> ${yearCards} cards `
     + `(${thinGames} under ${MIN_GAMES} weighted games, ${partlySeen} without a domestic `
     + `season in this pull, ${roleSplit} role-ambiguous)`);
 }
@@ -820,8 +1270,11 @@ rated.forEach((r, i) => { r.a.percentile = rankedAll[i]; });
       const accolades = [...a.accolades].sort();
       const pool = championPool(a);
       const identity = realNames.get(a.link) || {};
-      const events = [...a.events.entries()].sort((x, y) => y[1] - x[1]).map(([k]) => k);
-      const m = metrics.get(a.link);
+      // Oracle's Elixir files the world championship under "WLDs", which nobody says aloud.
+      const EVENT_NAMES = { WLDs: 'Worlds', FST: 'First Stand', EWC: 'Esports World Cup' };
+      const events = [...a.events.entries()].sort((x, y) => y[1] - x[1])
+        .map(([k]) => EVENT_NAMES[k] || k);
+      const m = metrics.get(a.key);
 
       // Display name is the player's handle; the card key uses the wiki page name, which is
       // what disambiguates two players who have shared a handle over the years.
@@ -852,6 +1305,9 @@ rated.forEach((r, i) => { r.a.percentile = rankedAll[i]; });
             .map((v) => (v / a.games).toFixed(1)).join(' / '),
           KDA: ((a.totals.k + a.totals.a) / Math.max(1, a.totals.d)).toFixed(1),
           'Win%': `${Math.round((a.wins / a.games) * 100)}%`,
+          // docs/09 section 5 asks for GD@15 on the card back. It was absent rather than
+          // faked while the source had no lane stats; Oracle's Elixir carries it.
+          ...(m.gd15 != null ? { 'GD@15': `${m.gd15 >= 0 ? '+' : ''}${Math.round(m.gd15)}` } : {}),
           ...(m.dpm != null ? { DPM: Math.round(m.dpm) } : {}),
           ...(m.kp != null ? { 'KP%': `${Math.round(m.kp * 100)}%` } : {}),
           ...(m.vspm != null ? { 'VS/min': m.vspm.toFixed(2) } : {}),
@@ -859,11 +1315,15 @@ rated.forEach((r, i) => { r.a.percentile = rankedAll[i]; });
         artChampionKey: pool[0]?.championKey || null,
         artFocus: '50% 32%',
         provenance: {
-          source: 'LEAGUEPEDIA',
-          note: `Derived from ${a.games} games (${events.slice(0, 3).join(', ')})`
-            + ` — Leaguepedia. Catalogue ${SEMVER || '{semver}'}.`
-            + ' Laning and vision are proxies: the scoreboard carries no lane stats at 15'
-            + ' minutes and no ward counts.',
+          source: SOURCE === 'oe' ? 'ORACLES_ELIXIR' : 'LEAGUEPEDIA',
+          note: SOURCE === 'oe'
+            ? `Derived from ${a.games} games (${events.slice(0, 3).join(', ')})`
+              + ` — Oracle's Elixir, aggregated by Tim Sevenhuysen.`
+              + ` Catalogue ${SEMVER || '{semver}'}.`
+            : `Derived from ${a.games} games (${events.slice(0, 3).join(', ')})`
+              + ` — Leaguepedia. Catalogue ${SEMVER || '{semver}'}.`
+              + ' Laning and vision are proxies: the scoreboard carries no lane stats at 15'
+              + ' minutes and no ward counts.',
           pipeline: PIPELINE,
           games: a.games,
           weightedGames: Number(a.weighted.toFixed(1)),
@@ -875,13 +1335,18 @@ rated.forEach((r, i) => { r.a.percentile = rankedAll[i]; });
           // Columns the source never reported for this player-season. Anything listed here
           // scored neutral rather than measured, and the sub-stats built on it are weaker.
           ...(a.incomplete.length ? { unreported: a.incomplete } : {}),
-          proxies: {
-            laning: role === 'SUP'
-              ? 'kill participation and deaths — no lane stats at 15 minutes'
-              : 'CS and gold per minute — no gold/XP/CS difference at 15 minutes',
-            vision: 'vision score per minute only — no wards placed or destroyed',
-            ...(role === 'SUP' ? { teamfight: 'no damage taken column; its weight is redistributed' } : {}),
-          },
+          ...(a.thin?.length ? { measuredOnSomeGames: a.thin } : {}),
+          ...(SOURCE === 'oe' ? {
+            attribution: "Oracle's Elixir (oracleselixir.com), released by Tim Sevenhuysen",
+          } : {
+            proxies: {
+              laning: role === 'SUP'
+                ? 'kill participation and deaths — no lane stats at 15 minutes'
+                : 'CS and gold per minute — no gold/XP/CS difference at 15 minutes',
+              vision: 'vision score per minute only — no wards placed or destroyed',
+              ...(role === 'SUP' ? { teamfight: 'no damage taken column; its weight is redistributed' } : {}),
+            },
+          }),
         },
       });
   }
@@ -969,12 +1434,18 @@ if (STRICT && warnings.length) {
 const catalogue = {
   semver,
   builtAt: new Date().toISOString(),
-  source: 'LEAGUEPEDIA',
-  notes: `Official Primary tournaments ${years[0]}-${years[years.length - 1]}, at least `
-    + `${MIN_GAMES} tier-weighted games with ${Math.round(MIN_ROLE_SHARE * 100)}% in one role. `
-    + 'Sub-stats are z-scores inside a (role, season) cohort; OVR is their role-weighted sum '
-    + 'plus an accolade bonus, percentile-mapped onto the docs/02 band shares. Laning and '
-    + 'vision are proxies — Leaguepedia carries no lane stats at 15 minutes and no ward counts.',
+  source: SOURCE === 'oe' ? 'ORACLES_ELIXIR' : 'LEAGUEPEDIA',
+  notes: `Seasons ${years[0]}-${years[years.length - 1]}, at least ${MIN_GAMES} tier-weighted `
+    + `games with ${Math.round(MIN_ROLE_SHARE * 100)}% in one role. Sub-stats are z-scores `
+    + 'inside a (role, season) cohort; OVR is their role-weighted sum plus an accolade bonus, '
+    + 'percentile-mapped onto the docs/02 band shares. '
+    + (SOURCE === 'oe'
+      ? "Match data from Oracle's Elixir (oracleselixir.com), aggregated and released by Tim "
+        + 'Sevenhuysen, used free of charge for a non-commercial fan project as that site '
+        + 'intends. Every sub-stat is measured: lane differences at 15 minutes, ward counts '
+        + 'and damage taken are all carried by the source.'
+      : 'Laning and vision are proxies — Leaguepedia carries no lane stats at 15 minutes and '
+        + 'no ward counts.'),
   pipeline: PIPELINE,
   sourceHashes,
   counts: { cards: final.length, bands, roles, bySeason },
