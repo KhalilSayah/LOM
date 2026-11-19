@@ -1,0 +1,2018 @@
+{
+  "source": "DATA_DRAGON",
+  "ddragonVersion": "16.23.1",
+  "builtAt": "2026-11-19T21:07:04.790Z",
+  "note": "archetype and damage are derived from Riot tags and info; frontline, engage, peel and aoe are inferred from class and stat profile and are an approximation. See scripts/build-champions.mjs.",
+  "champions": {
+    "Aatrox": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Ahri": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Akali": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AP"
+      }
+    },
+    "Akshan": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Alistar": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Ambessa": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Amumu": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Anivia": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Annie": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Aphelios": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Ashe": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Aurelion Sol": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "AurelionSol": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Aurora": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Azir": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Bard": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Bel'Veth": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AP"
+      }
+    },
+    "BelVeth": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AP"
+      }
+    },
+    "Belveth": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AP"
+      }
+    },
+    "Blitzcrank": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Brand": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Braum": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Briar": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Caitlyn": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Camille": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Cassiopeia": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Cho'Gath": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "ChoGath": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Chogath": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Corki": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Darius": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Diana": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Draven": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Dr. Mundo": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "DrMundo": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Ekko": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Elise": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Evelynn": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Ezreal": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Fiddlesticks": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Fiora": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Fizz": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Galio": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Gangplank": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Garen": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Gnar": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Gragas": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Graves": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Gwen": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Hecarim": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Heimerdinger": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Hwei": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Illaoi": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Irelia": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Ivern": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Janna": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Jarvan IV": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "JarvanIV": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Jax": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Jayce": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Jhin": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Jinx": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Kai'Sa": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "KaiSa": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Kaisa": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Kalista": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Karma": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Karthus": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Kassadin": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Katarina": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Kayle": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Kayn": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Kennen": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Kha'Zix": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "KhaZix": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Khazix": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Kindred": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Kled": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Kog'Maw": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "KogMaw": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "K'Sante": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "KSante": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "LeBlanc": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Leblanc": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Lee Sin": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "LeeSin": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Leona": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": true,
+        "damage": "MIXED"
+      }
+    },
+    "Lillia": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Lissandra": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Locke": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Lucian": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Lulu": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Lux": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Malphite": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Malzahar": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Maokai": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Master Yi": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "MasterYi": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Mel": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Milio": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Miss Fortune": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "MissFortune": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Wukong": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "MonkeyKing": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Mordekaiser": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Morgana": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Naafiri": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Nami": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Nasus": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Nautilus": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Neeko": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Nidalee": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Nilah": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Nocturne": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Nunu & Willump": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "NunuWillump": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Nunu": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Olaf": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Orianna": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Ornn": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "MIXED"
+      }
+    },
+    "Pantheon": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Poppy": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Pyke": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Qiyana": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AP"
+      }
+    },
+    "Quinn": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Rakan": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": true,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Rammus": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Rek'Sai": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "RekSai": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Rell": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": true,
+        "damage": "MIXED"
+      }
+    },
+    "Renata Glasc": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "RenataGlasc": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Renata": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Renekton": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Rengar": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Riven": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Rumble": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Ryze": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Samira": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Sejuani": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "MIXED"
+      }
+    },
+    "Senna": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Seraphine": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Sett": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Shaco": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Shen": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Shyvana": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Singed": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Sion": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Sivir": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Skarner": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Smolder": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Sona": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Soraka": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Swain": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Sylas": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Syndra": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Tahm Kench": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "AP"
+      }
+    },
+    "TahmKench": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "AP"
+      }
+    },
+    "Taliyah": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Talon": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Taric": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Teemo": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Thresh": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": true,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Tristana": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Trundle": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Tryndamere": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Twisted Fate": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "TwistedFate": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Twitch": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Udyr": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Urgot": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Varus": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AD"
+      }
+    },
+    "Vayne": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Veigar": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Vel'Koz": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "VelKoz": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Velkoz": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Vex": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Vi": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Viego": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Viktor": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Vladimir": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Volibear": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Warwick": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Xayah": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Xerath": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Xin Zhao": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "XinZhao": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Yasuo": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Yone": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Yorick": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": false,
+        "damage": "MIXED"
+      }
+    },
+    "Yunara": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Yuumi": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Zaahen": {
+      "archetype": "SKIRMISHER",
+      "tags": {
+        "frontline": true,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Zac": {
+      "archetype": "TANK",
+      "tags": {
+        "frontline": true,
+        "engage": true,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Zed": {
+      "archetype": "ASSASSIN",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Zeri": {
+      "archetype": "SCALING_CARRY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": false,
+        "damage": "AD"
+      }
+    },
+    "Ziggs": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Zilean": {
+      "archetype": "UTILITY",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Zoe": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": false,
+        "aoe": true,
+        "damage": "AP"
+      }
+    },
+    "Zyra": {
+      "archetype": "MAGE",
+      "tags": {
+        "frontline": false,
+        "engage": false,
+        "peel": true,
+        "aoe": true,
+        "damage": "AP"
+      }
+    }
+  }
+}

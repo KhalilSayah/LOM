@@ -54,6 +54,20 @@ export const levelBonus = (level = 1) => Math.min(3.6, 0.4 * (Math.max(1, Number
  * at zero mastery — produces a weak player rather than a negative one. The sim's fuzz
  * tests lean on that.
  */
+/**
+ * @param {{
+ *   ovr: number,
+ *   level?: number,
+ *   mastery?: number,
+ *   championRole?: string | null,
+ *   slot?: string | null,
+ * }} input
+ * @returns {number}
+ *
+ * The types are spelled out because the defaults alone do not say them: `championRole = null`
+ * makes TypeScript infer the parameter as `null`, so every caller passing an actual role was
+ * a type error in a JS file nobody was checking.
+ */
 export function effRating({ ovr, level = 1, mastery = 0, championRole = null, slot = null }) {
   const base = (Number(ovr) || 0) + levelBonus(level);
   return clamp(base * masteryFactor(mastery) * roleFit(championRole, slot), 30, 99);

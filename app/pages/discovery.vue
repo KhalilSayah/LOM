@@ -78,6 +78,30 @@ async function forget(code: string) {
 onMounted(load);
 
 useHead({ title: 'Discovery — LOM' });
+
+// --- duels -------------------------------------------------------------------
+
+/**
+ * Challenging someone is the one thing on this screen that asks something of them, so it
+ * says what happened rather than silently succeeding: a challenge sits waiting until they
+ * answer it, and there is nothing to watch in the meantime.
+ */
+const challenging = ref<string | null>(null);
+const duelNote = ref('');
+
+async function challenge(target: { id: string; displayName?: string; handle?: string }) {
+  if (challenging.value) return;
+  challenging.value = target.id;
+  duelNote.value = '';
+  try {
+    await $fetch('/api/duel/challenge', { method: 'POST', body: { opponentId: target.id } });
+    duelNote.value = `Challenge sent to ${target.displayName || target.handle}. It is waiting for them to accept.`;
+  } catch (e: any) {
+    duelNote.value = e?.data?.statusMessage || e?.message || 'Could not send that challenge.';
+  } finally {
+    challenging.value = null;
+  }
+}
 </script>
 
 <template>
@@ -116,6 +140,7 @@ useHead({ title: 'Discovery — LOM' });
     </section>
 
     <p v-if="loadError" class="notice notice--bad find__msg">{{ loadError }}</p>
+    <p v-if="duelNote" class="notice find__msg">{{ duelNote }}</p>
 
     <div v-if="loading" class="found">
       <div v-for="i in 2" :key="i" class="skeleton found__skeleton" />
@@ -170,6 +195,14 @@ useHead({ title: 'Discovery — LOM' });
           <NuxtLink class="btn btn--quiet" :to="`/m/${entry.manager.shareCode}`">
             See collection
           </NuxtLink>
+          <button
+            class="btn btn--quiet"
+            type="button"
+            :disabled="challenging === entry.manager.id"
+            @click="challenge(entry.manager)"
+          >
+            {{ challenging === entry.manager.id ? 'Sending' : 'Duel' }}
+          </button>
         </div>
       </li>
     </ul>
