@@ -1,6 +1,10 @@
 <script setup lang="ts">
 const user = useSupabaseUser();
 const { packReady } = usePackSignal();
+
+// A challenge arrives without you doing anything, so the nav has to say so.
+const { incoming, drafting, start } = useDuelSignal();
+watch(user, (u) => { if (u) start(); }, { immediate: true });
 </script>
 
 <template>
@@ -24,6 +28,11 @@ const { packReady } = usePackSignal();
       <NuxtLink to="/discovery">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm3.9 6.1-2.2 5-5 2.2 2.2-5 5-2.2ZM12 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>
         Discover
+      </NuxtLink>
+      <NuxtLink to="/duels">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.9 3 3 6.9l9.1 9.1 1.4-1.4-1.1-1.1 1.4-1.4 1.1 1.1 1.4-1.4L6.9 3Zm10.2 0L13 7.1l1.4 1.4 1.1-1.1 1.4 1.4-1.1 1.1 1.4 1.4L21 6.9 17.1 3ZM4.5 17.1 3 18.6 5.4 21l1.5-1.5-2.4-2.4Zm15 0-2.4 2.4L18.6 21 21 18.6l-1.5-1.5Z"/></svg>
+        Duels
+        <span v-if="incoming || drafting" class="nav__count" aria-hidden="true">{{ incoming || drafting }}</span>
       </NuxtLink>
       <NuxtLink to="/profile">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.4 0-8 2.5-8 5.5V21h16v-1.5c0-3-3.6-5.5-8-5.5Z"/></svg>

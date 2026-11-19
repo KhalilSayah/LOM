@@ -14,6 +14,7 @@ interface PackStatus {
 }
 
 const { packReady } = usePackSignal();
+const { incoming: duelsIncoming, drafting: duelsDrafting } = useDuelSignal();
 
 const status = ref<PackStatus | null>(null);
 const loading = ref(true);
@@ -173,6 +174,22 @@ useHead({ title: 'Pack — LOM' });
       </dl>
     </section>
 
+    <!-- a challenge is the one thing that arrives on its own, so it goes first -->
+    <NuxtLink v-if="duelsIncoming" class="panel duelcall" to="/duels">
+      <span>
+        <strong>{{ duelsIncoming }} {{ duelsIncoming === 1 ? 'challenge' : 'challenges' }} waiting</strong>
+        <span class="faint duelcall__sub">Someone wants to draft against you.</span>
+      </span>
+      <span class="duelcall__go">Open</span>
+    </NuxtLink>
+    <NuxtLink v-else-if="duelsDrafting" class="panel duelcall" to="/duels">
+      <span>
+        <strong>A draft is live</strong>
+        <span class="faint duelcall__sub">You have a duel in progress.</span>
+      </span>
+      <span class="duelcall__go">Back to it</span>
+    </NuxtLink>
+
     <!-- more than one card a day, for anyone with Credits to spend -->
     <NuxtLink v-if="status && !freshPull" class="panel shoplink" to="/shop">
       <span>
@@ -198,6 +215,19 @@ useHead({ title: 'Pack — LOM' });
 }
 .shoplink__sub { display: block; font-size: 12px; margin-top: 2px; }
 .shoplink__credits { font-weight: 700; color: var(--accent, #67d3f2); white-space: nowrap; }
+
+.duelcall {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  text-decoration: none;
+  color: inherit;
+  border-color: var(--accent, #67d3f2);
+}
+.duelcall__sub { display: block; font-size: 12px; margin-top: 2px; }
+.duelcall__go { font-weight: 700; color: var(--accent, #67d3f2); white-space: nowrap; }
 
 .empty code {
   font-family: ui-monospace, 'SFMono-Regular', monospace;
