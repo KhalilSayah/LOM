@@ -32,11 +32,18 @@ comment on column profiles.share_code is
 -- gen_random_bytes comes from pgcrypto, created in 0001. 256 is divisible by 32, so
 -- the modulo is unbiased — random() would do, but there is no reason to hand out a
 -- code that is cheaper to predict than the bytes cost.
+--
+-- `extensions` is in the search_path because Supabase installs pgcrypto there, not in
+-- public, and pinning a security-definer function to `public` alone — which is the
+-- right instinct, since an unpinned one resolves names against whatever the caller
+-- has in front — then hides gen_random_bytes from it. A plain Postgres with pgcrypto
+-- in public still works: a schema named in search_path that does not exist is
+-- skipped, not an error.
 create or replace function public.gen_share_code()
 returns text
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   alphabet constant text := '0123456789ABCDEFGHJKMNPQRSTVWXYZ';

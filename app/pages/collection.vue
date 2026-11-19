@@ -25,17 +25,33 @@ const SELECT = `
   )
 `;
 
+// Which cards are in the roster, so a tile can say so. Read straight from Postgres
+// like the collection itself — roster_slots is one of the tables RLS lets a manager
+// read their own rows of, and the roster endpoint exists for the writes.
+const inRoster = ref<Record<string, string>>({});
+
 async function load() {
   if (!managerId.value) return;
   loading.value = true;
-  const { data, error: err } = await supabase
-    .from('collection_cards')
-    .select(SELECT)
-    .eq('profile_id', managerId.value)
-    .order('acquired_at', { ascending: false });
+  const [{ data, error: err }, { data: slots }] = await Promise.all([
+    supabase
+      .from('collection_cards')
+      .select(SELECT)
+      .eq('profile_id', managerId.value)
+      .order('acquired_at', { ascending: false }),
+    supabase
+      .from('roster_slots')
+      .select('role, collection_card_id')
+      .eq('profile_id', managerId.value),
+  ]);
 
   if (err) error.value = err.message;
   else rows.value = (data || []).filter((r: any) => r.card);
+
+  const held: Record<string, string> = {};
+  for (const slot of (slots || []) as any[]) held[slot.collection_card_id] = slot.role;
+  inRoster.value = held;
+
   loading.value = false;
 }
 
@@ -124,6 +140,7 @@ useHead({ title: 'Collection — LOM' });
         class="card-grid__item" :to="`/card/${item.card.cardKey}`"
       >
         <span v-if="item.level > 1" class="card-grid__badge">LV {{ item.level }}</span>
+        <span v-if="inRoster[item.id]" class="card-grid__slot">{{ inRoster[item.id] }}</span>
         <span v-if="item.copies > 1" class="card-grid__dupes">×{{ item.copies }}</span>
         <LomCard :card="item.card" compact :interactive="false" />
       </NuxtLink>
