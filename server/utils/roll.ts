@@ -101,15 +101,25 @@ export async function rollPack(opts: {
   const roleBiased = rng() < 0.3;
   const role = roleBiased ? thinnestRole(owned.map((o) => ({ role: o.card_definitions?.role ?? null }))) : null;
 
+  // PostgREST caps a response at 1000 rows, so this has to be paged. The catalogue passed
+  // that mark the moment it became real: 1677 COMMON and 1119 RARE cards. Without paging the
+  // band's tail is simply unreachable — not an error, just cards that never drop for anyone.
   const pickFrom = async (b: Rarity, withRole: string | null) => {
-    let q = db.from('card_definitions')
-      .select('id, card_key')
-      .eq('catalogue_version_id', catalogueVersionId)
-      .eq('kind', 'PLAYER')
-      .eq('rarity', b);
-    if (withRole) q = q.eq('role', withRole);
-    const { data } = await q;
-    return data || [];
+    const rows: Array<{ id: string; card_key: string }> = [];
+    for (let from = 0; ; from += 1000) {
+      let q = db.from('card_definitions')
+        .select('id, card_key')
+        .eq('catalogue_version_id', catalogueVersionId)
+        .eq('kind', 'PLAYER')
+        .eq('rarity', b)
+        .range(from, from + 999);
+      if (withRole) q = q.eq('role', withRole);
+      const { data } = await q;
+      if (!data?.length) break;
+      rows.push(...data);
+      if (data.length < 1000) break;
+    }
+    return rows;
   };
 
   // Band first, role second: a role bias must never silently change what you pulled.

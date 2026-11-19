@@ -2,7 +2,7 @@
   "name": "lom",
   "private": true,
   "type": "module",
-  "description": "League of Managers \u2014 collect player-season cards, open a pack a day.",
+  "description": "League of Managers — collect player-season cards, open a pack a day.",
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
@@ -13,7 +13,12 @@
     "ingest": "node scripts/ingest-leaguepedia.mjs",
     "cards:demo": "node packages/card-engine/build-demo.mjs",
     "cards:pack": "node packages/card-engine/build-demo.mjs --pack",
-    "catalogue:merge": "node scripts/merge-catalogues.mjs"
+    "catalogue:seed": "node scripts/build-seed-catalogue.mjs",
+    "sim:match": "node packages/sim/cli.mjs",
+    "sim:balance": "node packages/sim/balance.mjs",
+    "sim:test": "node --test packages/sim/test/*.test.mjs",
+    "map:fetch": "node scripts/fetch-map.mjs",
+    "ingest:oe": "node scripts/ingest-oracleselixir.mjs"
   },
   "dependencies": {
     "@nuxtjs/supabase": "2.1.0",

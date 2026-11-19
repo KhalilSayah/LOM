@@ -75,6 +75,26 @@ if (versionError) {
   process.exit(1);
 }
 
+// A semver is meant to identify one build. If this version already holds cards, this is a
+// re-push: the upserts below will update every card in the file, but a card that was in the
+// earlier build and is not in this one stays behind, and it cannot simply be deleted because
+// collection_cards cascades off card_definitions and someone may own it.
+//
+// So this reports rather than repairs. Build under a fresh semver (CATALOGUE_SEMVER=...) if
+// the card list has changed.
+const { count: existing } = await db
+  .from('card_definitions')
+  .select('id', { count: 'exact', head: true })
+  .eq('catalogue_version_id', version.id);
+
+if (existing) {
+  console.log(`  version ${semver} already holds ${existing} cards — re-pushing over it`);
+  if (existing > cards.length) {
+    console.warn(`! ${existing - cards.length} cards in that version are not in this file. `
+      + 'They stay as they are: owned cards reference them. Use a new semver for a clean version.');
+  }
+}
+
 // --- 2. card definitions -----------------------------------------------------
 
 const definitions = cards.map((c) => ({

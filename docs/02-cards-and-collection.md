@@ -35,6 +35,32 @@ produced entirely by the data pipeline ([03](03-data-pipeline.md)).
 
 One **OVR** (40-99) plus six sub-stats (1-99). All are computed, never authored.
 
+The six sub-stats are strictly about the season on the card: they are z-scores of that
+player's measured play inside a cohort of everyone in the same role and season
+([03 section 6](03-data-pipeline.md)). OVR is not only about that season. It is the
+role-weighted sum of the six, plus three terms that the sub-stats cannot see:
+
+| Term | What it adds | Why it is not in the sub-stats |
+|---|---|---|
+| Accolades | Up to +10, scaled from the figures in [03 section 6.3](03-data-pipeline.md) | Winning is not visible in a box score. A Worlds-winning mid can sit below the median of his own cohort on damage and gold, because his job that year was not to lead them |
+| League strength | About ±2, from how that league's teams did against other leagues that season | A weaker league produces longer, looser games and therefore better-looking per-minute numbers |
+| Career standing | Lifts a season toward the best standing the player had already earned, fading 2.5 points a year | A player who has been the best in the world does not become an ordinary player in one quiet year |
+
+**Career standing is the one that makes a card more than its season**, so it is worth being
+explicit about what it does and does not claim. It only ever lifts, so no card is rated above
+what that player actually did; it is rated above what *that season alone* would say. It is
+causal — only seasons at or before this one count, so a card is never improved by something
+that had not happened yet. And standing is measured against unlifted ratings, so a long
+decline fades out instead of compounding into a plateau.
+
+Without it, a career reads as a series of unrelated strangers: Faker's 2021 rated 61 and his
+2026 rated 64, in a catalogue where his 2015 is a 98. With it, that career reads 98, 97, 89,
+85, 86, 83, 75, 81, 84, 83, 83, 72 — the dip is still plainly the worst year of his career,
+and the decline is a decline rather than a cliff.
+
+A card whose OVR was lifted this way says so on its back, with the season it was carried
+from. Nothing is hidden behind the number.
+
 | Sub-stat | Plain meaning | Drives in sim |
 |---|---|---|
 | `laning` | Wins the first 15 minutes | Lane-phase power, plate/first-tower rolls |

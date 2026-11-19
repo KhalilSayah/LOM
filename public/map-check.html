@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rift calibration</title>
+<style>
+  body { margin: 0; background: #06080e; color: #e9eefa; font: 13px system-ui, sans-serif; display: flex; gap: 16px; padding: 14px; }
+  canvas { max-width: 860px; max-height: 92vh; border: 1px solid #333; }
+  label { display: block; margin-bottom: 6px; }
+  input { width: 92px; background: #111826; color: #e9eefa; border: 1px solid #2a3a52; padding: 3px 6px; }
+  p { max-width: 230px; line-height: 1.5; color: #93a1bd; }
+  code { color: #6fe3d4; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div>
+  <label>x min <input id="xmin" type="number" value="-869" step="40"></label>
+  <label>x max <input id="xmax" type="number" value="15603" step="40"></label>
+  <label>y min <input id="ymin" type="number" value="-446" step="40"></label>
+  <label>y max <input id="ymax" type="number" value="16078" step="40"></label>
+  <p>
+    Squares are turrets, circles inhibitors, rings nexuses.
+    Nudge until each sits on the structure it names in the art, then copy the four
+    numbers into <code>BOUNDS</code> in <code>app/components/RiftMap.vue</code>.
+  </p>
+  <p id="out"></p>
+</div>
+<script>
+const MAXC = 14870;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const SOURCES = ['/map/rift.png', '/map/rift.jpg', '/map/rift.jpeg', '/map/rift.webp'];
+const art = new Image();
+let sourceIndex = 0;
+art.onerror = () => { if (++sourceIndex < SOURCES.length) art.src = SOURCES[sourceIndex]; };
+
+const ANCHORS = {
+  TOP: [[980, 10440], [1180, 6430], [1180, 4400], [1050, 3700]],
+  MID: [[5850, 6400], [5050, 4800], [3900, 3600], [3300, 3200]],
+  BOT: [[10500, 1050], [6900, 1220], [4300, 1220], [3700, 1050]],
+};
+
+const num = (id) => Number(document.getElementById(id).value);
+
+function draw() {
+  if (!art.complete || !art.naturalWidth) return;
+
+  canvas.width = art.naturalWidth;
+  canvas.height = art.naturalHeight;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  const xmin = num('xmin'), xmax = num('xmax'), ymin = num('ymin'), ymax = num('ymax');
+  const p = (x, y) => ({
+    x: ((x - xmin) / (xmax - xmin)) * w,
+    y: h - ((y - ymin) / (ymax - ymin)) * h,
+  });
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(art, 0, 0, w, h);
+
+  const unit = Math.min(w, h);
+
+  for (const team of ['BLUE', 'RED']) {
+    const colour = team === 'BLUE' ? '#4fc3f7' : '#ff6b66';
+    for (const lane of ['TOP', 'MID', 'BOT']) {
+      const MIRRORED = { TOP: 'BOT', BOT: 'TOP', MID: 'MID' };
+      const source = team === 'BLUE' ? ANCHORS[lane] : ANCHORS[MIRRORED[lane]];
+      const pts = source.map(([x, y]) => team === 'BLUE' ? { x, y } : { x: MAXC - x, y: MAXC - y });
+      pts.slice(0, 3).forEach((pt) => {
+        const at = p(pt.x, pt.y);
+        const r = unit * 0.0105;
+        ctx.fillStyle = colour;
+        ctx.strokeStyle = '#05080e';
+        ctx.lineWidth = 2;
+        ctx.fillRect(at.x - r, at.y - r, r * 2, r * 2);
+        ctx.strokeRect(at.x - r, at.y - r, r * 2, r * 2);
+      });
+      const inhib = p(pts[3].x, pts[3].y);
+      ctx.beginPath();
+      ctx.arc(inhib.x, inhib.y, unit * 0.011, 0, Math.PI * 2);
+      ctx.fillStyle = colour;
+      ctx.fill();
+      ctx.strokeStyle = '#05080e';
+      ctx.stroke();
+    }
+    const base = team === 'BLUE' ? p(1500, 1500) : p(MAXC - 1500, MAXC - 1500);
+    ctx.beginPath();
+    ctx.arc(base.x, base.y, unit * 0.024, 0, Math.PI * 2);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+  }
+
+  document.getElementById('out').textContent =
+    `x: { min: ${xmin}, max: ${xmax} }, y: { min: ${ymin}, max: ${ymax} }`;
+}
+
+art.onload = draw;
+art.src = SOURCES[0];
+for (const id of ['xmin', 'xmax', 'ymin', 'ymax']) {
+  document.getElementById(id).oninput = draw;
+}
+</script>
+</body>
+</html>
