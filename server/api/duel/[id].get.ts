@@ -66,6 +66,9 @@ export default defineEventHandler(async (event) => {
     bonus: duel.bonus,
 
     actions,
+    // Only while it still belongs to the turn on the clock. A hover left over from the
+    // previous action would show the opponent considering something they already locked.
+    hover: duel.hover && duel.hover.turn === duel.turn ? duel.hover : null,
     // Both lineups and both champion pools are open from the first ban. docs/05 section 2:
     // banning is only interesting when you know what you are banning against.
     blueLineup: duel.blue_lineup,

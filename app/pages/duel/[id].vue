@@ -32,13 +32,31 @@ let ticker: ReturnType<typeof setInterval> | undefined;
 
 async function load(withPool = false) {
   try {
+    const sentAt = Date.now();
     const next = await $fetch<any>(`/api/duel/${id}${withPool ? '?pool=1' : ''}`);
-    drift = new Date(next.serverNow).getTime() - Date.now();
+    /**
+     * Clock offset, corrected for the round trip.
+     *
+     * `serverNow` was true when the server wrote it, which is roughly half a round trip
+     * before it arrived here. Taking it at face value leaves each device out by its own
+     * latency, so two phones on different connections show different numbers for the same
+     * deadline — which is exactly what it looked like. Charging half the measured round
+     * trip puts them within a few tens of milliseconds of each other.
+     */
+    const rtt = Date.now() - sentAt;
+    drift = new Date(next.serverNow).getTime() + rtt / 2 - Date.now();
     if (next.pool) pool.value = next.pool;
+    // A new turn, or someone else's turn, invalidates whatever was being considered here.
+    if (state.value && (next.turn !== state.value.turn || !next.myTurn)) {
+      selected.value = null;
+      chosenSlot.value = null;
+    }
     state.value = next;
     error.value = '';
   } catch (e: any) {
-    error.value = e?.data?.statusMessage || e?.message || 'Lost the draft.';
+    // Keep the last good state on screen. A dropped poll on a phone is ordinary, and
+    // blanking the draft every time one fails is worse than being a second stale.
+    error.value = e?.data?.statusMessage || e?.message || 'Reconnecting…';
   } finally {
     loading.value = false;
   }
@@ -46,7 +64,9 @@ async function load(withPool = false) {
 
 onMounted(async () => {
   await load(true);
-  poller = setInterval(() => { if (state.value?.status === 'DRAFTING') load(); }, 1000);
+  // Fast enough that the other side's lock looks immediate; the endpoint is two indexed
+  // reads and the heavy per-catalogue work is cached in the server process.
+  poller = setInterval(() => { if (state.value?.status === 'DRAFTING') load(); }, 700);
   ticker = setInterval(() => { now.value = Date.now(); }, 200);
 });
 onBeforeUnmount(() => { clearInterval(poller); clearInterval(ticker); });
@@ -92,16 +112,40 @@ const bestSlotFor = (championKey: string): Slot | null => {
   return best;
 };
 
-async function act(championKey: string) {
-  if (busy.value || !state.value?.myTurn) return;
-  const slot = isPick.value ? (chosenSlot.value || bestSlotFor(championKey)) : null;
+/**
+ * Tapping a champion considers it; locking it in commits.
+ *
+ * Two steps rather than one, as the real client does and docs/05 section 3.3 describes.
+ * A single tap committing is unforgiving on a phone — a mis-tap spends a ban — and it also
+ * leaves the opponent with nothing to watch until the action is already over. The hover is
+ * most of what makes the draft feel live for the person who is not acting.
+ */
+const selected = ref<{ key: string; name: string } | null>(null);
+
+function consider(c: { key: string; name: string }) {
+  if (!state.value?.myTurn || busy.value) return;
+  selected.value = c;
+  // Fire and forget: a hover is something to look at, not a claim on a champion.
+  $fetch(`/api/duel/${id}/hover`, {
+    method: 'POST',
+    body: { championKey: c.key, championName: c.name, slot: isPick.value ? (chosenSlot.value || bestSlotFor(c.key)) : null },
+  }).catch(() => {});
+}
+
+async function lockIn() {
+  if (busy.value || !state.value?.myTurn || !selected.value) return;
+  const slot = isPick.value ? (chosenSlot.value || bestSlotFor(selected.value.key)) : null;
   if (isPick.value && !slot) {
     error.value = 'Pick a lineup slot first.';
     return;
   }
   busy.value = true;
   try {
-    await $fetch(`/api/duel/${id}/action`, { method: 'POST', body: { championKey, slot } });
+    await $fetch(`/api/duel/${id}/action`, {
+      method: 'POST',
+      body: { championKey: selected.value.key, slot },
+    });
+    selected.value = null;
     chosenSlot.value = null;
     search.value = '';
     await load();
@@ -112,6 +156,10 @@ async function act(championKey: string) {
     busy.value = false;
   }
 }
+
+/** Whatever the side on the clock is considering, mine or theirs. */
+const hover = computed(() => state.value?.hover || null);
+const theirHover = computed(() => (hover.value && hover.value.side !== state.value?.side ? hover.value : null));
 
 const sideActions = (side: string, kind: string) =>
   (state.value?.actions || []).filter((a: any) => a.side === side && a.kind === kind);
@@ -178,6 +226,9 @@ useHead({ title: 'Draft — LOM' });
             <template v-if="state.myTurn">
               Your {{ isPick ? 'pick' : 'ban' }}
             </template>
+            <template v-else-if="theirHover">
+              {{ state.opponent }} is looking at <strong>{{ theirHover.championName }}</strong>
+            </template>
             <template v-else>Waiting for {{ state.opponent }}</template>
           </p>
         </div>
@@ -223,6 +274,12 @@ useHead({ title: 'Draft — LOM' });
                 class="pick__art"
                 loading="lazy"
               >
+              <img
+                v-else-if="theirHover && theirHover.kind === 'PICK' && theirHover.side === side && theirHover.slot === slot"
+                :src="splash(theirHover.championKey)"
+                :alt="theirHover.championName"
+                class="pick__art pick__art--hover"
+              >
               <span v-if="pickIndex(side, slot)" class="pick__n">
                 {{ side === 'BLUE' ? 'B' : 'R' }}{{ pickIndex(side, slot) }}
               </span>
@@ -254,6 +311,24 @@ useHead({ title: 'Draft — LOM' });
         </p>
       </section>
 
+      <!-- what you are about to do, and the commit -->
+      <section v-if="state.myTurn" class="lockbar" :class="{ 'is-armed': selected }">
+        <span class="lockbar__pick">
+          <img v-if="selected" :src="art(selected.key)" :alt="selected.name" class="lockbar__art">
+          <span v-else class="lockbar__hole" aria-hidden="true" />
+          <span class="lockbar__text">
+            <strong>{{ selected ? selected.name : 'Choose a champion' }}</strong>
+            <span v-if="selected && isPick" class="faint lockbar__sub">
+              into {{ chosenSlot || bestSlotFor(selected.key) }}
+            </span>
+            <span v-else-if="!selected" class="faint lockbar__sub">Tap one below, then lock it in.</span>
+          </span>
+        </span>
+        <button class="btn lockbar__go" type="button" :disabled="!selected || busy" @click="lockIn">
+          {{ busy ? 'Locking' : `Lock ${isPick ? 'pick' : 'ban'} in` }}
+        </button>
+      </section>
+
       <!-- the pool -->
       <section class="pool">
         <div class="pool__head">
@@ -264,11 +339,15 @@ useHead({ title: 'Draft — LOM' });
           <li v-for="c in champions" :key="c.key">
             <button
               class="champ"
-              :class="{ 'is-gone': c.gone, 'is-ready': state.myTurn && !c.gone }"
+              :class="{
+                'is-gone': c.gone,
+                'is-ready': state.myTurn && !c.gone,
+                'is-picked': selected?.key === c.key,
+              }"
               type="button"
               :disabled="c.gone || !state.myTurn || busy"
               :title="c.name"
-              @click="act(c.key)"
+              @click="consider({ key: c.key, name: c.name })"
             >
               <img :src="art(c.key)" :alt="c.name" loading="lazy">
               <span class="champ__name">{{ c.name }}</span>
@@ -458,6 +537,41 @@ useHead({ title: 'Draft — LOM' });
 .champ.is-gone { opacity: 0.22; cursor: not-allowed; filter: grayscale(1); }
 .champ.is-ready:hover { border-color: var(--accent, #67d3f2); }
 .champ:disabled { cursor: not-allowed; }
+
+
+/* --- lock bar ------------------------------------------------------------ */
+
+.lockbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line, #2b3448);
+  background: var(--surface-1, #141a26);
+  position: sticky;
+  bottom: calc(var(--nav-h, 62px) + 8px);
+  z-index: 5;
+}
+.lockbar.is-armed { border-color: var(--accent, #67d3f2); }
+.lockbar__pick { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.lockbar__art { width: 38px; height: 38px; border-radius: 7px; display: block; }
+.lockbar__hole {
+  width: 38px; height: 38px; border-radius: 7px;
+  border: 1px dashed var(--line, #2b3448); display: block;
+}
+.lockbar__text { display: grid; min-width: 0; }
+.lockbar__text strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lockbar__sub { font-size: 11px; }
+.lockbar__go { white-space: nowrap; }
+
+.champ.is-picked { border-color: var(--accent, #67d3f2); }
+
+/* Their hover sits in the slot, half-there, until they commit to it. */
+.pick__art--hover { opacity: 0.4; filter: saturate(0.6); animation: hoverpulse 1.4s ease-in-out infinite; }
+@keyframes hoverpulse { 0%, 100% { opacity: 0.28; } 50% { opacity: 0.5; } }
 
 .done { display: grid; gap: 8px; justify-items: start; }
 .done__head { font-size: 24px; }

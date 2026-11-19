@@ -98,15 +98,28 @@ async function lock(
   const nextTurn = action.idx + 1;
   const done = nextTurn >= DRAFT_LENGTH;
 
-  await db.from('duels').update({
+  const { error: advanceError } = await db.from('duels').update({
     turn: nextTurn,
     bonus,
     deadline_at: done ? null : deadlineFor(),
+    // The turn moved, so whatever the last side was considering is history.
+    hover: null,
     updated_at: new Date().toISOString(),
   }).eq('id', duel.id);
 
+  /**
+   * This must not fail quietly. The action is already written; if the cursor does not move
+   * with it the draft stops dead — the next attempt collides with the primary key on an idx
+   * that is already taken, and both players sit looking at a turn that will not change.
+   *
+   * It happened: the update began writing `hover` one migration before that column existed,
+   * and because nothing read the error the only symptom was a draft that would not advance.
+   */
+  if (advanceError) throw advanceError;
+
   duel.turn = nextTurn;
   duel.bonus = bonus;
+  duel.hover = null;
 }
 
 /**
@@ -123,6 +136,27 @@ export async function catchUp(
   actions: LockedAction[],
 ): Promise<LockedAction[]> {
   if (duel.status !== 'DRAFTING') return actions;
+
+  /**
+   * The action log is the draft; `turn` is only a cursor over it. If the two ever disagree
+   * — an action written and the cursor left behind — the log wins, because the log is what
+   * both players can be held to and the cursor is bookkeeping.
+   *
+   * Without this a single failed cursor update wedges the draft permanently: every later
+   * attempt collides with an idx that is already filled. With it, the next person to look
+   * at the duel puts it right.
+   */
+  if (actions.length > duel.turn) {
+    const { error } = await db.from('duels').update({
+      turn: actions.length,
+      deadline_at: actions.length >= DRAFT_LENGTH ? null : deadlineFor(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', duel.id);
+    if (!error) {
+      duel.turn = actions.length;
+      duel.deadline_at = actions.length >= DRAFT_LENGTH ? null : deadlineFor();
+    }
+  }
 
   const [roles, pool] = await Promise.all([
     championRoles(db, duel.catalogue_version_id),
