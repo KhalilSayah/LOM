@@ -120,7 +120,28 @@ const mySide = computed(() => state.value?.side);
 const theirSide = computed(() => (state.value?.side === 'BLUE' ? 'RED' : 'BLUE'));
 
 const DDRAGON = 'https://ddragon.leagueoflegends.com/cdn/16.22.1/img/champion';
+/** Square portrait, for bans and the picker grid. */
 const art = (key: string) => `${DDRAGON}/${key}.png`;
+/**
+ * Tall loading art, for the pick panels. 308x560, which is the shape the broadcast
+ * layout wants — the square portrait stretched to a panel looks like a mistake.
+ */
+const splash = (key: string) =>
+  `https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${key}_0.jpg`;
+
+/** The pick that filled a slot for a side, if it has happened yet. */
+const pickFor = (side: string, slot: Slot) =>
+  (state.value?.actions || []).find((a: any) => a.side === side && a.kind === 'PICK' && a.slot === slot) || null;
+
+/** Pick order within a side, so a panel can be labelled B1..B5 / R1..R5 like the broadcast. */
+const pickIndex = (side: string, slot: Slot) => {
+  const picks = (state.value?.actions || []).filter((a: any) => a.side === side && a.kind === 'PICK');
+  const at = picks.findIndex((a: any) => a.slot === slot);
+  return at >= 0 ? at + 1 : null;
+};
+
+const lineupOf = (side: string) =>
+  (side === 'BLUE' ? state.value?.blueLineup : state.value?.redLineup) || {};
 
 useHead({ title: 'Draft — LOM' });
 </script>
@@ -165,33 +186,49 @@ useHead({ title: 'Draft — LOM' });
         </p>
       </section>
 
-      <!-- both teams -->
-      <section class="teams">
-        <div v-for="side in [mySide, theirSide]" :key="side" class="team" :class="`team--${side.toLowerCase()}`">
-          <p class="eyebrow team__head">
-            {{ side === mySide ? 'You' : state.opponent }} · {{ side }}
-          </p>
+      <!-- the board, laid out like the broadcast: blue above, red below -->
+      <section class="board">
+        <div v-for="side in ['BLUE', 'RED']" :key="side" class="rail" :class="`rail--${side.toLowerCase()}`">
+          <!-- bans run along the edge of each side's rail -->
+          <div class="bans">
+            <span class="bans__who">
+              {{ side === mySide ? 'You' : state.opponent }}
+              <span class="bans__side">{{ side }}</span>
+            </span>
+            <span
+              v-for="n in 5"
+              :key="n"
+              class="bans__slot"
+            >
+              <img
+                v-if="sideActions(side, 'BAN')[n - 1]"
+                :src="art(sideActions(side, 'BAN')[n - 1].championKey)"
+                :alt="sideActions(side, 'BAN')[n - 1].championName"
+                class="bans__art"
+              >
+            </span>
+          </div>
 
-          <ul class="team__slots">
-            <li v-for="slot in SLOTS" :key="slot">
-              <span class="team__role">{{ slot }}</span>
-              <span class="team__card">
-                {{ (side === mySide ? myLineup : theirLineup)[slot]?.name || '—' }}
+          <ul class="picks">
+            <li
+              v-for="slot in SLOTS"
+              :key="slot"
+              class="pick"
+              :class="{ 'is-empty': !pickFor(side, slot), 'is-live': state.step?.kind === 'PICK' && state.step?.side === side }"
+            >
+              <img
+                v-if="pickFor(side, slot)"
+                :src="splash(pickFor(side, slot).championKey)"
+                :alt="pickFor(side, slot).championName"
+                class="pick__art"
+                loading="lazy"
+              >
+              <span v-if="pickIndex(side, slot)" class="pick__n">
+                {{ side === 'BLUE' ? 'B' : 'R' }}{{ pickIndex(side, slot) }}
               </span>
-              <span class="team__champ">
-                <template v-for="a in sideActions(side, 'PICK')" :key="a.idx">
-                  <img v-if="a.slot === slot" :src="art(a.championKey)" :alt="a.championName" class="team__art">
-                </template>
-              </span>
+              <span class="pick__role">{{ slot }}</span>
+              <span class="pick__name">{{ lineupOf(side)[slot]?.name || '—' }}</span>
             </li>
-          </ul>
-
-          <p class="eyebrow team__head">Bans</p>
-          <ul class="team__bans">
-            <li v-for="a in sideActions(side, 'BAN')" :key="a.idx">
-              <img :src="art(a.championKey)" :alt="a.championName" class="team__art team__art--ban">
-            </li>
-            <li v-for="n in Math.max(0, 5 - sideActions(side, 'BAN').length)" :key="`e${n}`" class="team__banhole" />
           </ul>
         </div>
       </section>
@@ -255,21 +292,138 @@ useHead({ title: 'Draft — LOM' });
 .clock__n { font-size: 30px; font-weight: 700; }
 .clock__n.is-low { color: #ff8a8a; }
 
-.teams { display: grid; gap: 10px; margin-top: 12px; }
-@media (min-width: 680px) { .teams { grid-template-columns: 1fr 1fr; } }
+/* --- the board ----------------------------------------------------------
+   Laid out like the draft on a broadcast: each side gets a rail, its bans along
+   the edge and its five picks as tall splash panels with the player's name down
+   the side. The art is the point — a pick is a champion and a person, and a row
+   of text says neither. */
 
-.team { padding: 10px; border-radius: 12px; border: 1px solid var(--line, #2b3448); background: var(--surface-1, #141a26); }
-.team--blue { border-left: 3px solid #58c4e6; }
-.team--red { border-left: 3px solid #f08a8a; }
-.team__head { margin-bottom: 6px; }
-.team__slots { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 4px; }
-.team__slots li { display: grid; grid-template-columns: 38px 1fr 28px; align-items: center; gap: 8px; font-size: 13px; }
-.team__role { font-size: 10px; letter-spacing: 0.08em; color: var(--ink-dim, #8fa3c0); }
-.team__card { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.team__art { width: 28px; height: 28px; border-radius: 5px; display: block; }
-.team__art--ban { filter: grayscale(1); opacity: 0.55; }
-.team__bans { list-style: none; padding: 0; margin: 0; display: flex; gap: 4px; }
-.team__banhole { width: 28px; height: 28px; border-radius: 5px; border: 1px dashed var(--line, #2b3448); }
+.board { display: grid; gap: 8px; margin-top: 12px; }
+
+.rail {
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1, #141a26);
+  border: 1px solid var(--line, #2b3448);
+}
+.rail--blue { border-top: 3px solid #3b82f6; }
+.rail--red { border-top: 3px solid #ef4444; }
+
+.bans {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  background: rgba(0, 0, 0, 0.35);
+}
+.bans__who {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-right: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bans__side { color: var(--ink-dim, #8fa3c0); font-weight: 400; margin-left: 6px; }
+.bans__slot {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line, #2b3448);
+  display: block;
+  flex: none;
+}
+.bans__art {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 3px;
+  filter: grayscale(1) brightness(0.65);
+}
+
+.picks {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.pick {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  background: #0b0f17;
+  display: block;
+}
+.pick.is-empty { background: repeating-linear-gradient(135deg, #0d131d 0 8px, #101723 8px 16px); }
+/* The side that is currently picking gets a quiet pulse on its empty slots. */
+.pick.is-live.is-empty { box-shadow: inset 0 0 0 1px var(--accent, #67d3f2); }
+
+.pick__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* The loading art is framed for a portrait card; pushing the crop up keeps the
+     champion's face in the panel rather than their chest. */
+  object-position: 50% 18%;
+}
+
+.pick__n {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+.pick__role {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* The player's name down the side, as the broadcast does it. */
+.pick__name {
+  position: absolute;
+  left: 5px;
+  bottom: 6px;
+  /* Reads bottom-to-top up the left edge. writing-mode keeps the element's own box
+     tall and narrow, so left/bottom mean what they look like they mean — rotating a
+     normal box about its corner instead puts it outside the panel, where the panel's
+     overflow:hidden quietly eats it. */
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+  max-height: 86%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 720px) {
+  .board { gap: 10px; }
+  .pick__name { font-size: 13px; }
+  .bans__slot { width: 30px; height: 30px; }
+}
 
 .slotpick { margin-top: 12px; }
 .slotpick__row { display: flex; flex-wrap: wrap; gap: 6px; }

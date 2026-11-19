@@ -142,24 +142,38 @@ export async function catchUp(
     if (!over) break;
 
     const step = stepAt(duel.turn)!;
-    const bonus = { ...(duel.bonus || {}) } as Record<string, number>;
+    const bonus = { ...(duel.bonus || {}) } as Record<string, any>;
     const left = Number(bonus[step.side] ?? 0);
 
-    // Spend bonus time before taking the action away (docs/05 section 3.3).
-    if (left > 0) {
-      const spend = Math.min(left, over);
-      bonus[step.side] = left - spend;
-      if (spend >= over) {
-        await db.from('duels').update({
-          bonus,
-          deadline_at: deadlineFor(left - spend),
-          updated_at: new Date().toISOString(),
-        }).eq('id', duel.id);
-        duel.bonus = bonus;
-        duel.deadline_at = deadlineFor(left - spend);
-        break;
-      }
+    /**
+     * Bonus time is staked, not metered per poll (docs/05 section 3.3).
+     *
+     * When an action's own 30 seconds run out, the side's whole remaining pool is put behind
+     * that one action at once and the deadline moves out by exactly that much. Whatever is
+     * left over when they finally act is refunded in lock(), so a side that thinks for five
+     * extra seconds pays five, not sixty.
+     *
+     * Metering it a poll at a time, which is what this did first, extends the deadline by the
+     * remaining pool on every single poll — so the clock pushes itself out faster than it
+     * drains and the turn never expires at all. The bug was invisible until a draft was left
+     * to run.
+     */
+    if (left > 0 && !bonus.staked) {
+      bonus.staked = { side: step.side, amount: left };
+      bonus[step.side] = 0;
+      const until = new Date(new Date(duel.deadline_at).getTime() + left * 1000).toISOString();
+      await db.from('duels').update({
+        bonus,
+        deadline_at: until,
+        updated_at: new Date().toISOString(),
+      }).eq('id', duel.id);
+      duel.bonus = bonus;
+      duel.deadline_at = until;
+      break;
     }
+
+    // Pool spent as well as the action timer: the agent takes it (docs/05 section 4).
+    bonus.staked = null;
 
     const blue = duel.blue_lineup as Lineup;
     const red = duel.red_lineup as Lineup;
@@ -197,7 +211,17 @@ export async function applyAction(
   input: { side: Side; kind: 'BAN' | 'PICK'; championKey: string; championName: string; slot: Slot | null },
 ): Promise<LockedAction[]> {
   const step = stepAt(duel.turn)!;
-  await lock(db, duel, { idx: step.idx, ...input, auto: false }, { ...(duel.bonus || {}) });
+  const bonus = { ...(duel.bonus || {}) } as Record<string, any>;
+
+  // Hand back whatever of the staked pool went unused. Acting five seconds into bonus time
+  // should cost five seconds of it, not the whole thing.
+  if (bonus.staked?.side === input.side) {
+    const unused = Math.max(0, Math.round((new Date(duel.deadline_at).getTime() - Date.now()) / 1000));
+    bonus[input.side] = Math.min(Number(bonus.staked.amount) || 0, unused);
+    bonus.staked = null;
+  }
+
+  await lock(db, duel, { idx: step.idx, ...input, auto: false }, bonus);
 
   const next = await loadActions(db, duel.id);
   if (duel.turn >= DRAFT_LENGTH) await finish(db, duel, next);
