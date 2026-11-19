@@ -18,7 +18,8 @@
     "sim:balance": "node packages/sim/balance.mjs",
     "sim:test": "node --test packages/sim/test/*.test.mjs",
     "map:fetch": "node scripts/fetch-map.mjs",
-    "ingest:oe": "node scripts/ingest-oracleselixir.mjs"
+    "ingest:oe": "node scripts/ingest-oracleselixir.mjs",
+    "champions:build": "node scripts/build-champions.mjs"
   },
   "dependencies": {
     "@nuxtjs/supabase": "2.1.0",
