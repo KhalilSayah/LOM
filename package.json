@@ -13,7 +13,10 @@
     "ingest": "node scripts/ingest-leaguepedia.mjs",
     "cards:demo": "node packages/card-engine/build-demo.mjs",
     "cards:pack": "node packages/card-engine/build-demo.mjs --pack",
-    "catalogue:merge": "node scripts/merge-catalogues.mjs"
+    "catalogue:seed": "node scripts/build-seed-catalogue.mjs",
+    "sim:match": "node packages/sim/cli.mjs",
+    "sim:balance": "node packages/sim/balance.mjs",
+    "sim:test": "node --test packages/sim/test/*.test.mjs"
   },
   "dependencies": {
     "@nuxtjs/supabase": "2.1.0",

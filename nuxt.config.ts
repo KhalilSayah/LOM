@@ -6,12 +6,17 @@ import { fileURLToPath } from 'node:url';
 // future sim share one renderer.
 const cardEngine = fileURLToPath(new URL('./packages/card-engine/src/index.js', import.meta.url));
 
+// Same arrangement for the rules and the match engine: plain ESM with JSDoc types, so
+// Nitro imports them directly and `node` runs the tuning harnesses with no build step.
+const core = fileURLToPath(new URL('./packages/core/src/index.js', import.meta.url));
+const sim = fileURLToPath(new URL('./packages/sim/src/index.js', import.meta.url));
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-11-01',
   devtools: { enabled: false },
   modules: ['@nuxtjs/supabase'],
 
-  alias: { '@lom/card-engine': cardEngine },
+  alias: { '@lom/card-engine': cardEngine, '@lom/core': core, '@lom/sim': sim },
 
   css: [
     '~/assets/css/main.css',
