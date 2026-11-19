@@ -203,10 +203,13 @@ useHead({ title: 'Roster — LOM' });
         </p>
       </section>
 
-      <p class="faint foot">
-        A roster is yours to keep — it changes nothing yet. Fixtures, strategy and the draft
-        are what it feeds once matches land.
-      </p>
+      <div class="foot">
+        <NuxtLink class="btn btn--ghost" to="/replay">Watch these five play a match</NuxtLink>
+        <p class="faint foot__note">
+          A sandbox: nothing is at stake and no result is kept. Fixtures, strategy and
+          the draft are what a roster feeds once matches land.
+        </p>
+      </div>
     </template>
 
     <!-- Picker -->
@@ -325,7 +328,8 @@ useHead({ title: 'Roster — LOM' });
 .read__chem { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 5px; font-size: 13.5px; }
 .read__chem strong { font-weight: 700; }
 
-.foot { font-size: 12.5px; line-height: 1.5; margin: 16px 0 0; text-align: center; }
+.foot { margin: 18px 0 0; text-align: center; display: grid; gap: 10px; justify-items: center; }
+.foot__note { font-size: 12.5px; line-height: 1.5; margin: 0; max-width: 34em; }
 
 .picker { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; }
 .picker__scrim { position: absolute; inset: 0; background: rgba(4, 6, 12, 0.72); }
