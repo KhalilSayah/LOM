@@ -112,8 +112,13 @@ v1 keeps the economy tiny on purpose: one soft currency (**Credits**) and card X
 | First win of the season | +200 | — |
 | Finish season 1st / 2nd / 3rd-4th / else | 1500 / 900 / 500 / 250 | — |
 
-**Credits spend on:** extra packs (300 each, max 2 purchases/day), a mastery token for a
-specific champion (500), re-rolling the daily pack once (150).
+**Credits spend on:** packs, which come in several shapes at several prices — see
+[02 section 5.1.1](02-cards-and-collection.md). A mastery token for a specific champion (500)
+and a daily-pack re-roll (150) are still unbuilt.
+
+**Credits come from:** duplicate pulls, and nothing else yet. The table above is the intent,
+but it depends on the match and season loop running end to end, which it does not. Until
+then an operator hands them out with `select grant_credits_by_handle('someone', 1000);`.
 
 **Card XP** levels a card 1 -> 10. Each level grants **+0.4 OVR** (max +3.6) and at levels 3, 6
 and 9 a **+8 mastery** bump to the card's most-played champion. This is the only progression

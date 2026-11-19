@@ -1,8 +1,8 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { configuredWindow } from '~~/server/utils/packDay';
-import { rollPack, applyXp, DUPLICATE_XP } from '~~/server/utils/roll';
-import { CARD_SELECT, toCard } from '~~/shared/cardShape';
+import { rollOpening, type PackType } from '~~/server/utils/roll';
+import { persistOpening } from '~~/server/utils/openPack';
 
 /**
  * Claim today's pack.
@@ -66,73 +66,59 @@ export default defineEventHandler(async (event) => {
 
   if (!claimId) throw createError({ statusCode: 500, statusMessage: 'Could not reserve the pack' });
 
-  // 2. Roll.
-  const result = await rollPack({ db, profileId, catalogueVersionId: active.id });
+  // 2. Roll and settle, through the same path a bought pack takes. The daily pack is a
+  // one-slot pack whose price is zero; nothing about it needs its own copy of the rules.
+  const { data: packRow } = await db
+    .from('pack_types')
+    .select('key, name, price, slots, one_per_role, weights, floor_band, max_band, daily_limit')
+    .eq('key', 'DAILY')
+    .maybeSingle();
 
-  // 3. Grant, or feed the duplicate into XP (docs/02 section 5.3).
-  let xpAwarded = 0;
-  if (result.wasDuplicate) {
-    const { data: held } = await db
-      .from('collection_cards')
-      .select('id, level, xp, copies')
-      .eq('profile_id', profileId)
-      .eq('card_definition_id', result.cardId)
-      .single();
-
-    if (held) {
-      const next = applyXp(held.level, held.xp, DUPLICATE_XP);
-      xpAwarded = DUPLICATE_XP;
-      await db.from('collection_cards')
-        .update({ level: next.level, xp: next.xp, copies: held.copies + 1 })
-        .eq('id', held.id);
-    }
-  } else {
-    await db.from('collection_cards').insert({
-      profile_id: profileId,
-      card_definition_id: result.cardId,
-      source: 'PACK',
+  if (!packRow) {
+    throw createError({
+      statusCode: 503,
+      statusMessage: 'No DAILY pack type. Run supabase/migrations/0004_credits_and_packs.sql.',
     });
   }
 
-  // 4. Pity.
-  const { data: pityRow } = await db
-    .from('pity_counters')
-    .select('since_legendary, since_icon, packs_opened')
-    .eq('profile_id', profileId)
-    .maybeSingle();
-
-  const prev = pityRow || { since_legendary: 0, since_icon: 0, packs_opened: 0 };
-  const isLegendaryPlus = result.band === 'LEGENDARY' || result.band === 'ICON';
-
-  await db.from('pity_counters').upsert({
-    profile_id: profileId,
-    since_legendary: isLegendaryPlus ? 0 : prev.since_legendary + 1,
-    since_icon: result.band === 'ICON' ? 0 : prev.since_icon + 1,
-    packs_opened: prev.packs_opened + 1,
-    updated_at: new Date().toISOString(),
+  const pack = packRow as unknown as PackType;
+  const { picks, pity } = await rollOpening({ db, profileId, catalogueVersionId: active.id, pack });
+  const { openingId, cards, creditsEarned } = await persistOpening({
+    db,
+    profileId,
+    pack,
+    picks,
+    pity,
+    packDay: window.packDay,
+    creditsSpent: 0,
   });
 
-  // 5. Settle the claim and hand back the card.
+  const first = cards[0];
+  const firstPick = picks[0];
+
+  // 3. Settle the claim. pack_claims still carries the single card it always did, so the
+  // day's lock and anything reading it keep working; the opening holds the full story.
   await db.from('pack_claims').update({
-    card_definition_id: result.cardId,
-    rarity: result.band,
-    was_duplicate: result.wasDuplicate,
-    xp_awarded: xpAwarded,
+    card_definition_id: firstPick ? firstPick.cardId : null,
+    rarity: first?.rarity ?? null,
+    was_duplicate: first?.wasDuplicate ?? false,
+    xp_awarded: first?.xpAwarded ?? 0,
+    opening_id: openingId,
     settled_at: new Date().toISOString(),
   }).eq('id', claimId);
 
-  const { data: row } = await db
-    .from('card_definitions')
-    .select(CARD_SELECT)
-    .eq('id', result.cardId)
-    .single();
+  const { data: profile } = await db.from('profiles').select('credits').eq('id', profileId).single();
 
   return {
     packDay: window.packDay,
-    rarity: result.band,
-    forcedBy: result.forcedBy,
-    wasDuplicate: result.wasDuplicate,
-    xpAwarded,
-    card: row ? toCard(row as any) : null,
+    packType: pack.key,
+    rarity: first?.rarity ?? null,
+    forcedBy: first?.forcedBy ?? null,
+    wasDuplicate: first?.wasDuplicate ?? false,
+    xpAwarded: first?.xpAwarded ?? 0,
+    creditsEarned,
+    credits: profile?.credits ?? 0,
+    card: first?.card ?? null,
+    cards,
   };
 });

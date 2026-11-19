@@ -179,21 +179,43 @@ constraints:
 - 1 free pack per manager per league-day, created at the 00:00 day roll.
 - Unclaimed packs **bank up to 3**. Beyond that, the oldest expires. This forgives a weekend
   away without letting someone hoard a month of packs into one opening.
-- Purchased packs (300 Credits) do not bank and are capped at 2/day.
+- Everything else is bought with Credits, and some types are capped per day (section 5.1.1).
+
+### 5.1.1 Pack types
+
+Section 8 used to ask whether a pack should be one slot or several. The answer is both, and
+which one you get is what you are paying for: **cheap packs sell quantity, expensive packs
+sell quality**.
+
+| Pack | Price | Slots | What it can produce | Per day |
+|---|---|---|---|---|
+| Daily | free | 1 | the full table below | 1 |
+| Scouting | 150 | 3 | nothing above EPIC | — |
+| Signing | 400 | 5, **one per lane** | nothing above LEGENDARY | — |
+| Standard | 300 | 1 | the full table below | 2 |
+| Legacy | 2500 | 3 | one slot LEGENDARY at worst | — |
+
+The **Signing pack** is the one that shapes early play. Five cards, one for each role, mostly
+ordinary — it is how a manager goes from nothing to a fieldable squad in a single purchase,
+which is the same five-card, one-per-role shape the starter squad in section 4 has. It is
+deliberately poor value per card and excellent value per *lineup*.
+
+Prices and odds live in the `pack_types` table rather than in code. They are the numbers most
+likely to be wrong on the first attempt, and correcting them should be an `UPDATE`, not a
+deploy.
+
+**Pity is shared across every pack type.** A five-card pack advances the counter five times,
+and a Legendary from any pack resets it. One counter, counting cards, is the only reading
+that keeps "Legendary within 40" an honest promise — and pity outranks a pack's own ceiling,
+so a Scouting pack still pays a guarantee the manager has already earned.
 
 ### 5.2 Pack contents
 
-A v1 pack is **one slot**, rolled against this table:
+Every slot is a PlayerCard. Mastery tokens, coach cards and credit drops are not in v1
+because none of them have anything to spend themselves on yet.
 
-| Outcome | Weight |
-|---|---|
-| PlayerCard | 62% |
-| MasteryToken (role-typed) | 18% |
-| MasteryToken (ANY) | 5% |
-| CoachCard | 5% |
-| CreditPack | 10% |
-
-PlayerCard rarity roll, given a PlayerCard outcome:
+Rarity roll for a slot in the daily or Standard pack; other packs use their own weights and
+the caps in 5.1.1:
 
 | Tier | Base | With pity |
 |---|---|---|
@@ -215,8 +237,13 @@ RNG never gave them one.
 Pulling a card you own does not give a second copy. Instead:
 
 - The card gains **+250 XP** (roughly 1.5 levels at low level).
-- You receive a role-typed mastery token.
-- If the card is already level 10: 300 Credits instead.
+- You receive Credits, by what you pulled: 15 / 30 / 60 / 150 / 400 from COMMON to ICON.
+
+The spec used to pay a mastery token here, with Credits only for a duplicate of a level-10
+card. Tokens do not exist yet, and until the match rewards in [01 section 5](01-game-loop.md)
+are wired up nothing else in the game produces Credits at all — so duplicates are the
+economy's only source, and paying every one of them is what keeps it turning. When matches
+start paying out, this is the line to revisit.
 
 No dust/shard currency in v1 — one currency is enough.
 
@@ -243,8 +270,6 @@ No dust/shard currency in v1 — one currency is enough.
 
 ## 8. Open questions
 
-- **Multi-slot packs.** One slot is clean but a 3-slot pack feels better to open. Decide after
-  the first pack-opening animation prototype.
 - **Should duplicates be tradeable within a league?** Trading is a v2 feature, but duplicate
   gifting might be a cheap early social hook.
 - **Coach card depth.** Four archetypes may be too few to bother with a coach slot at all;

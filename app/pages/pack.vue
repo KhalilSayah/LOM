@@ -7,6 +7,7 @@ interface PackStatus {
   timeZone: string;
   available: boolean;
   catalogue: string | null;
+  credits: number;
   claim: null | { rarity: string; wasDuplicate: boolean; xpAwarded: number; card: any };
   pity: { sinceLegendary: number; sinceIcon: number; packsOpened: number; legendaryIn: number; iconIn: number };
   collectionCount: number;
@@ -87,7 +88,7 @@ useHead({ title: 'Pack — LOM' });
   <main class="page">
     <header class="topbar">
       <h1>Daily pack</h1>
-      <span class="topbar__meta">{{ status?.collectionCount ?? 0 }} cards</span>
+      <span class="topbar__meta tnum">{{ status?.credits ?? 0 }} cr &middot; {{ status?.collectionCount ?? 0 }} cards</span>
     </header>
 
     <p v-if="error" class="notice notice--bad">{{ error }}</p>
@@ -171,11 +172,32 @@ useHead({ title: 'Pack — LOM' });
         </div>
       </dl>
     </section>
+
+    <!-- more than one card a day, for anyone with Credits to spend -->
+    <NuxtLink v-if="status && !freshPull" class="panel shoplink" to="/shop">
+      <span>
+        <strong>More packs</strong>
+        <span class="faint shoplink__sub">Squad packs, and better odds for a price.</span>
+      </span>
+      <span class="shoplink__credits tnum">{{ status.credits }} cr</span>
+    </NuxtLink>
   </main>
 </template>
 
 <style scoped>
 .pack-skeleton { height: 58vh; }
+
+.shoplink {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  text-decoration: none;
+  color: inherit;
+}
+.shoplink__sub { display: block; font-size: 12px; margin-top: 2px; }
+.shoplink__credits { font-weight: 700; color: var(--accent, #67d3f2); white-space: nowrap; }
 
 .empty code {
   font-family: ui-monospace, 'SFMono-Regular', monospace;
