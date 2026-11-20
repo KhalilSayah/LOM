@@ -1,5 +1,6 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
+import { liveDuelFor } from '~~/server/utils/duelQueue';
 
 /**
  * Counts only: how many challenges are waiting on you, and how many drafts are live.
@@ -13,30 +14,27 @@ export default defineEventHandler(async (event) => {
   const db = serverSupabaseServiceRole(event);
   const profileId = await ensureProfile(db, manager);
 
-  const [{ count: incoming }, { data: live }] = await Promise.all([
+  const [{ count: incoming }, liveId] = await Promise.all([
     db.from('duels')
       .select('id', { count: 'exact', head: true })
       .eq('opponent_id', profileId)
       .eq('status', 'PENDING'),
     /**
-     * A live room is a draft *or* a match being watched, and unlike a count it comes back
-     * with an id. That matters now: a room you are in is somewhere you should be put back
-     * rather than merely told about, so the nav links straight to it.
+     * A live room is a draft or a match still playing, and unlike a count it comes back with
+     * an id. That matters: a room you are in is somewhere you should be put back rather than
+     * merely told about, so the nav links straight to it.
+     *
+     * Through liveDuelFor rather than its own query, so there is one definition of "live".
+     * Two of them disagreed by exactly the twenty-second result grace, which is long enough
+     * for the nav to keep offering to send somebody back into a match they have finished
+     * watching.
      */
-    db.from('duels')
-      .select('id, status')
-      .in('status', ['DRAFTING', 'WATCHING'])
-      .or(`challenger_id.eq.${profileId},opponent_id.eq.${profileId}`)
-      .order('updated_at', { ascending: false })
-      .limit(1),
+    liveDuelFor(db, profileId),
   ]);
-
-  const room = live?.[0] ?? null;
 
   return {
     incoming: incoming ?? 0,
-    drafting: room ? 1 : 0,
-    liveDuelId: room?.id ?? null,
-    liveStatus: room?.status ?? null,
+    drafting: liveId ? 1 : 0,
+    liveDuelId: liveId,
   };
 });

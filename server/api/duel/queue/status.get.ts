@@ -1,6 +1,6 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { liveDuelFor, waitingCount } from '~~/server/utils/duelQueue';
+import { liveDuelFor, waitingCount, clearSettledEntry } from '~~/server/utils/duelQueue';
 
 /**
  * Where the search stands.
@@ -16,6 +16,14 @@ export default defineEventHandler(async (event) => {
   const db = serverSupabaseServiceRole(event);
   const profileId = await ensureProfile(db, manager);
 
+  /**
+   * The Battle screen navigates straight into whatever `duelId` this returns, so it must
+   * only ever be a room worth being in. A row left over from a game that has already
+   * finished is not one, and sending somebody back into it is what made duels look like they
+   * were relaunching themselves.
+   */
+  await clearSettledEntry(db, profileId);
+
   const [{ data: mine }, live] = await Promise.all([
     db.from('duel_queue').select('joined_at, duel_id').eq('profile_id', profileId).maybeSingle(),
     liveDuelFor(db, profileId),
@@ -24,9 +32,12 @@ export default defineEventHandler(async (event) => {
   return {
     searching: Boolean(mine && !mine.duel_id),
     since: mine?.joined_at ?? null,
-    // A paired row beats a live duel lookup only in that it is the newer fact; both point at
-    // the same room when both exist.
-    duelId: mine?.duel_id ?? live ?? null,
+    /**
+     * Only a live room. `liveDuelFor` already filters on status, and the queue row has just
+     * been checked against the same rule, so either source is now safe — but the live lookup
+     * goes first because it is the one that cannot be stale.
+     */
+    duelId: live ?? mine?.duel_id ?? null,
     waiting: await waitingCount(db, profileId),
     serverNow: new Date().toISOString(),
   };

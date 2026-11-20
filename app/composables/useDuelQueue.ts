@@ -41,12 +41,41 @@ export function useDuelQueue() {
   /** True once the queue has been empty long enough to be worth offering the agent. */
   const botOffered = computed(() => searching.value && elapsed.value * 1000 >= BOT_OFFER_AFTER_MS);
 
+  /**
+   * Go to the room, once.
+   *
+   * Guarded because three things call it — the realtime push, the heartbeat and restore() —
+   * and they can agree. Without the guard a single pairing could fire several navigations,
+   * and a navigation to the route we are already on is a loop with a screen flash in it.
+   */
+  const entered = ref<string | null>(null);
+
   function enter(duelId: string) {
+    if (entered.value === duelId) return;
+    entered.value = duelId;
     stop();
+    searching.value = false;
     // Tidy up after ourselves so the row is not swept later as a mystery. It is not needed
     // any more: both clients know the duel id, and the room is where they live now.
     $fetch('/api/duel/queue/leave', { method: 'POST' }).catch(() => {});
     return navigateTo(`/duel/${duelId}`);
+  }
+
+  /**
+   * Start the two timers that run alongside a search, having stopped any already running.
+   *
+   * search() and restore() both used to set these inline, and both can run in one visit to
+   * the screen — restore() on mount, search() on the press. The second set orphaned the
+   * first, so the heartbeat ran twice over and sent a join for every copy.
+   */
+  function beginSearch(since: number) {
+    stop();
+    searching.value = true;
+    startedAt = since;
+    elapsed.value = (Date.now() - startedAt) / 1000;
+    subscribe();
+    heartbeat = setInterval(refresh, HEARTBEAT_MS);
+    ticker = setInterval(() => { elapsed.value = (Date.now() - startedAt) / 1000; }, 250);
   }
 
   async function search() {
@@ -57,13 +86,8 @@ export function useDuelQueue() {
       const res = await $fetch<any>('/api/duel/queue/join', { method: 'POST' });
       if (res.duelId) return enter(res.duelId);
 
-      searching.value = true;
-      startedAt = Date.now();
-      elapsed.value = 0;
       waiting.value = res.waiting ?? 0;
-      subscribe();
-      heartbeat = setInterval(refresh, HEARTBEAT_MS);
-      ticker = setInterval(() => { elapsed.value = (Date.now() - startedAt) / 1000; }, 250);
+      beginSearch(Date.now());
     } catch (e: any) {
       error.value = e?.data?.statusMessage || e?.message || 'Could not start a search.';
     } finally {
@@ -158,14 +182,7 @@ export function useDuelQueue() {
       const res = await $fetch<any>('/api/duel/queue/status');
       if (res.duelId) return enter(res.duelId);
       waiting.value = res.waiting ?? 0;
-      if (res.searching && res.since) {
-        searching.value = true;
-        startedAt = new Date(res.since).getTime();
-        elapsed.value = (Date.now() - startedAt) / 1000;
-        subscribe();
-        heartbeat = setInterval(refresh, HEARTBEAT_MS);
-        ticker = setInterval(() => { elapsed.value = (Date.now() - startedAt) / 1000; }, 250);
-      }
+      if (res.searching && res.since) beginSearch(new Date(res.since).getTime());
     } catch { /* Signed out, or offline. The button still works. */ }
   }
 

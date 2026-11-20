@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ACTION_SECONDS, BONUS_SECONDS } from '~~/shared/draft';
-import { LOBBY_SECONDS, WATCH_SPEED } from '~~/shared/duelRoom';
+import { LOBBY_SECONDS, WATCH_SPEED, phaseOf } from '~~/shared/duelRoom';
 import { snapshotLineup, lineupComplete, type Lineup } from './duel';
 import { botLineup } from './duelBot';
 
@@ -45,24 +45,78 @@ export async function entryFor(db: SupabaseClient, profileId: string): Promise<E
 }
 
 /**
- * The room this manager is already in, if any.
+ * The room this manager is still needed in, if any.
  *
- * Checked before pairing and before making a bot duel. A player with a live draft who
- * presses Battle has not asked for a second one — they have lost the first, probably by
- * closing a tab, and what they want is to be put back. Returning the existing room is also
- * what stops one person occupying two slots in a queue of two.
+ * Checked before pairing and before making a bot duel, and it is what the Battle screen
+ * navigates into on sight. A player with a live draft who presses Battle has not asked for a
+ * second one — they have lost the first, probably by closing a tab, and what they want is to
+ * be put back. Returning the existing room is also what stops one person occupying two slots
+ * in a queue of two.
+ *
+ * "Still needed in" is not the same as "not finished", and conflating them is what trapped
+ * people on the result screen. A duel stays WATCHING for twenty seconds after the match ends
+ * (RESULT_GRACE_SECONDS) so that somebody who looked away still arrives at a live room
+ * rather than a history entry. During those twenty seconds the status alone said the room
+ * was live, so pressing Battle again from the result screen sent you back to the result
+ * screen — again, and again, for as long as the grace lasted. Games appearing to relaunch on
+ * their own, with no way to stop them.
+ *
+ * So the phase decides, not the status, and it decides with the same function the two
+ * clients draw their screens from. A match that has finished playing is somewhere you may
+ * leave whenever you like.
  */
 export async function liveDuelFor(db: SupabaseClient, profileId: string): Promise<string | null> {
   const { data } = await db
     .from('duels')
-    .select('id, updated_at')
+    .select('id, status, starts_at, watch_start_at, watch_speed, result, updated_at')
     .in('status', ['DRAFTING', 'WATCHING'])
     .or(`challenger_id.eq.${profileId},opponent_id.eq.${profileId}`)
     .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(4);
 
-  return data?.id ?? null;
+  const now = Date.now();
+  for (const duel of data || []) {
+    const phase = phaseOf({
+      status: duel.status,
+      startsAt: duel.starts_at ?? null,
+      watchStartAt: duel.watch_start_at ?? null,
+      watchSpeed: duel.watch_speed ?? WATCH_SPEED,
+      gameLength: (duel.result as any)?.gameLength ?? null,
+    }, now);
+
+    if (phase === 'LOBBY' || phase === 'DRAFT' || phase === 'WATCH') return duel.id;
+  }
+  return null;
+}
+
+/**
+ * Drop this manager's queue row if what it points at is over.
+ *
+ * A row's `duel_id` is how the side that did not do the pairing finds out it was paired, so
+ * it has to outlive the pairing — sweepQueue keeps matched rows for two minutes for exactly
+ * that reason. The cost is that for those two minutes the row goes on saying "your game is
+ * over there" after the game has finished, and both the status endpoint and duel_matchmake
+ * believed it.
+ *
+ * That is what made a duel relaunch. Finish a game, press Battle again, and the stale row
+ * sent you back into the room you had just left; from the result screen, Battle again sent
+ * you back again. Nothing was being created — the same finished duel was being re-entered,
+ * which from the outside looks exactly like games starting on their own and not stopping.
+ *
+ * So the row is only trusted while the duel it names is still live. Once it is not, the row
+ * has done its job and is in the way.
+ */
+export async function clearSettledEntry(db: SupabaseClient, profileId: string): Promise<void> {
+  const { data: mine } = await db
+    .from('duel_queue').select('duel_id').eq('profile_id', profileId).maybeSingle();
+
+  if (!mine?.duel_id) return;
+
+  const { data: duel } = await db
+    .from('duels').select('status').eq('id', mine.duel_id).maybeSingle();
+
+  const stillLive = duel && (duel.status === 'DRAFTING' || duel.status === 'WATCHING');
+  if (!stillLive) await db.from('duel_queue').delete().eq('profile_id', profileId);
 }
 
 /**

@@ -94,6 +94,32 @@ test('the room is only settled after the result grace period', () => {
   assert.equal(watchSettled(room, at(30 + RESULT_GRACE_SECONDS)), true);
 });
 
+test('a finished match is not a room you are still needed in', () => {
+  /**
+   * The rule liveDuelFor, the nav badge and the Battle screen all now share.
+   *
+   * A duel stays WATCHING for twenty seconds after the match ends, so somebody who looked
+   * away arrives at a live room rather than a history entry. Reading that status as "live"
+   * is what trapped people: pressing Battle again from the result screen sent them back to
+   * the result screen for as long as the grace lasted. Phase decides, not status.
+   */
+  const room = watching(0);
+  const live = (now: number) => ['LOBBY', 'DRAFT', 'WATCH'].includes(phaseOf(room, now));
+
+  assert.equal(live(at(10)), true, 'mid-match: still needed');
+  assert.equal(live(at(29.9)), true);
+  assert.equal(live(at(30)), false, 'match over: free to leave, though still WATCHING');
+  assert.equal(live(at(40)), false, 'still WATCHING in the database, still free to leave');
+  assert.equal(room.status, 'WATCHING', 'the status really has not changed');
+});
+
+test('a draft is a room you are needed in, lobby included', () => {
+  const room = drafting(LOBBY_SECONDS);
+  const live = (now: number) => ['LOBBY', 'DRAFT', 'WATCH'].includes(phaseOf(room, now));
+  assert.equal(live(at(0)), true, 'the lobby counts — the other side is waiting');
+  assert.equal(live(at(100)), true);
+});
+
 test('a watch that has not started cannot be settled', () => {
   const room: RoomTiming = { ...watching(0), watchStartAt: null };
   assert.equal(watchSettled(room, at(9999)), false);

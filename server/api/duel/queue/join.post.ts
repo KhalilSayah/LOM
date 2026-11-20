@@ -1,6 +1,8 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { entryFor, liveDuelFor, matchmake, sweepQueue, waitingCount } from '~~/server/utils/duelQueue';
+import {
+  entryFor, liveDuelFor, matchmake, sweepQueue, waitingCount, clearSettledEntry,
+} from '~~/server/utils/duelQueue';
 
 /**
  * Press Battle.
@@ -28,9 +30,19 @@ export default defineEventHandler(async (event) => {
 
   const entry = await entryFor(db, profileId);
 
-  // Before pairing, not after: a ghost row left by somebody who closed the app would
-  // otherwise be matched with, and the player on this end would wait out a whole draft
-  // against an agent they did not ask for.
+  /**
+   * Our own row first, because duel_matchmake trusts it.
+   *
+   * The function's first act is to return `mine.duel_id` if it is set, which is right while
+   * that duel is live and wrong the moment it is not: pressing Battle after a game would
+   * hand back the game that had just finished instead of starting a search. Clearing it here
+   * means the pairing function never sees a row it should not believe.
+   */
+  await clearSettledEntry(db, profileId);
+
+  // Then everyone else's: a ghost row left by somebody who closed the app would otherwise be
+  // matched with, and the player on this end would wait out a whole draft against an agent
+  // they did not ask for.
   await sweepQueue(db);
 
   const duelId = await matchmake(db, profileId, entry);

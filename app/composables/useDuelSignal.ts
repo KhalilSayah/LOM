@@ -15,9 +15,14 @@
 export function useDuelSignal() {
   const incoming = useState('duel-incoming', () => 0);
   const drafting = useState('duel-drafting', () => 0);
-  /** The room to be put back into, if there is one. */
+  /**
+   * The room to be put back into, if there is one.
+   *
+   * Null once a match has finished playing, even though the duel row stays WATCHING for
+   * another twenty seconds — the server decides that by phase, not status, so the nav stops
+   * offering to send somebody back into a game they have just watched to the end.
+   */
   const liveDuelId = useState<string | null>('duel-live-id', () => null);
-  const liveStatus = useState<string | null>('duel-live-status', () => null);
   const started = useState('duel-polling', () => false);
 
   async function refresh() {
@@ -26,12 +31,10 @@ export function useDuelSignal() {
         incoming: number;
         drafting: number;
         liveDuelId: string | null;
-        liveStatus: string | null;
       }>('/api/duel/pending');
       incoming.value = res.incoming;
       drafting.value = res.drafting;
       liveDuelId.value = res.liveDuelId;
-      liveStatus.value = res.liveStatus;
     } catch {
       // Signed out, offline, or the migration has not been run. A badge is not worth an error.
     }
@@ -53,5 +56,5 @@ export function useDuelSignal() {
     return () => clearInterval(timer);
   }
 
-  return { incoming, drafting, liveDuelId, liveStatus, refresh, start };
+  return { incoming, drafting, liveDuelId, refresh, start };
 }
