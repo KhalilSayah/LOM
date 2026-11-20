@@ -31,6 +31,7 @@
   pointer-events: none;
 }
 
+.lom-pack__foil { display: none; }
 .lom-rays,
 .lom-bloom {
   position: absolute;
@@ -452,3 +453,129 @@
   .lom-pack-scene__band { opacity: 1; transform: none; }
   .lom-pack-scene__actions { opacity: 1; transform: none; pointer-events: auto; }
 }
+
+/* ===========================================================================
+   Broadcast Night skin
+   The wrapper is a foil pack: navy stock, crimped seals, the gold LOM mark.
+   Light is the only effect, and it is spent in proportion to what is inside:
+   a Common turns over quietly, an Icon gets the rays. The card back takes the
+   rarity's colour while it rises — the tell before the flip. Nothing loops.
+   =========================================================================== */
+
+.lom-pack-scene { font-family: 'Mona Sans', system-ui, -apple-system, sans-serif; }
+
+.lom-pack__foil { display: none; }
+.lom-rays { animation: none !important; }
+
+.lom-pack__body,
+.lom-pack__lid {
+  border-radius: 0.18em;
+  background:
+    radial-gradient(120% 70% at 50% 36%, rgba(216, 176, 100, 0.16), transparent 62%),
+    linear-gradient(165deg, #26365a 0%, #0a101c 80%);
+  box-shadow:
+    inset 0 0 0 1px rgba(216, 176, 100, 0.28),
+    0 1.4em 2.4em rgba(0, 0, 0, 0.6);
+}
+.lom-pack__lid {
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px 4px),
+    linear-gradient(180deg, #2f4068, #0f1626);
+}
+.lom-pack__tear {
+  height: 0;
+  border-top: 1px dashed rgba(245, 223, 168, 0.45);
+  background: none;
+  opacity: 1;
+}
+.lom-pack__crest { color: #d8b064; width: 3em; height: 3em; }
+.lom-pack__word {
+  font-family: inherit;
+  font-stretch: 125%;
+  font-size: 0.7em;
+  font-weight: 760;
+  letter-spacing: 0.34em;
+  color: rgba(245, 223, 168, 0.8);
+}
+.lom-pack__sub {
+  font-stretch: 75%;
+  font-size: 1.9em;
+  font-weight: 860;
+  letter-spacing: 0.01em;
+  line-height: 0.95;
+  color: #f5dfa8;
+}
+.lom-pack__strip {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(216, 176, 100, 0.55);
+  color: #f5dfa8;
+  font-stretch: 118%;
+}
+.lom-pack__slit { background: color-mix(in srgb, var(--r-accent) 60%, #fff); }
+
+/* the tell: the rising back takes the colour of what it hides */
+.lom-card__face--back { transition: box-shadow 0.5s ease; border-radius: 4.6% / 3.3%; }
+[data-phase='rise'] .lom-card__face--back,
+[data-phase='flip'] .lom-card__face--back {
+  box-shadow: 0 0 0 1px var(--r-accent), 0 0 2.6em 0.4em var(--r-glow);
+}
+[data-rarity='COMMON'][data-phase] .lom-card__face--back { box-shadow: none; }
+
+/* drama in proportion */
+[data-rarity='COMMON'] .lom-burst,
+[data-rarity='COMMON'] .lom-rays,
+[data-rarity='RARE'] .lom-rays { display: none; }
+[data-rarity='COMMON'] .lom-bloom { opacity: 0.25 !important; }
+
+.lom-pack-scene__band {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0.5em 1.4em;
+  border-radius: 0;
+  font-family: inherit;
+  font-stretch: 125%;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--r-accent) 14%, transparent), transparent);
+  box-shadow: none;
+  border-top: 1px solid color-mix(in srgb, var(--r-accent) 50%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--r-accent) 50%, transparent);
+}
+.lom-pack-scene__band .lom-gem { width: 13px; height: 13px; margin: 0; letter-spacing: 0; }
+
+.lom-pack-scene__hint {
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: 0;
+  text-transform: none;
+}
+[data-phase='armed'] .lom-pack-scene__hint { animation: none; opacity: 0.85; }
+
+.lom-btn {
+  --c: 10px;
+  position: relative;
+  isolation: isolate;
+  min-height: 48px;
+  padding: 0 24px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: #021816;
+  font-stretch: 112%;
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: 0.12em;
+}
+.lom-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: #1fcfc1;
+  clip-path: polygon(var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%, 0 var(--c));
+}
+.lom-btn--ghost { color: #f2ebdd; }
+.lom-btn--ghost::before { background: rgba(200, 215, 255, 0.24); }

@@ -2,7 +2,10 @@
 import type { Gift } from '~/composables/useGiftSignal';
 
 const user = useSupabaseUser();
+const route = useRoute();
 const { packReady } = usePackSignal();
+const { credits, start: startWallet } = useWallet();
+const focus = useFocusMode();
 
 // A challenge arrives without you doing anything, so the nav has to say so — and a room you
 // are already in has somebody on the other side of it, so the nav links straight back into it
@@ -21,6 +24,7 @@ watch(user, (u) => {
   if (!u) return;
   start();
   startGifts();
+  startWallet();
 }, { immediate: true });
 
 /**
@@ -28,7 +32,7 @@ watch(user, (u) => {
  *
  * Held in a local ref rather than read straight off `unseenGifts`, because it is marked seen
  * the moment it is shown: the announcement happens once, and the gift itself keeps announcing
- * itself through the nav dot and the call-out on the pack screen until it is opened.
+ * itself through the Home dot and the call-out on the pack screen until it is opened.
  */
 const toast = ref<Gift | null>(null);
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -44,71 +48,107 @@ watch(unseenGifts, (list) => {
 onBeforeUnmount(() => clearTimeout(toastTimer));
 
 const battleTo = computed(() => (liveDuelId.value ? `/duel/${liveDuelId.value}` : '/duels'));
+const battleCount = computed(() => incoming.value || drafting.value || 0);
+const homeDot = computed(() => packReady.value || giftsWaiting.value > 0);
+
+/** A duel room is a full-screen place with its own way out; so is a reveal in progress. */
+const isFocus = computed(() => focus.value || route.path.startsWith('/duel/'));
+
+/** Pages that belong to a tab without being its root still light the tab up. */
+const inBattle = computed(() => route.path.startsWith('/duel') || route.path === '/discovery' || route.path.startsWith('/m/'));
+const inLeague = computed(() => route.path.startsWith('/leagues') || route.path.startsWith('/join'));
+const inCards = computed(() => route.path.startsWith('/card'));
+
+const initial = computed(() => (user.value?.email || '?').slice(0, 1));
 </script>
 
 <template>
-  <div class="shell">
+  <div class="shell" :class="{ 'is-focus': isFocus }">
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <symbol id="lom-logo" viewBox="0 0 28 28"><path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="#d8b064" stroke-width="1.6" /><path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="#d8b064" /></symbol>
+        <symbol id="nav-home" viewBox="0 0 24 24"><path d="M4 10.5L12 4l8 6.5V20h-5.5v-5.5h-5V20H4z" /></symbol>
+        <symbol id="nav-cards" viewBox="0 0 24 24"><rect x="8" y="3.5" width="11" height="15" rx="1.5" /><path d="M5.5 6.5v12A2 2 0 0 0 7.5 20.5H15" /></symbol>
+        <symbol id="nav-battle" viewBox="0 0 24 24"><path d="M5 4l9.5 9.5M19 4l-9.5 9.5M7.5 14.5l2 2M16.5 14.5l-2 2M4.5 17.5l2 2M19.5 17.5l-2 2M5 4h3.5M5 4v3.5M19 4h-3.5M19 4v3.5" /></symbol>
+        <symbol id="nav-league" viewBox="0 0 24 24"><path d="M7 4h10v4.5a5 5 0 0 1-10 0zM7 6H4.5a2.5 2.5 0 0 0 2.6 3.4M17 6h2.5a2.5 2.5 0 0 1-2.6 3.4M12 13.5V17M8.5 20h7l-1-3h-5z" /></symbol>
+        <symbol id="nav-team" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2" /><circle cx="5" cy="10.5" r="2" /><circle cx="19" cy="10.5" r="2" /><circle cx="8" cy="18.5" r="2" /><circle cx="16" cy="18.5" r="2" /></symbol>
+      </defs>
+    </svg>
+
+    <header v-if="user && !isFocus" class="appbar">
+      <NuxtLink class="logo" to="/pack" aria-label="LOM home">
+        <svg aria-hidden="true"><use href="#lom-logo" /></svg><b>LOM</b>
+      </NuxtLink>
+
+      <nav class="deskNav" aria-label="Main">
+        <NuxtLink to="/pack">Home</NuxtLink>
+        <NuxtLink to="/collection" :class="{ 'router-link-active': inCards }">Cards</NuxtLink>
+        <NuxtLink :to="battleTo" :class="{ 'router-link-active': inBattle, 'is-live': liveDuelId }">
+          {{ liveDuelId ? 'Live' : 'Battle' }}
+          <span v-if="battleCount" class="count">{{ battleCount }}</span>
+        </NuxtLink>
+        <NuxtLink to="/leagues" :class="{ 'router-link-active': inLeague }">League</NuxtLink>
+        <NuxtLink to="/roster">Team</NuxtLink>
+        <NuxtLink to="/shop">Shop</NuxtLink>
+      </nav>
+
+      <div class="appbar__end">
+        <NuxtLink class="credits" to="/shop" :aria-label="`${credits ?? 0} credits, open the shop`">
+          <i class="coin" aria-hidden="true" />{{ credits === null ? '—' : credits.toLocaleString('en') }}
+        </NuxtLink>
+        <NuxtLink class="avatar" to="/profile" aria-label="Your profile">{{ initial }}</NuxtLink>
+      </div>
+    </header>
+
     <slot />
 
     <!-- A gift arrived. Said once, politely, wherever the manager happens to be. -->
     <Transition name="gift">
       <aside v-if="toast" class="gifttoast" role="status" aria-live="polite">
-        <span class="gifttoast__mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M3 7h18v3H3zM4 11h16v9H4zm6 0h4v9h-4z"/></svg>
-        </span>
+        <span class="gifttoast__mark" aria-hidden="true"><i class="tag tag--new">Gift</i></span>
         <span class="gifttoast__text">
           <strong>{{ toast.title }}</strong>
           <span v-if="toast.body" class="gifttoast__body">{{ toast.body }}</span>
         </span>
-        <NuxtLink class="gifttoast__go" to="/shop" @click="toast = null">Open</NuxtLink>
-        <button class="gifttoast__close" type="button" aria-label="Dismiss" @click="toast = null">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        <NuxtLink class="btn btn--sm" to="/shop" @click="toast = null">Open</NuxtLink>
+        <button class="icon-btn" type="button" aria-label="Dismiss" @click="toast = null">
+          <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
         </button>
       </aside>
     </Transition>
 
-    <nav v-if="user" class="nav" aria-label="Main">
+    <nav v-if="user" class="tabbar" aria-label="Main">
       <NuxtLink to="/pack">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v3H3zM4 11h16v9H4zm6 0h4v9h-4z"/></svg>
-        Pack
-        <span v-if="packReady || giftsWaiting" class="nav__dot" aria-hidden="true" />
+        <svg class="ico" aria-hidden="true"><use href="#nav-home" /></svg>
+        Home
+        <span v-if="homeDot" class="tabbar__dot" aria-hidden="true" />
       </NuxtLink>
-      <NuxtLink to="/collection">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h7v8H4zm9 0h7v5h-7zM4 13h7v8H4zm9-3h7v11h-7z"/></svg>
+      <NuxtLink to="/collection" :class="{ 'router-link-active': inCards }">
+        <svg class="ico" aria-hidden="true"><use href="#nav-cards" /></svg>
         Cards
       </NuxtLink>
-      <NuxtLink to="/roster">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3.2 3.2 0 1 0 0 6.4A3.2 3.2 0 0 0 12 3ZM5 10.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Zm14 0a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2ZM12 11c-2.9 0-5.2 1.7-5.2 3.8V21h10.4v-6.2c0-2.1-2.3-3.8-5.2-3.8ZM5 12c-2.2 0-4 1.3-4 3V21h3.8v-6.2c0-1 .4-2 1.1-2.7A5 5 0 0 0 5 12Zm14 0c-.3 0-.6 0-.9.1.7.7 1.1 1.7 1.1 2.7V21H23v-6c0-1.7-1.8-3-4-3Z"/></svg>
-        Roster
+      <NuxtLink
+        :to="battleTo" class="tabbar__play"
+        :class="{ 'router-link-active': inBattle, 'is-live': liveDuelId }"
+      >
+        <span class="diamond"><svg class="ico" aria-hidden="true"><use href="#nav-battle" /></svg></span>
+        {{ liveDuelId ? 'Live' : 'Battle' }}
+        <span v-if="battleCount" class="count" aria-hidden="true">{{ battleCount }}</span>
       </NuxtLink>
-      <!--
-        League takes the sixth tab rather than making a seventh: six at 390px is
-        already the limit the label size was cut for. Discovery keeps its screen and
-        is one tap from here — finding a manager by code is the rarer intention now
-        that a league lists the people you play.
-      -->
-      <NuxtLink to="/leagues">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14l-1 5.2a6 6 0 0 1-4.3 4.6l-.7.2v3h3v2.5H8V18h3v-3l-.7-.2A6 6 0 0 1 6 10.2L5 3Zm2.4 2.5.5 2.7H6.9l-.4-2.7h.9Zm9.2 0h.9l-.4 2.7h-1l.5-2.7ZM4 20.5h16V23H4v-2.5Z"/></svg>
+      <NuxtLink to="/leagues" :class="{ 'router-link-active': inLeague }">
+        <svg class="ico" aria-hidden="true"><use href="#nav-league" /></svg>
         League
       </NuxtLink>
-      <NuxtLink :to="battleTo" :class="{ 'is-live': liveDuelId }">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.9 3 3 6.9l9.1 9.1 1.4-1.4-1.1-1.1 1.4-1.4 1.1 1.1 1.4-1.4L6.9 3Zm10.2 0L13 7.1l1.4 1.4 1.1-1.1 1.4 1.4-1.1 1.1 1.4 1.4L21 6.9 17.1 3ZM4.5 17.1 3 18.6 5.4 21l1.5-1.5-2.4-2.4Zm15 0-2.4 2.4L18.6 21 21 18.6l-1.5-1.5Z"/></svg>
-        {{ liveDuelId ? 'Live' : 'Battle' }}
-        <span v-if="incoming || drafting" class="nav__count" aria-hidden="true">{{ incoming || drafting }}</span>
-      </NuxtLink>
-      <NuxtLink to="/profile">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.4 0-8 2.5-8 5.5V21h16v-1.5c0-3-3.6-5.5-8-5.5Z"/></svg>
-        Profile
+      <NuxtLink to="/roster">
+        <svg class="ico" aria-hidden="true"><use href="#nav-team" /></svg>
+        Team
       </NuxtLink>
     </nav>
   </div>
 </template>
 
 <style scoped>
-/*
- * Above the nav, never over it: the toast is an announcement, not a modal, and it must not
- * sit on top of the thing it is telling you to go and tap.
- */
+/* Above the nav, never over it: an announcement, not a modal. */
 .gifttoast {
   position: fixed;
   left: 12px;
@@ -117,87 +157,39 @@ const battleTo = computed(() => (liveDuelId.value ? `/duel/${liveDuelId.value}` 
   z-index: 40;
   display: flex;
   align-items: center;
-  gap: 11px;
-  max-width: 560px;
+  gap: 12px;
+  max-width: 520px;
   margin-inline: auto;
-  padding: 12px 12px 12px 13px;
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--accent);
+  padding: 10px 6px 10px 14px;
+  border: 1px solid rgba(216, 176, 100, 0.4);
   border-radius: var(--radius);
-  background: color-mix(in oklab, var(--surface) 92%, var(--accent));
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  background: var(--bg-3);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
 }
-
-.gifttoast__mark {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-.gifttoast__mark svg { width: 17px; height: 17px; fill: currentColor; }
-
-.gifttoast__text { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.35; }
-.gifttoast__text strong { display: block; }
-/* Two lines is an announcement; four is a letter. The shop shows the whole thing. */
+.gifttoast__mark { flex: none; }
+.gifttoast__text { flex: 1; min-width: 0; font-size: 14px; line-height: 1.35; }
+.gifttoast__text strong { display: block; font-weight: 680; }
 .gifttoast__body {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
   margin-top: 2px;
-  color: var(--ink-dim);
+  color: var(--ink-2);
   font-size: 12.5px;
 }
+.gifttoast .icon-btn svg { width: 18px; height: 18px; }
 
-.gifttoast__go {
-  flex: none;
-  align-self: stretch;
-  display: grid;
-  place-items: center;
-  padding: 0 13px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-family: var(--font-label);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  text-decoration: none;
+@media (min-width: 1024px) {
+  .gifttoast { left: auto; right: 24px; bottom: 24px; }
 }
 
-.gifttoast__close {
-  flex: none;
-  appearance: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink-faint);
-  cursor: pointer;
-}
-.gifttoast__close svg {
-  width: 15px;
-  height: 15px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-.gifttoast__close:hover { color: var(--ink); }
-
-.gift-enter-active, .gift-leave-active { transition: opacity 0.22s ease, transform 0.22s ease; }
+.gift-enter-active { transition: opacity 0.24s var(--ease-out), transform 0.24s var(--ease-out); }
+.gift-leave-active { transition: opacity 0.18s ease, transform 0.18s ease; }
 .gift-enter-from, .gift-leave-to { opacity: 0; transform: translateY(10px); }
 
 @media (prefers-reduced-motion: reduce) {
-  .gift-enter-active, .gift-leave-active { transition: none; }
+  .gift-enter-active, .gift-leave-active { transition: opacity 0.15s linear; }
+  .gift-enter-from, .gift-leave-to { transform: none; }
 }
 </style>

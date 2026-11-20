@@ -243,7 +243,7 @@ useHead({ title: 'Leagues — LOM' });
   text-transform: uppercase;
   color: var(--ink-faint);
 }
-.league__status.is-active { color: var(--accent); }
+.league__status.is-active { color: var(--teal-1); }
 .league__status.is-forming { color: var(--warn); }
 .league__meta { font-size: 12.5px; color: var(--ink-dim); }
 .league__next { font-size: 13.5px; }

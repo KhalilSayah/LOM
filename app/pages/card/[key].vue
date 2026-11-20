@@ -149,8 +149,8 @@ useHead(() => ({
 .pool img { border-radius: 5px; display: block; }
 .pool__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pool__bar { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
-.pool__bar span { display: block; height: 100%; background: var(--accent); }
-.pool__m { font-weight: 700; color: var(--accent); text-align: right; }
+.pool__bar span { display: block; height: 100%; background: var(--gold-2); }
+.pool__m { font-weight: 700; color: var(--ink-1); text-align: right; }
 .pool__g { text-align: right; font-size: 12.5px; }
 
 .accolades { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }

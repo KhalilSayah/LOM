@@ -45,9 +45,10 @@ const TIMING = {
  */
 const ART_HOLD_MS = 5000;
 
-const PACK_CREST = '<svg viewBox="0 0 64 64" aria-hidden="true">'
-  + '<path d="M32 3 L58 17 V47 L32 61 L6 47 V17 Z" fill="none" stroke="currentColor" stroke-width="2"/>'
-  + '<path d="M32 15 L47 23.5 V40.5 L32 49 L17 40.5 V23.5 Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55"/>'
+/** The LOM mark: a diamond inside a diamond, the same shape as the Battle button. */
+const PACK_CREST = '<svg viewBox="0 0 28 28" aria-hidden="true">'
+  + '<path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="currentColor" stroke-width="1.2"/>'
+  + '<path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="currentColor"/>'
   + '</svg>';
 
 /** @param {number} n */
@@ -124,7 +125,7 @@ export function createPack(card, opts = {}) {
     <p class="lom-pack-scene__hint" aria-live="polite">Tap the pack to open</p>
 
     <div class="lom-pack-scene__banner" aria-hidden="true">
-      <span class="lom-pack-scene__band">${theme.symbol} ${theme.label}</span>
+      <span class="lom-pack-scene__band"><span class="lom-gem lom-gem--${String(data.rarity).toLowerCase()}" aria-hidden="true"></span>${theme.label}</span>
     </div>
 
     <div class="lom-pack-scene__actions">

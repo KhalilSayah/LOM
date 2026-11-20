@@ -210,7 +210,7 @@ const won = computed(() =>
 
 .spark { width: 100%; height: 42px; margin-bottom: 8px; }
 .spark__zero { stroke: rgba(255, 255, 255, 0.12); stroke-width: 0.5; }
-.spark__line { fill: none; stroke: var(--accent); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.spark__line { fill: none; stroke: var(--gold-2); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
 .spark__head { stroke: rgba(255, 255, 255, 0.35); stroke-width: 0.5; }
 
 .stage { display: grid; gap: 12px; }

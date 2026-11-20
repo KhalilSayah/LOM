@@ -711,3 +711,107 @@
   }
   .lom-card { transform: none !important; }
 }
+
+/* ===========================================================================
+   Broadcast Night skin
+   Mona Sans throughout: condensed for the rating, the name and the year,
+   expanded for the small labels. The rarity is a gem whose shape gains
+   vertices as it climbs — circle, rhombus, pentagon, hexagon, star — so it
+   reads without colour. Nothing on a card animates on its own; the foil moves
+   only when a pointer does.
+   =========================================================================== */
+
+.lom-card {
+  --lom-font-display: 'Mona Sans', 'Arial Narrow', sans-serif;
+  --lom-font-body: 'Mona Sans', system-ui, -apple-system, sans-serif;
+  --prism: linear-gradient(115deg, #a6f7ee 0%, #b9c6ff 28%, #e2b8ff 52%, #ffc6dd 72%, #ffe6a6 100%);
+}
+
+.lom-card__scrim {
+  background:
+    linear-gradient(180deg, rgba(4, 7, 12, 0.6) 0%, rgba(4, 7, 12, 0) 24%),
+    linear-gradient(0deg, rgba(5, 8, 13, 0.97) 0%, rgba(5, 8, 13, 0.92) 28%, rgba(5, 8, 13, 0.55) 42%, rgba(5, 8, 13, 0) 60%);
+}
+
+.lom-head { align-items: flex-start; }
+.lom-ovr { flex-direction: column; align-items: center; gap: 0.32em; }
+.lom-ovr b {
+  font-stretch: 75%;
+  font-weight: 860;
+  font-size: 3.05em;
+  line-height: 0.8;
+  letter-spacing: -0.02em;
+}
+.lom-ovr i {
+  writing-mode: horizontal-tb;
+  margin: 0;
+  font-stretch: 112%;
+  font-size: 0.6em;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--r-accent);
+}
+
+.lom-gem {
+  display: inline-block;
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  margin-top: 0.15em;
+  background: var(--r-accent);
+  filter: drop-shadow(0 0 0.25em rgba(0, 0, 0, 0.6));
+}
+.lom-gem--common { border-radius: 50%; }
+.lom-gem--rare { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.lom-gem--epic { clip-path: polygon(50% 0, 98% 36%, 79% 95%, 21% 95%, 2% 36%); }
+.lom-gem--legendary { clip-path: polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0 50%); }
+.lom-gem--icon {
+  background: var(--prism);
+  clip-path: polygon(50% 0, 61% 30%, 85% 15%, 70% 39%, 100% 50%, 70% 61%, 85% 85%, 61% 70%, 50% 100%, 39% 70%, 15% 85%, 30% 61%, 0 50%, 30% 39%, 15% 15%, 39% 30%);
+}
+
+.lom-meta { font-stretch: 114%; font-size: 0.5em; font-weight: 720; letter-spacing: 0.16em; }
+.lom-name { font-stretch: 75%; font-weight: 860; font-size: 2em; letter-spacing: -0.005em; line-height: 0.9; }
+.lom-season { font-stretch: 75%; font-weight: 760; font-size: 1.58em; text-shadow: none; }
+.lom-card[data-rarity='ICON'] .lom-season { background: var(--prism); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lom-card[data-rarity='ICON'] .lom-ovr i { color: #e9fffb; }
+
+/* six numbers in three columns: label left, value right, a hairline meter under */
+.lom-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.3em 0.7em; }
+.lom-stat__label { font-stretch: 112%; font-size: 0.38em; font-weight: 680; letter-spacing: 0.12em; opacity: 0.62; }
+.lom-stat__val { font-stretch: 85%; font-size: 0.6em; font-weight: 760; color: var(--r-ink); }
+.lom-stat__fill { box-shadow: none; }
+
+.lom-foot { font-stretch: 112%; }
+.lom-foot__rarity { display: inline-flex; align-items: center; gap: 0.5em; }
+.lom-foot__rarity .lom-gem { width: 1.2em; height: 1.2em; margin: 0; filter: none; }
+.lom-foot__mark { font-stretch: 125%; font-weight: 800; }
+
+/* Icon: the frame itself is prismatic. */
+.lom-card[data-rarity='ICON'] .lom-card__face--front::after {
+  box-shadow: none;
+  padding: 1.5px;
+  background: var(--prism);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+
+/* No ambient loops: the hue drift ran on every Icon in a grid, forever. */
+.lom-card[data-foil='prismatic'] .lom-card__foil { animation: none; }
+
+.lom-back__title { font-stretch: 80%; font-weight: 800; font-size: 1.2em; }
+.lom-back__crest { width: 2.4em; height: 2.4em; color: #d8b064; }
+.lom-back__h { font-stretch: 116%; }
+.lom-back__grid dd { font-stretch: 80%; font-weight: 780; }
+
+.lom-card--compact .lom-name { font-size: 2.25em; }
+.lom-card--compact .lom-season { font-size: 1.75em; }
+.lom-card--compact .lom-ovr b { font-size: 3.3em; }
+.lom-card--compact .lom-ovr i { font-size: 0.66em; }
+.lom-card--compact .lom-meta { font-size: 0.58em; }
+.lom-card--compact .lom-card__scrim {
+  background:
+    linear-gradient(180deg, rgba(4, 7, 12, 0.55) 0%, rgba(4, 7, 12, 0) 26%),
+    linear-gradient(0deg, rgba(5, 8, 13, 0.96) 0%, rgba(5, 8, 13, 0.7) 24%, rgba(5, 8, 13, 0.05) 50%);
+}

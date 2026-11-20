@@ -16,7 +16,7 @@
  *   3. generated     the seeded SVG, which is what ships when neither is available
  */
 
-import { artworkSvg, roleGlyph, esc } from './artwork.js';
+import { artworkSvg, esc } from './artwork.js';
 import { RARITY_THEMES, themeVars } from './rarity.js';
 import { splashUrl, squareUrl, championKey, portraitUrl } from './assets.js';
 
@@ -136,13 +136,8 @@ export function cardHtml(card, opts = {}) {
       <div class="lom-card__content">
 
         <header class="lom-head">
-          <span class="lom-ovr"><b>${card.ovr}</b><i>OVR</i></span>
-          <span class="lom-head__tags">
-            <span class="lom-tag" title="${esc(card.role)}">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${roleGlyph(card.role)}"/></svg>
-              ${esc(card.role)}
-            </span>
-          </span>
+          <span class="lom-ovr"><b>${card.ovr}</b><i>${esc(card.role)}</i></span>
+          <span class="lom-gem lom-gem--${String(card.rarity).toLowerCase()}" title="${theme.label}" aria-hidden="true"></span>
         </header>
 
         <div class="lom-panel">
@@ -158,7 +153,7 @@ export function cardHtml(card, opts = {}) {
           <ul class="lom-pool">${pool.slice(0, 4).map(poolTile).join('')}</ul>
 
           <footer class="lom-foot">
-            <span class="lom-foot__rarity">${theme.symbol} ${theme.label}</span>
+            <span class="lom-foot__rarity"><span class="lom-gem lom-gem--${String(card.rarity).toLowerCase()}" aria-hidden="true"></span>${theme.label}</span>
             <span class="lom-foot__key">${esc(card.cardKey)}</span>
             <span class="lom-foot__mark">LOM</span>
           </footer>
@@ -175,7 +170,7 @@ export function cardHtml(card, opts = {}) {
       <div class="lom-card__plate"></div>
       <div class="lom-back">
         <div class="lom-back__crest" aria-hidden="true">
-          <svg viewBox="0 0 64 64"><path d="M32 3 L58 17 V47 L32 61 L6 47 V17 Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M32 15 L47 23.5 V40.5 L32 49 L17 40.5 V23.5 Z" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/><path d="${roleGlyph(card.role)}" transform="translate(20,20)" fill="currentColor"/></svg>
+          <svg viewBox="0 0 28 28"><path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="currentColor"/></svg>
         </div>
         <h3 class="lom-back__title">${esc(card.playerName)} <b>${card.season}</b></h3>
         <p class="lom-back__sub">${esc(card.team)} · ${esc(card.region)} · ${esc(card.role)}</p>
