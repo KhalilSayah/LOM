@@ -1,0 +1,108 @@
+import { serverSupabaseServiceRole } from '#supabase/server';
+import { requireManager, ensureProfile } from '~~/server/utils/auth';
+import { shapeLeague, type LeagueRow, type MemberRow } from '~~/server/utils/league';
+import { fixtureWindow } from '~~/shared/league';
+
+/**
+ * Every league this manager is in.
+ *
+ * Plus the one thing that decides what the screen says next to each: whether tonight's
+ * fixture exists, and who it is against. A list of league names is a menu; a list with
+ * "vs Sam, 20:30 tonight" on it is the reason to open the app.
+ */
+export default defineEventHandler(async (event) => {
+  const manager = await requireManager(event);
+  const db = serverSupabaseServiceRole(event);
+  const profileId = await ensureProfile(db, manager);
+
+  const { data: mine, error } = await db
+    .from('league_members')
+    .select('id, league_id, leagues ( id, name, owner_id, invite_code, timezone, match_hour, season_length_days, status, starts_on, created_at, started_at, catalogue_version_id )')
+    .eq('profile_id', profileId);
+
+  if (error) throw createError({ statusCode: 500, statusMessage: error.message });
+
+  const rows = (mine || []).filter((r: any) => r.leagues);
+  if (!rows.length) return { leagues: [] };
+
+  const leagueIds = rows.map((r: any) => r.league_id);
+  const myMemberIds = new Set(rows.map((r: any) => r.id));
+
+  // Everyone in every one of those leagues, in one query rather than one per league.
+  const { data: allMembers } = await db
+    .from('league_members')
+    .select('id, league_id, profile_id, team_name, is_owner, joined_at')
+    .in('league_id', leagueIds);
+
+  const byLeague = new Map<string, MemberRow[]>();
+  for (const m of (allMembers || []) as MemberRow[]) {
+    const list = byLeague.get(m.league_id) || [];
+    list.push(m);
+    byLeague.set(m.league_id, list);
+  }
+  for (const list of byLeague.values()) {
+    list.sort((a, b) => a.joined_at.localeCompare(b.joined_at));
+  }
+
+  /**
+   * The fixture each of my memberships still owes, earliest first.
+   *
+   * Undecided rather than future: a missed evening is still the next thing to play,
+   * and showing tomorrow's instead would hide it. Ordered by kick-off and read in one
+   * pass, so a league with a hundred rows costs the same as one with ten. Rest days
+   * have no `scheduled_at` and so cannot win.
+   */
+  const { data: fixtures } = await db
+    .from('league_fixtures')
+    .select('league_id, day_index, stage, blue_member_id, red_member_id, scheduled_at, status, duel_id')
+    .in('league_id', leagueIds)
+    .not('scheduled_at', 'is', null)
+    .neq('status', 'FINAL')
+    .neq('status', 'VOID')
+    .order('scheduled_at', { ascending: true });
+
+  const nextByLeague = new Map<string, any>();
+  for (const f of (fixtures || []) as any[]) {
+    if (nextByLeague.has(f.league_id)) continue;
+    const mineSide = myMemberIds.has(f.blue_member_id) ? 'BLUE'
+      : myMemberIds.has(f.red_member_id) ? 'RED' : null;
+    if (!mineSide) continue;
+    nextByLeague.set(f.league_id, { ...f, mineSide });
+  }
+
+  const leagues = rows.map((row: any) => {
+    const league = row.leagues as LeagueRow;
+    const members = byLeague.get(league.id) || [];
+    const next = nextByLeague.get(league.id);
+    const byMemberId = new Map(members.map((m) => [m.id, m]));
+
+    const opponentId = next
+      ? (next.mineSide === 'BLUE' ? next.red_member_id : next.blue_member_id)
+      : null;
+
+    return {
+      ...shapeLeague(league, members, profileId),
+      members: members.map((m) => ({ teamName: m.team_name, isOwner: m.is_owner })),
+      next: next
+        ? {
+            dayIndex: next.day_index,
+            stage: next.stage,
+            scheduledAt: next.scheduled_at,
+            side: next.mineSide,
+            opponent: opponentId ? byMemberId.get(opponentId)?.team_name ?? 'Unknown' : 'A Ghost',
+            /** Already in a room, so the list can say "rejoin" rather than "play". */
+            duelId: next.duel_id ?? null,
+            playable: fixtureWindow(next.scheduled_at).open,
+          }
+        : null,
+    };
+  });
+
+  // Forming first — those are the ones waiting on somebody to act — then by name.
+  leagues.sort((a, b) => {
+    if (a.status !== b.status) return a.status === 'FORMING' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return { leagues };
+});

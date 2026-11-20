@@ -5,8 +5,12 @@ built from collectible **player-season cards** (Faker 2024, Faker 2026, Chovy 20
 draft champions onto those players in a live ban/pick, and watch a simulated match play out
 on an animated Summoner's Rift.
 
-**Status:** v1 of the collection loop is built and deployable — accounts, a daily pack at
-17:00, and a collection. The league, draft and match simulation are still specification.
+**Status:** deployable. Accounts, a daily pack at 17:00, a collection, a roster, the live
+ban/pick draft and the match simulation are all built — two managers can duel end to end.
+Leagues are built as far as the calendar: you host one, invite people with a link, and the
+whole season's fixture list is generated when the owner starts the season. What a league
+cannot do yet is *play* those fixtures — standings, playoffs and rewards are still
+specification, and a fixture is played today by sending the opponent a friendly.
 
 ## Running it
 
@@ -23,7 +27,8 @@ npm run dev              # http://localhost:3000
    `0001_init.sql`. They are forward-only and safe to re-run. Between them they create the
    catalogue, collection and pack tables, the row-level security policies, the trigger that
    gives every new account a profile and a welcome pack, and — in `0008_pack_gifts.sql` —
-   that same welcome pack for every account that already exists.
+   that same welcome pack for every account that already exists. `0009_leagues.sql` adds
+   leagues, membership and the fixture list; without it the League tab can load nothing.
 3. **Authentication → Providers → Email**: on, and turn **Confirm email off**. Signing up
    then signs you straight in. The built-in SMTP is capped at a few messages an hour, so a
    confirmation step on a friends-only league buys nothing and gives `email rate limit
@@ -99,15 +104,40 @@ Rarity odds, pity counters and the thinnest-role bias are
 [docs/02 section 5](docs/02-cards-and-collection.md). Pity is shown in the UI on purpose:
 hidden pity is just anxiety.
 
+### How a league works
+
+One manager hosts: a name, a timezone and a match hour. The app mints a six-character
+invite code, and `/join/<code>` is a link that can be dropped in a group chat — it shows
+whose league it is and who is already in before it asks anyone to commit, and it survives
+signing up, so somebody with no account lands back on the invite rather than on the pack
+screen.
+
+Pressing **Start season** is the lock. It closes the invite, pins the catalogue, and writes
+every fixture of the season in one go: everyone against everyone twice, once from each side
+of the draft, about ten match evenings with a rest day in the middle, each at the league's
+match hour in the league's own timezone. An odd number of managers leaves somebody unpaired
+each round, and they get a Ghost fixture rather than a night off. The schedule is visible as
+a preview while the league forms, so the owner can see what they are committing five other
+people to.
+
+Two things are deliberately not there yet. **Fixtures are not playable** — the calendar says
+who plays whom and when, and the match itself is played by challenging that manager to a
+friendly from the league screen, which runs the same draft and the same simulation but
+settles nothing. And **a league does not own cards**: [docs/07](docs/07-data-model.md) gives
+each membership its own collection, while here a manager brings the one collection they
+have. Both are noted in `supabase/migrations/0009_leagues.sql`, which is also where the
+schema for the per-league version is already laid out.
+
 ## Layout
 
 | Path | What it is |
 |---|---|
 | `app/` | Nuxt 4 app — pages, components, the design system in `assets/css/main.css` |
+| `server/api/league/` | Hosting, joining, launching a season, and reading a leaguemate's squad |
 | `server/api/pack/` | Pack status and claim, the only writers of a collection |
 | `server/api/gifts/` | Packs a manager has been given, and opening them |
 | `server/utils/` | The pack window, the roll |
-| `shared/` | Row → card mapping used by both sides |
+| `shared/` | Row → card mapping, draft order, and the league invite code and schedule — all used by both sides |
 | `supabase/migrations/` | Forward-only SQL |
 | `scripts/` | Catalogue build, catalogue push, Leaguepedia ingest |
 | `data/` | The seed roster and the built catalogue |

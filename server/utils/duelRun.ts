@@ -12,6 +12,7 @@ import {
   snapshotLineup, ratingFor, autoPick, autoBan, deadlineFor, expiredBy,
   type Champion, type DuelCard, type Lineup,
 } from './duel';
+import { recordFixtureResult } from './leagueFixture';
 import { effRating } from '~~/packages/core/src/index.js';
 import { simulate } from '~~/packages/sim/src/index.js';
 
@@ -487,6 +488,14 @@ async function finish(db: SupabaseClient, duel: any, actions: LockedAction[]) {
   duel.status = 'WATCHING';
   duel.result = result;
   duel.watch_start_at = watchStart;
+
+  /**
+   * If this duel was a league fixture, the table learns about it now — the match is
+   * decided, and docs/01 section 8 will not have standings waiting on whether anyone
+   * sat through the replay. A duel that is not a fixture finds no row and does
+   * nothing; a fixture that cannot be updated logs and lets the match stand.
+   */
+  if (duel.source === 'LEAGUE') await recordFixtureResult(db, duel.id, result);
 }
 
 function hash(s: string): number {

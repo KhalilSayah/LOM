@@ -38,9 +38,18 @@ function offsetMs(at: Date, tz: string): number {
   return asIfUtc - at.getTime();
 }
 
-/** The instant at which the wall clock in `tz` reads the given local date and hour. */
-function zonedToUtc(year: number, month: number, day: number, hour: number, tz: string): Date {
-  const guess = Date.UTC(year, month - 1, day, hour);
+/**
+ * The instant at which the wall clock in `tz` reads the given local date and time.
+ *
+ * Exported because leagues need the same arithmetic for their match hour: a fixture
+ * at 20:30 Europe/Paris is a different instant in July and in January, and both
+ * clients have to count down to the same one. Minutes are optional only because the
+ * pack hour has never had any.
+ */
+export function zonedToUtc(
+  year: number, month: number, day: number, hour: number, tz: string, minute = 0,
+): Date {
+  const guess = Date.UTC(year, month - 1, day, hour, minute);
   // Two passes settles the DST boundary case, where the first offset is the wrong side of it.
   let ms = guess - offsetMs(new Date(guess), tz);
   ms = guess - offsetMs(new Date(ms), tz);
@@ -48,6 +57,41 @@ function zonedToUtc(year: number, month: number, day: number, hour: number, tz: 
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * What the wall clock in `tz` reads right now, as numbers.
+ *
+ * The one correct way to ask "what day is it for this league" — `new Date()` on the
+ * server answers for the server, which is in UTC on Vercel and so is already a day
+ * ahead of a league in Los Angeles for seven hours of every day.
+ */
+export function localNow(tz: string, now: Date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  }).formatToParts(now);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour') % 24,
+    minute: get('minute'),
+    /** 'YYYY-MM-DD', the form a Postgres `date` column round-trips. */
+    date: `${get('year')}-${pad(get('month'))}-${pad(get('day'))}`,
+  };
+}
+
+/** `date` plus `days`, staying on the calendar rather than on a 24-hour clock. */
+export function addDays(date: string, days: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const at = new Date(Date.UTC(y!, (m ?? 1) - 1, d ?? 1));
+  at.setUTCDate(at.getUTCDate() + days);
+  return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`;
+}
 
 export function packWindow(now: Date = new Date(), hour = 17, timeZone = 'Europe/Paris'): PackWindow {
   const parts = new Intl.DateTimeFormat('en-US', {
