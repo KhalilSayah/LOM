@@ -35,7 +35,7 @@ const message = (e: any, fallback: string) =>
 async function load() {
   loading.value = true;
   try {
-    data.value = await $fetch<any>(`/api/leagues/${leagueId.value}/member/${memberId.value}`);
+    data.value = await $fetch<any>(`/api/league/${leagueId.value}/member/${memberId.value}`);
     error.value = '';
   } catch (e: any) {
     error.value = message(e, 'Could not open that squad.');
