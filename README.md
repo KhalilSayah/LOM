@@ -7,10 +7,10 @@ on an animated Summoner's Rift.
 
 **Status:** deployable. Accounts, a daily pack at 17:00, a collection, a roster, the live
 ban/pick draft and the match simulation are all built — two managers can duel end to end.
-Leagues are built as far as the calendar: you host one, invite people with a link, and the
-whole season's fixture list is generated when the owner starts the season. What a league
-cannot do yet is *play* those fixtures — standings, playoffs and rewards are still
-specification, and a fixture is played today by sending the opponent a friendly.
+Leagues work: you host one, invite people with a link, the whole season's fixture list is
+generated when the owner starts the season, and those fixtures are played in the draft room
+and scored into a table. Playoffs, match rewards and forfeits for a no-show are still
+specification.
 
 ## Running it
 
@@ -28,7 +28,8 @@ npm run dev              # http://localhost:3000
    catalogue, collection and pack tables, the row-level security policies, the trigger that
    gives every new account a profile and a welcome pack, and — in `0008_pack_gifts.sql` —
    that same welcome pack for every account that already exists. `0009_leagues.sql` adds
-   leagues, membership and the fixture list; without it the League tab can load nothing.
+   leagues, membership and the fixture list, and `0010_league_fixtures_playable.sql` lets a
+   fixture open a draft room and keep its result; without them the League tab loads nothing.
 3. **Authentication → Providers → Email**: on, and turn **Confirm email off**. Signing up
    then signs you straight in. The built-in SMTP is capped at a few messages an hour, so a
    confirmation step on a friends-only league buys nothing and gives `email rate limit
@@ -120,20 +121,37 @@ each round, and they get a Ghost fixture rather than a night off. The schedule i
 a preview while the league forms, so the owner can see what they are committing five other
 people to.
 
-Two things are deliberately not there yet. **Fixtures are not playable** — the calendar says
-who plays whom and when, and the match itself is played by challenging that manager to a
-friendly from the league screen, which runs the same draft and the same simulation but
-settles nothing. And **a league does not own cards**: [docs/07](docs/07-data-model.md) gives
-each membership its own collection, while here a manager brings the one collection they
-have. Both are noted in `supabase/migrations/0009_leagues.sql`, which is also where the
-schema for the per-league version is already laid out.
+**Playing a fixture** happens in the duel room. Fifteen minutes before kick-off the fixture
+grows a button; whoever taps it first opens the room and the other manager's Battle tab
+lights up. The sides are the ones the schedule assigned — nothing is drawn, which is what
+makes the second cycle's swap worth anything — and the draft, the clock and the engine are
+the same ones a friendly uses. An odd league's spare manager plays the agent instead of
+sitting out.
+
+The result lands on the fixture the moment the engine runs, not when somebody finishes
+watching: [docs/01 section 8](docs/01-game-loop.md) is explicit that standings must not wait
+on a manager who will not open the app. The table is three points a win, then head-to-head
+*within the tied group* (a three-way cycle cannot be resolved pair by pair), then closing
+wins quickly, then kills, then a coin seeded from the league id so a drawn table never
+reshuffles itself. Ghost fixtures are played and rewatchable but do not count.
+
+Three things are deliberately not there yet. **No forfeits** — a fixture nobody opens stays
+scheduled, and its button keeps working tomorrow, because a league of friends misses evenings
+and a missed evening is a worse game than a forfeit nobody chose; real absence handling is
+[docs/05 section 7](docs/05-draft-and-live-session.md). **No playoffs** — days 12-14 need a
+bracket built from the final table. **No match rewards** — [docs/01 section 5](docs/01-game-loop.md)
+pays credits and card XP per match, and duplicates are still the only source of either. And
+**a league does not own cards**: [docs/07](docs/07-data-model.md) gives each membership its
+own collection, while here a manager brings the one collection they have — noted in
+`supabase/migrations/0009_leagues.sql`, which is also where the schema for the per-league
+version is already laid out.
 
 ## Layout
 
 | Path | What it is |
 |---|---|
 | `app/` | Nuxt 4 app — pages, components, the design system in `assets/css/main.css` |
-| `server/api/league/` | Hosting, joining, launching a season, and reading a leaguemate's squad |
+| `server/api/league/` | Hosting, joining, launching a season, playing a fixture, reading a leaguemate's squad |
 | `server/api/pack/` | Pack status and claim, the only writers of a collection |
 | `server/api/gifts/` | Packs a manager has been given, and opening them |
 | `server/utils/` | The pack window, the roll |
