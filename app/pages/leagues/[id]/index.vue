@@ -27,7 +27,7 @@ const message = (e: any, fallback: string) =>
 
 async function load() {
   try {
-    data.value = await $fetch<any>(`/api/leagues/${id.value}`);
+    data.value = await $fetch<any>(`/api/league/${id.value}`);
     error.value = '';
   } catch (e: any) {
     error.value = message(e, 'Could not open that league.');
@@ -98,7 +98,7 @@ async function launch(force = false) {
   note.value = '';
   error.value = '';
   try {
-    const res = await $fetch<any>(`/api/leagues/${id.value}/launch`, {
+    const res = await $fetch<any>(`/api/league/${id.value}/launch`, {
       method: 'POST',
       body: { ignoreUnready: force },
     });
@@ -127,7 +127,7 @@ async function leave() {
   if (leaving.value) return;
   leaving.value = true;
   try {
-    const res = await $fetch<any>(`/api/leagues/${id.value}/leave`, { method: 'POST' });
+    const res = await $fetch<any>(`/api/league/${id.value}/leave`, { method: 'POST' });
     await navigateTo('/leagues');
     return res;
   } catch (e: any) {
