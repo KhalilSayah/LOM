@@ -2,84 +2,53 @@
 import { SLOTS, PHASE_LABEL, type Slot } from '~~/shared/draft';
 
 /**
- * The draft.
+ * The room.
  *
- * Polls once a second. The server is the only thing that knows whose turn it is, what is
- * still available and whether the clock ran out, so this screen asks rather than decides —
- * it renders a countdown from the server's `deadlineAt` corrected by a measured clock
- * offset, and a disagreement is simply this client being wrong.
+ * One screen for the whole duel, in four phases: who you drew, the draft, the match, the
+ * result. It is one screen rather than a draft page and a replay page because the two people
+ * in it never leave each other — the moment one of them has to navigate somewhere, the other
+ * is alone, and whatever they were doing together is over.
  *
- * Both lineups and both champion pools are open from the first ban (docs/05 section 2),
- * because banning is only interesting when you know what you are banning against.
+ * Everything on it is driven by useDuelRoom, which holds the realtime subscription and the
+ * corrected clock. This component has no clock, no poll, and no opinion about when a phase
+ * ends. That is the design: both players' screens are functions of the same server instants,
+ * so they turn over together.
+ *
+ * What used to be here and is not any more: a 700 ms `setInterval` asking for the whole duel,
+ * and a POST per hover.
  */
 
 const route = useRoute();
 const id = route.params.id as string;
 
-const state = ref<any>(null);
-const pool = ref<Array<{ key: string; name: string }>>([]);
-const error = ref('');
+const {
+  state, pool, error: roomError, loading, live,
+  phase, matchClock, secondsLeft, lobbyLeft,
+  theirHover, opponentHere, sendHover,
+} = useDuelRoom(id);
+
+const actionError = ref('');
 const busy = ref(false);
 const search = ref('');
 const chosenSlot = ref<Slot | null>(null);
-const loading = ref(true);
+const selected = ref<{ key: string; name: string } | null>(null);
 
-/** Server time minus ours, so a wrong device clock cannot break the countdown. */
-let drift = 0;
-const now = ref(Date.now());
-let poller: ReturnType<typeof setInterval> | undefined;
-let ticker: ReturnType<typeof setInterval> | undefined;
+const error = computed(() => actionError.value || roomError.value);
 
-async function load(withPool = false) {
-  try {
-    const sentAt = Date.now();
-    const next = await $fetch<any>(`/api/duel/${id}${withPool ? '?pool=1' : ''}`);
-    /**
-     * Clock offset, corrected for the round trip.
-     *
-     * `serverNow` was true when the server wrote it, which is roughly half a round trip
-     * before it arrived here. Taking it at face value leaves each device out by its own
-     * latency, so two phones on different connections show different numbers for the same
-     * deadline — which is exactly what it looked like. Charging half the measured round
-     * trip puts them within a few tens of milliseconds of each other.
-     */
-    const rtt = Date.now() - sentAt;
-    drift = new Date(next.serverNow).getTime() + rtt / 2 - Date.now();
-    if (next.pool) pool.value = next.pool;
-    // A new turn, or someone else's turn, invalidates whatever was being considered here.
-    if (state.value && (next.turn !== state.value.turn || !next.myTurn)) {
-      selected.value = null;
-      chosenSlot.value = null;
-    }
-    state.value = next;
-    error.value = '';
-  } catch (e: any) {
-    // Keep the last good state on screen. A dropped poll on a phone is ordinary, and
-    // blanking the draft every time one fails is worse than being a second stale.
-    error.value = e?.data?.statusMessage || e?.message || 'Reconnecting…';
-  } finally {
-    loading.value = false;
-  }
-}
-
-onMounted(async () => {
-  await load(true);
-  // Fast enough that the other side's lock looks immediate; the endpoint is two indexed
-  // reads and the heavy per-catalogue work is cached in the server process.
-  poller = setInterval(() => { if (state.value?.status === 'DRAFTING') load(); }, 700);
-  ticker = setInterval(() => { now.value = Date.now(); }, 200);
+// A new turn, or a turn that is not ours, invalidates whatever was being considered.
+watch(() => [state.value?.turn, state.value?.myTurn], () => {
+  selected.value = null;
+  chosenSlot.value = null;
+  actionError.value = '';
 });
-onBeforeUnmount(() => { clearInterval(poller); clearInterval(ticker); });
 
-const secondsLeft = computed(() => {
-  if (!state.value?.deadlineAt) return null;
-  const ms = new Date(state.value.deadlineAt).getTime() - (now.value + drift);
-  return Math.max(0, Math.ceil(ms / 1000));
-});
+const mySide = computed(() => state.value?.side);
+const theirSide = computed(() => (state.value?.side === 'BLUE' ? 'RED' : 'BLUE'));
+const isPick = computed(() => state.value?.step?.kind === 'PICK');
 
 const taken = computed(() => new Set((state.value?.actions || []).map((a: any) => a.championKey)));
-const myLineup = computed(() => (state.value?.side === 'BLUE' ? state.value?.blueLineup : state.value?.redLineup) || {});
-const theirLineup = computed(() => (state.value?.side === 'BLUE' ? state.value?.redLineup : state.value?.blueLineup) || {});
+const myLineup = computed(() =>
+  (state.value?.side === 'BLUE' ? state.value?.blueLineup : state.value?.redLineup) || {});
 
 const myFilled = computed(() => new Set(
   (state.value?.actions || [])
@@ -87,8 +56,6 @@ const myFilled = computed(() => new Set(
     .map((a: any) => a.slot),
 ));
 const openSlots = computed(() => SLOTS.filter((s) => !myFilled.value.has(s)));
-
-const isPick = computed(() => state.value?.step?.kind === 'PICK');
 
 const champions = computed(() => {
   const q = search.value.trim().toLowerCase();
@@ -115,28 +82,45 @@ const bestSlotFor = (championKey: string): Slot | null => {
 /**
  * Tapping a champion considers it; locking it in commits.
  *
- * Two steps rather than one, as the real client does and docs/05 section 3.3 describes.
- * A single tap committing is unforgiving on a phone — a mis-tap spends a ban — and it also
- * leaves the opponent with nothing to watch until the action is already over. The hover is
- * most of what makes the draft feel live for the person who is not acting.
+ * Two steps, as the real client does and docs/05 section 3.3 describes. A single tap
+ * committing is unforgiving on a phone — a mis-tap spends a ban — and it also leaves the
+ * opponent with nothing to watch until the action is already over.
+ *
+ * The hover now goes out as a broadcast on the room channel rather than a POST that writes a
+ * column. It arrives in one hop, costs no database write, and cannot be mistaken for state:
+ * nothing persists it and nothing reads it back.
  */
-const selected = ref<{ key: string; name: string } | null>(null);
-
 function consider(c: { key: string; name: string }) {
-  if (!state.value?.myTurn || busy.value) return;
+  if (!state.value?.myTurn || busy.value || phase.value !== 'DRAFT') return;
   selected.value = c;
-  // Fire and forget: a hover is something to look at, not a claim on a champion.
-  $fetch(`/api/duel/${id}/hover`, {
-    method: 'POST',
-    body: { championKey: c.key, championName: c.name, slot: isPick.value ? (chosenSlot.value || bestSlotFor(c.key)) : null },
-  }).catch(() => {});
+  sendHover({
+    side: state.value.side!,
+    kind: state.value.step.kind,
+    turn: state.value.turn,
+    championKey: c.key,
+    championName: c.name,
+    slot: isPick.value ? (chosenSlot.value || bestSlotFor(c.key)) : null,
+  });
 }
+
+// Moving the slot while a champion is already in hand is a change the other side should see.
+watch(chosenSlot, (slot) => {
+  if (!selected.value || !state.value?.myTurn || !isPick.value) return;
+  sendHover({
+    side: state.value.side!,
+    kind: 'PICK',
+    turn: state.value.turn,
+    championKey: selected.value.key,
+    championName: selected.value.name,
+    slot: slot || bestSlotFor(selected.value.key),
+  });
+});
 
 async function lockIn() {
   if (busy.value || !state.value?.myTurn || !selected.value) return;
   const slot = isPick.value ? (chosenSlot.value || bestSlotFor(selected.value.key)) : null;
   if (isPick.value && !slot) {
-    error.value = 'Pick a lineup slot first.';
+    actionError.value = 'Pick a lineup slot first.';
     return;
   }
   busy.value = true;
@@ -148,32 +132,22 @@ async function lockIn() {
     selected.value = null;
     chosenSlot.value = null;
     search.value = '';
-    await load();
+    sendHover(null);
+    // No reload: the insert is pushed to both clients, including this one.
   } catch (e: any) {
-    error.value = e?.data?.statusMessage || e?.message || 'That did not go through.';
-    await load();
+    actionError.value = e?.data?.statusMessage || e?.message || 'That did not go through.';
   } finally {
     busy.value = false;
   }
 }
 
-/** Whatever the side on the clock is considering, mine or theirs. */
-const hover = computed(() => state.value?.hover || null);
-const theirHover = computed(() => (hover.value && hover.value.side !== state.value?.side ? hover.value : null));
-
 const sideActions = (side: string, kind: string) =>
   (state.value?.actions || []).filter((a: any) => a.side === side && a.kind === kind);
-
-const mySide = computed(() => state.value?.side);
-const theirSide = computed(() => (state.value?.side === 'BLUE' ? 'RED' : 'BLUE'));
 
 const DDRAGON = 'https://ddragon.leagueoflegends.com/cdn/16.22.1/img/champion';
 /** Square portrait, for bans and the picker grid. */
 const art = (key: string) => `${DDRAGON}/${key}.png`;
-/**
- * Tall loading art, for the pick panels. 308x560, which is the shape the broadcast
- * layout wants — the square portrait stretched to a panel looks like a mistake.
- */
+/** Tall loading art for the pick panels — 308x560, the shape the broadcast layout wants. */
 const splash = (key: string) =>
   `https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${key}_0.jpg`;
 
@@ -191,41 +165,104 @@ const pickIndex = (side: string, slot: Slot) => {
 const lineupOf = (side: string) =>
   (side === 'BLUE' ? state.value?.blueLineup : state.value?.redLineup) || {};
 
-useHead({ title: 'Draft — LOM' });
+const nameOf = (side: string) =>
+  side === mySide.value ? 'You' : state.value?.opponent || 'Opponent';
+
+/** Names for the scoreboard during the watch, in blue/red order rather than mine/theirs. */
+const blueName = computed(() => nameOf('BLUE'));
+const redName = computed(() => nameOf('RED'));
+
+/**
+ * Where to show the match. The shared clock while it is running, the end once it is not.
+ *
+ * The second half is not just belt and braces. A duel that finished before migration 0007 has
+ * a result but no `watch_start_at`, so its shared clock is zero forever — and opening one from
+ * history rendered an untouched map and a 0-0 scoreboard above the final box score, which reads
+ * as a broken replay rather than an old one. At RESULT the match is over by definition, so the
+ * honest frame is the last one.
+ */
+const watchAt = computed(() => {
+  if (phase.value === 'RESULT') return state.value?.result?.gameLength ?? 0;
+  return matchClock.value;
+});
+
+useHead({ title: 'Duel — LOM' });
 </script>
 
 <template>
-  <main class="page">
+  <main class="page" :class="{ 'page--wide': phase === 'WATCH' || phase === 'RESULT' }">
     <header class="topbar">
-      <h1>Draft</h1>
-      <span class="topbar__meta">vs {{ state?.opponent || '…' }}</span>
+      <h1>
+        <template v-if="phase === 'LOBBY'">Match found</template>
+        <template v-else-if="phase === 'DRAFT'">Draft</template>
+        <template v-else-if="phase === 'WATCH'">Live</template>
+        <template v-else>Result</template>
+      </h1>
+      <span class="topbar__meta">
+        vs {{ state?.opponent || '…' }}
+        <!-- Only worth saying when it is not true: a live room says nothing about itself. -->
+        <span v-if="state && !live" class="faint"> · reconnecting</span>
+      </span>
     </header>
 
     <p v-if="error" class="notice notice--bad">{{ error }}</p>
     <div v-if="loading" class="skeleton draft-skeleton" />
 
-    <!-- the match is done -->
-    <section v-else-if="state?.status === 'COMPLETE'" class="panel done">
-      <p class="eyebrow">Result</p>
-      <h2 class="done__head">
-        {{ state.result?.winner === mySide ? 'You won' : 'You lost' }}
-      </h2>
-      <p class="muted">
-        {{ state.result?.winner }} closed it out
-        <template v-if="state.result?.durationLabel"> in {{ state.result.durationLabel }}</template>.
+    <!-- ===== Lobby: who you drew, and a few seconds to see it ================= -->
+    <section v-else-if="phase === 'LOBBY'" class="lobby">
+      <p class="eyebrow">Paired</p>
+      <p class="lobby__vs">
+        <strong>You</strong>
+        <span class="lobby__x">vs</span>
+        <strong>{{ state?.opponent }}</strong>
       </p>
-      <NuxtLink class="btn" :to="`/replay?duel=${id}`">Watch the match</NuxtLink>
+      <p class="lobby__side">
+        You are <strong :class="`is-${(mySide || '').toLowerCase()}`">{{ mySide }}</strong>
+        <span class="faint">
+          · {{ mySide === 'BLUE' ? 'first ban and first pick' : 'last pick' }}
+        </span>
+      </p>
+      <p v-if="state?.isBot" class="lobby__note faint">
+        Nobody was searching, so the agent is taking the other side.
+      </p>
+      <p v-else class="lobby__note faint">
+        {{ opponentHere ? 'They are here.' : 'Waiting for them to load…' }}
+      </p>
+      <p class="lobby__count tnum">{{ Math.ceil(lobbyLeft) }}</p>
+      <p class="lobby__note faint">Bans open in a moment. Nobody's clock is running yet.</p>
     </section>
 
-    <template v-else-if="state">
-      <!-- clock and whose turn -->
+    <!-- ===== The shared watch, and then the result ============================ -->
+    <template v-else-if="(phase === 'WATCH' || phase === 'RESULT') && state?.result">
+      <p v-if="phase === 'WATCH'" class="notice notice--live">
+        You are both watching this live. Same clock, same second — there is nothing to skip to.
+      </p>
+      <MatchWatch
+        :result="state.result"
+        :clock="watchAt"
+        :blue-name="blueName"
+        :red-name="redName"
+        :my-side="mySide"
+        :show-result="phase === 'RESULT'"
+      />
+      <div v-if="phase === 'RESULT'" class="again">
+        <NuxtLink class="btn" to="/duels">Battle again</NuxtLink>
+      </div>
+    </template>
+
+    <!-- The draft finished but the result has not arrived on this client yet. -->
+    <section v-else-if="phase === 'WATCH' || phase === 'RESULT'" class="lobby">
+      <p class="eyebrow">Drafted</p>
+      <p class="lobby__note">Both fives are in. Loading the match…</p>
+    </section>
+
+    <!-- ===== The draft ======================================================= -->
+    <template v-else-if="state && phase === 'DRAFT'">
       <section class="panel clock" :class="{ 'is-mine': state.myTurn }">
         <div>
           <p class="eyebrow">{{ state.step ? PHASE_LABEL[state.step.phase] : 'Draft' }}</p>
           <p class="clock__who">
-            <template v-if="state.myTurn">
-              Your {{ isPick ? 'pick' : 'ban' }}
-            </template>
+            <template v-if="state.myTurn">Your {{ isPick ? 'pick' : 'ban' }}</template>
             <template v-else-if="theirHover">
               {{ state.opponent }} is looking at <strong>{{ theirHover.championName }}</strong>
             </template>
@@ -240,17 +277,12 @@ useHead({ title: 'Draft — LOM' });
       <!-- the board, laid out like the broadcast: blue above, red below -->
       <section class="board">
         <div v-for="side in ['BLUE', 'RED']" :key="side" class="rail" :class="`rail--${side.toLowerCase()}`">
-          <!-- bans run along the edge of each side's rail -->
           <div class="bans">
             <span class="bans__who">
-              {{ side === mySide ? 'You' : state.opponent }}
+              {{ nameOf(side) }}
               <span class="bans__side">{{ side }}</span>
             </span>
-            <span
-              v-for="n in 5"
-              :key="n"
-              class="bans__slot"
-            >
+            <span v-for="n in 5" :key="n" class="bans__slot">
               <img
                 v-if="sideActions(side, 'BAN')[n - 1]"
                 :src="art(sideActions(side, 'BAN')[n - 1].championKey)"
@@ -265,7 +297,10 @@ useHead({ title: 'Draft — LOM' });
               v-for="slot in SLOTS"
               :key="slot"
               class="pick"
-              :class="{ 'is-empty': !pickFor(side, slot), 'is-live': state.step?.kind === 'PICK' && state.step?.side === side }"
+              :class="{
+                'is-empty': !pickFor(side, slot),
+                'is-live': state.step?.kind === 'PICK' && state.step?.side === side,
+              }"
             >
               <img
                 v-if="pickFor(side, slot)"
@@ -332,7 +367,9 @@ useHead({ title: 'Draft — LOM' });
       <!-- the pool -->
       <section class="pool">
         <div class="pool__head">
-          <p class="eyebrow">Champions <span class="faint">({{ champions.filter(c => !c.gone).length }} left)</span></p>
+          <p class="eyebrow">
+            Champions <span class="faint">({{ champions.filter(c => !c.gone).length }} left)</span>
+          </p>
           <input v-model="search" class="pool__search" type="search" placeholder="Search champions">
         </div>
         <ul class="pool__grid">
@@ -359,11 +396,54 @@ useHead({ title: 'Draft — LOM' });
         </ul>
       </section>
     </template>
+
+    <!-- A challenge that was never answered, or one that was withdrawn. -->
+    <section v-else-if="state" class="panel done">
+      <p class="eyebrow">{{ phase === 'PENDING' ? 'Waiting' : 'Over' }}</p>
+      <p class="muted">
+        <template v-if="phase === 'PENDING'">
+          This challenge has not been answered yet.
+        </template>
+        <template v-else>This duel never started.</template>
+      </p>
+      <NuxtLink class="btn" to="/duels">Back to Battle</NuxtLink>
+    </section>
   </main>
 </template>
 
 <style scoped>
 .draft-skeleton { height: 60vh; }
+
+/* --- lobby -------------------------------------------------------------- */
+
+.lobby {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 40px 16px;
+}
+.lobby__vs { display: flex; align-items: center; gap: 12px; font-size: 19px; margin: 2px 0; }
+.lobby__x {
+  font-family: var(--font-label, inherit);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim, #8fa3c0);
+}
+.lobby__side { font-size: 14px; margin: 0; }
+.lobby__side .is-blue { color: #5ec8f0; }
+.lobby__side .is-red { color: #ff6f6a; }
+.lobby__note { font-size: 13px; margin: 0; max-width: 34ch; }
+.lobby__count {
+  font-family: var(--font-display, inherit);
+  font-size: 54px;
+  font-weight: 700;
+  line-height: 1;
+  margin: 10px 0 2px;
+}
+
+.notice--live { border-color: var(--accent, #67d3f2); }
 
 .clock { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .clock.is-mine { border-color: var(--accent, #67d3f2); }
@@ -536,8 +616,8 @@ useHead({ title: 'Draft — LOM' });
 }
 .champ.is-gone { opacity: 0.22; cursor: not-allowed; filter: grayscale(1); }
 .champ.is-ready:hover { border-color: var(--accent, #67d3f2); }
+.champ.is-picked { border-color: var(--accent, #67d3f2); }
 .champ:disabled { cursor: not-allowed; }
-
 
 /* --- lock bar ------------------------------------------------------------ */
 
@@ -567,12 +647,10 @@ useHead({ title: 'Draft — LOM' });
 .lockbar__sub { font-size: 11px; }
 .lockbar__go { white-space: nowrap; }
 
-.champ.is-picked { border-color: var(--accent, #67d3f2); }
-
 /* Their hover sits in the slot, half-there, until they commit to it. */
 .pick__art--hover { opacity: 0.4; filter: saturate(0.6); animation: hoverpulse 1.4s ease-in-out infinite; }
 @keyframes hoverpulse { 0%, 100% { opacity: 0.28; } 50% { opacity: 0.5; } }
 
 .done { display: grid; gap: 8px; justify-items: start; }
-.done__head { font-size: 24px; }
+.again { margin-top: 18px; text-align: center; }
 </style>

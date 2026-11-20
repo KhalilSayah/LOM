@@ -36,6 +36,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'This draft is over.' });
   }
 
+  // The lobby is still up. Nothing can go wrong if an action lands early — the clock already
+  // accounts for the lobby — but a first ban locked before the other side has seen the room
+  // open is a worse first impression of a duel than a brief refusal.
+  if (duel.starts_at && Date.now() < new Date(duel.starts_at).getTime()) {
+    throw createError({ statusCode: 409, statusMessage: 'The draft has not opened yet.' });
+  }
+
   const step = stepAt(duel.turn);
   if (!step) throw createError({ statusCode: 409, statusMessage: 'This draft is over.' });
 

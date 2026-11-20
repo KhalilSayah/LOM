@@ -187,6 +187,18 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 700; margin: 0; lett
   box-shadow: 0 0 0 3px rgba(8, 12, 20, 0.92);
 }
 
+/* A room you are already in. Somebody is on the other side of it watching your clock run
+   down, so this tab stays lit from wherever you have wandered off to. */
+.nav a.is-live { color: var(--accent); }
+.nav a.is-live .nav__count { animation: navlive 1.6s ease-in-out infinite; }
+@keyframes navlive {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(8, 12, 20, 0.92); }
+  50% { box-shadow: 0 0 0 3px rgba(8, 12, 20, 0.92), 0 0 10px 2px var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav a.is-live .nav__count { animation: none; }
+}
+
 /* --- building blocks ----------------------------------------------------- */
 
 .panel {
