@@ -43,6 +43,29 @@ export default defineNuxtConfig({
     preset: process.env.VERCEL ? 'vercel' : undefined,
   },
 
+  experimental: {
+    /**
+     * Reload the moment a lazy chunk fails to load, rather than waiting for the router.
+     *
+     * Every deploy rotates the hashes in /_nuxt, so anyone with the app already open is
+     * holding a page that references chunks the new deployment does not serve. The next
+     * navigation asks for one, the browser refuses it, and Nuxt's default error page shows
+     * what looks like a server fault: a 500, with "Failed to fetch dynamically imported
+     * module" inside it. Nothing is wrong, the app is simply one version stale, and a reload
+     * fixes it — which is why it is maddening to debug and why it is reported as a bug in
+     * whatever screen the person happened to click.
+     *
+     * Nuxt's default here is 'automatic', which recovers only when the failure surfaces as a
+     * router error. When it surfaces anywhere else the error page wins. 'automatic-immediate'
+     * reloads on the preload failure itself, which is the case that actually bites.
+     *
+     * This is the right fix rather than a workaround: there is no version of a deployed SPA
+     * where an open tab keeps working across a deploy, so the only question is whether the
+     * person sees a reload or a stack trace.
+     */
+    emitRouteChunkError: 'automatic-immediate',
+  },
+
   app: {
     head: {
       htmlAttrs: { lang: 'en' },
