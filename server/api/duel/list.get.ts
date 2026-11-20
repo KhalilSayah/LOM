@@ -21,7 +21,17 @@ export default defineEventHandler(async (event) => {
     .limit(40);
 
   const rows = data || [];
-  const others = [...new Set(rows.map((d) => (d.challenger_id === profileId ? d.opponent_id : d.challenger_id)))];
+  /**
+   * The opponents worth looking up — which excludes the agent, because it is not one.
+   *
+   * A bot duel has `opponent_id is null`, so without the filter this set contains a null,
+   * `.in('id', [null])` becomes `id=in.(null)` on the wire, and Postgres rejects it as an
+   * invalid uuid. The whole screen 500s, and it does so only for people who have played the
+   * agent — which, with most rosters still unfilled, is almost everyone.
+   */
+  const others = [...new Set(
+    rows.map((d) => (d.challenger_id === profileId ? d.opponent_id : d.challenger_id)),
+  )].filter((id): id is string => Boolean(id));
   const { data: profiles } = others.length
     ? await db.from('profiles').select('id, handle, display_name').in('id', others)
     : { data: [] as any[] };

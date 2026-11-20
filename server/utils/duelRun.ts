@@ -94,9 +94,20 @@ async function lock(
     auto: action.auto,
   });
 
-  // 23505 is someone else getting there first — another tab, or the clock and a click
-  // landing together. The caller reloads and finds the draft already moved on.
-  if (error) throw error;
+  // 23505 is someone else getting there first — another tab, two clients nudging the same
+  // deadline, or the clock and a click landing together. Callers handle that one by name;
+  // anything else is a real failure and is logged here, because the alternative is a bare
+  // 500 on somebody's screen and nothing in the function log to say why.
+  if (error) {
+    if (error.code !== '23505') {
+      console.error('[duel] lock failed', {
+        duel: duel.id, idx: action.idx, side: action.side, kind: action.kind,
+        champion: action.championKey, slot: action.slot, auto: action.auto,
+        code: error.code, message: error.message, details: error.details,
+      });
+    }
+    throw error;
+  }
 
   const nextTurn = action.idx + 1;
   const done = nextTurn >= DRAFT_LENGTH;
@@ -127,8 +138,16 @@ async function lock(
    *
    * It happened: the update began writing `hover` one migration before that column existed,
    * and because nothing read the error the only symptom was a draft that would not advance.
+   * It is logged as well as thrown for the same reason — that bug cost an evening precisely
+   * because the failure was invisible.
    */
-  if (advanceError) throw advanceError;
+  if (advanceError) {
+    console.error('[duel] cursor advance failed', {
+      duel: duel.id, from: action.idx, to: nextTurn,
+      code: advanceError.code, message: advanceError.message, details: advanceError.details,
+    });
+    throw advanceError;
+  }
 
   duel.turn = nextTurn;
   duel.bonus = bonus;
@@ -323,15 +342,40 @@ export async function catchUp(
       ? autoPick(mine, theirs, actions, step.side, pool, roles, rand)
       : { ...autoBan(theirs, actions, step.side === 'BLUE' ? 'RED' : 'BLUE', pool, roles, rand), slot: null };
 
-    await lock(db, duel, {
-      idx: step.idx,
-      side: step.side,
-      kind: step.kind,
-      championKey: chosen.championKey,
-      championName: chosen.championName,
-      slot: (chosen as any).slot ?? null,
-      auto: true,
-    }, bonus);
+    /**
+     * Losing this race is normal, not an error.
+     *
+     * Both players' clients nudge at the same instant — not by coincidence but by
+     * construction: each computes the moment from the same `deadline_at` through the same
+     * clock correction, so the two requests arrive milliseconds apart. Both then decide the
+     * agent should act for this turn, and both try to write idx. One wins; the other is
+     * refused by the primary key.
+     *
+     * Letting that throw is what put "Internal Server Error" on one player's screen while
+     * the draft carried on perfectly for the other, which is a confusing way to find out
+     * that nothing is actually wrong. The unique indexes are doing exactly their job here —
+     * they are the reason two servers cannot both auto-draft the same turn — so the right
+     * response is to accept the loss, re-read what the winner wrote, and carry on round the
+     * loop. `guard` bounds the iterations, so a repeated collision cannot spin.
+     */
+    try {
+      await lock(db, duel, {
+        idx: step.idx,
+        side: step.side,
+        kind: step.kind,
+        championKey: chosen.championKey,
+        championName: chosen.championName,
+        slot: (chosen as any).slot ?? null,
+        auto: true,
+      }, bonus);
+    } catch (e: any) {
+      if (e?.code !== '23505') throw e;
+      // Somebody else moved the draft on. Catch up to where they left it.
+      const { data: fresh } = await db.from('duels').select('*').eq('id', duel.id).maybeSingle();
+      if (fresh) Object.assign(duel, fresh);
+      actions = await loadActions(db, duel.id);
+      continue;
+    }
 
     actions = await loadActions(db, duel.id);
   }
