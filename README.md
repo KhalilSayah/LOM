@@ -19,9 +19,11 @@ npm run dev              # http://localhost:3000
 ### 1. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. **SQL Editor** → paste `supabase/migrations/0001_init.sql` → Run. That creates the
-   catalogue, collection and pack tables, the row-level security policies, and the trigger
-   that gives every new account a profile.
+2. **SQL Editor** → run every file in `supabase/migrations/` in order, starting with
+   `0001_init.sql`. They are forward-only and safe to re-run. Between them they create the
+   catalogue, collection and pack tables, the row-level security policies, the trigger that
+   gives every new account a profile and a welcome pack, and — in `0008_pack_gifts.sql` —
+   that same welcome pack for every account that already exists.
 3. **Authentication → Providers → Email**: on, and turn **Confirm email off**. Signing up
    then signs you straight in. The built-in SMTP is capped at a few messages an hour, so a
    confirmation step on a friends-only league buys nothing and gives `email rate limit
@@ -103,6 +105,7 @@ hidden pity is just anxiety.
 |---|---|
 | `app/` | Nuxt 4 app — pages, components, the design system in `assets/css/main.css` |
 | `server/api/pack/` | Pack status and claim, the only writers of a collection |
+| `server/api/gifts/` | Packs a manager has been given, and opening them |
 | `server/utils/` | The pack window, the roll |
 | `shared/` | Row → card mapping used by both sides |
 | `supabase/migrations/` | Forward-only SQL |

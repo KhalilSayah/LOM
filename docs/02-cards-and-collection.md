@@ -180,6 +180,7 @@ constraints:
 - Unclaimed packs **bank up to 3**. Beyond that, the oldest expires. This forgives a weekend
   away without letting someone hoard a month of packs into one opening.
 - Everything else is bought with Credits, and some types are capped per day (section 5.1.1).
+- A pack can also be **gifted** (section 5.1.2), which is neither free-daily nor bought.
 
 ### 5.1.1 Pack types
 
@@ -208,6 +209,29 @@ deploy.
 and a Legendary from any pack resets it. One counter, counting cards, is the only reading
 that keeps "Legendary within 40" an honest promise — and pity outranks a pack's own ceiling,
 so a Scouting pack still pays a guarantee the manager has already earned.
+
+### 5.1.2 Gifted packs
+
+A gift is a pack a manager owns but has not rolled yet: a row in `pack_gifts` naming a pack
+type, a title and a line of copy. Every account gets one Signing pack this way — new accounts
+from the signup trigger, accounts that already existed from the backfill in migration 0008 —
+and an operator can hand out more from the SQL editor with `grant_pack_gift_by_handle()`.
+
+Three things follow from a gift being an entitlement rather than a grant of cards:
+
+- The cards are rolled **when it is opened**, against whatever catalogue is active then. A
+  gift handed out in March is not a snapshot of March's catalogue.
+- The unopened row **is** the notification. There is no second table saying "you have mail",
+  because a notification that can disagree with the thing it announces eventually does. The
+  toast is shown once (`seen_at`); the nav dot and the call-out on the pack screen stay until
+  `opened_at`.
+- A gift does **not** spend the day's allowance. Being given a Standard pack must not cost a
+  manager one of the two they can buy, so the opening carries no `pack_day`.
+
+`reason` is the campaign key and is unique per manager, which is what makes granting
+idempotent — the trigger and the backfill can both run as often as they like. A second round
+of gifts is a new reason, not a second `WELCOME`. A gifted pack advances pity like any
+other.
 
 ### 5.2 Pack contents
 

@@ -16,6 +16,13 @@ interface PackStatus {
 const { packReady } = usePackSignal();
 const { incoming: duelsIncoming, drafting: duelsDrafting } = useDuelSignal();
 
+// A gifted pack keeps saying so until it is opened: the toast in the layout is shown once,
+// and this is the standing reminder. Opening happens in the shop, which is the one screen
+// that can already reveal five cards at a time.
+const { gifts } = useGiftSignal();
+const gift = computed(() => gifts.value[0] ?? null);
+const moreGifts = computed(() => Math.max(0, gifts.value.length - 1));
+
 const status = ref<PackStatus | null>(null);
 const loading = ref(true);
 const opening = ref(false);
@@ -190,6 +197,20 @@ useHead({ title: 'Pack — LOM' });
       <span class="duelcall__go">Back to it</span>
     </NuxtLink>
 
+    <!-- a free pack nobody asked for, waiting to be rolled -->
+    <NuxtLink v-if="gift && !freshPull" class="panel giftcall" to="/shop">
+      <span>
+        <strong>{{ gift.title }}</strong>
+        <span class="faint giftcall__sub">
+          {{ gift.packName }} — free.
+          <template v-if="moreGifts">
+            {{ moreGifts }} more {{ moreGifts === 1 ? 'gift' : 'gifts' }} after it.
+          </template>
+        </span>
+      </span>
+      <span class="giftcall__go">Open</span>
+    </NuxtLink>
+
     <!-- more than one card a day, for anyone with Credits to spend -->
     <NuxtLink v-if="status && !freshPull" class="panel shoplink" to="/shop">
       <span>
@@ -228,6 +249,20 @@ useHead({ title: 'Pack — LOM' });
 }
 .duelcall__sub { display: block; font-size: 12px; margin-top: 2px; }
 .duelcall__go { font-weight: 700; color: var(--accent, #67d3f2); white-space: nowrap; }
+
+.giftcall {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  text-decoration: none;
+  color: inherit;
+  border-color: var(--accent, #67d3f2);
+  background: color-mix(in oklab, var(--surface) 92%, var(--accent));
+}
+.giftcall__sub { display: block; font-size: 12px; margin-top: 2px; }
+.giftcall__go { font-weight: 700; color: var(--accent, #67d3f2); white-space: nowrap; }
 
 .empty code {
   font-family: ui-monospace, 'SFMono-Regular', monospace;
