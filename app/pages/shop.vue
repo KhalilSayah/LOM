@@ -7,6 +7,8 @@
  * anxiety — applies at least as much to something you are about to spend Credits on.
  */
 
+import type { Gift } from '~/composables/useGiftSignal';
+
 interface ShopPack {
   key: string;
   name: string;
@@ -38,6 +40,13 @@ const buying = ref<string | null>(null);
 const error = ref('');
 const opened = ref<null | { packName: string; spent: number; creditsEarned: number; cards: any[] }>(null);
 
+/**
+ * Gifted packs open here rather than on the pack screen, because this is the one screen
+ * that already reveals more than one card at a time — and a Signing pack is five.
+ */
+const { gifts, drop: dropGift, refresh: refreshGifts } = useGiftSignal();
+const openingGift = ref<string | null>(null);
+
 async function load() {
   try {
     shop.value = await $fetch<Shop>('/api/pack/shop');
@@ -63,6 +72,24 @@ async function buy(pack: ShopPack) {
     await load();
   } finally {
     buying.value = null;
+  }
+}
+
+async function openGift(gift: Gift) {
+  if (openingGift.value) return;
+  openingGift.value = gift.id;
+  error.value = '';
+  try {
+    opened.value = await $fetch('/api/gifts/open', { method: 'POST', body: { id: gift.id } });
+    dropGift(gift.id);
+    // Duplicates in a gifted pack still pay Credits, so the balance on screen has moved.
+    await load();
+  } catch (e: any) {
+    error.value = e?.data?.statusMessage || e?.message || 'The gift did not open.';
+    // Either it was already open or the roll handed it back; the list is the truth.
+    await refreshGifts();
+  } finally {
+    openingGift.value = null;
   }
 }
 
@@ -117,6 +144,30 @@ onMounted(load);
     </section>
 
     <template v-else>
+      <!-- gifts first: they are free, and they are the reason most people are on this screen -->
+      <section v-for="g in gifts" :key="g.id" class="panel shop__gift">
+        <p class="eyebrow">Gift</p>
+        <div class="shop__head">
+          <div>
+            <h2 class="shop__name">{{ g.title }}</h2>
+            <p class="faint shop__slots">
+              {{ g.packName }} — {{ g.onePerRole ? `${g.slots} cards, one per lane` : g.slots === 1 ? '1 card' : `${g.slots} cards` }}
+            </p>
+          </div>
+          <span class="shop__price shop__price--free">Free</span>
+        </div>
+
+        <p v-if="g.body" class="muted shop__blurb">{{ g.body }}</p>
+
+        <button
+          class="btn btn--block"
+          :disabled="openingGift !== null || buying !== null"
+          @click="openGift(g)"
+        >
+          {{ openingGift === g.id ? 'Opening' : 'Open gift' }}
+        </button>
+      </section>
+
       <section v-for="pack in shop?.packs || []" :key="pack.key" class="panel shop__pack">
         <div class="shop__head">
           <div>
@@ -179,6 +230,15 @@ onMounted(load);
 .shop-skeleton { height: 40vh; }
 
 .shop__pack { display: grid; gap: 10px; margin-bottom: 14px; }
+
+.shop__gift {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  border-color: var(--accent, #67d3f2);
+  background: color-mix(in oklab, var(--surface) 92%, var(--accent));
+}
+.shop__price--free { font-size: 15px; text-transform: uppercase; letter-spacing: 0.1em; }
 
 .shop__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .shop__name { font-size: 18px; }

@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { serverSupabaseUser } from '#supabase/server';
+import { ensureWelcomePack } from './gifts';
 
 /**
  * Who is asking, and do they have a profile row yet.
@@ -16,7 +17,9 @@ import { serverSupabaseUser } from '#supabase/server';
  * 2. The profile row is normally minted by the `on_auth_user_created` trigger, but any
  *    account that signed up before the migration ran has no profile and never will. Rather
  *    than leave those accounts permanently unable to open a pack, `ensureProfile` creates
- *    the row on demand with the same handle rules as the trigger.
+ *    the row on demand with the same handle rules as the trigger — and grants the welcome
+ *    pack the trigger would have granted, so an account healed here is not quietly worse
+ *    off than one created normally.
  */
 
 export interface Manager {
@@ -56,7 +59,11 @@ export async function ensureProfile(db: SupabaseClient, manager: Manager): Promi
       .from('profiles')
       .insert({ id: manager.id, handle, display_name: handle });
 
-    if (!error) return manager.id;
+    if (!error) {
+      // The trigger never ran for this account, so nothing has gifted it anything either.
+      await ensureWelcomePack(db, manager.id);
+      return manager.id;
+    }
     // 23505 is a unique violation: either the handle is taken, or the row appeared
     // underneath us from a concurrent request. Only the first is worth retrying.
     if (error.code !== '23505') {
