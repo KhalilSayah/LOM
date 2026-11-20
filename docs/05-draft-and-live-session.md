@@ -3,7 +3,51 @@
 The only part of the game that requires two humans to be online at once. Everything in this
 document exists to make that requirement survivable.
 
-## 1. Timeline of a live session
+## 0. The duel room
+
+A **duel room** is the shipped shape of this document, built before leagues exist. One button
+puts you with whoever else pressed it; from that moment the two of you are looking at the same
+thing at the same time until somebody has won. Migration `0007_duel_rooms.sql` is the schema;
+`shared/duelRoom.ts` is the phase contract both clients compute from.
+
+| Phase | Begins | What is on screen |
+|---|---|---|
+| — | Press **Battle** | Searching. Pairing happens on somebody else's press, not on a poll. |
+| `LOBBY` | Paired | Who you drew, which side you are, a four-second count. |
+| `DRAFT` | `starts_at` | 20 bans and picks, one clock, both screens. |
+| `WATCH` | `watch_start_at` | The match, at 60×, the same second on both screens. |
+| `RESULT` | match ends | Winner and box score. |
+| `COMPLETE` | +20 s | Room closed, duel in history. |
+
+Three rules hold the room together, and each replaces something the first implementation did:
+
+1. **Nobody is named.** A queue row says "I am here and this is my five"; pairing is
+   `duel_matchmake()`, one `select … for update skip locked`, not an invitation somebody
+   accepts later. The lineup is frozen onto the queue row at join so pairing can be a single
+   atomic statement.
+2. **Every phase boundary is a server instant.** `starts_at`, `deadline_at`, `watch_start_at`.
+   A client compares them against a clock it has corrected against the server's and renders;
+   it never decides that a phase has ended. This is what makes two screens one screen.
+3. **Nothing polls.** State arrives as Postgres changes on the duel row and its action log.
+   Hover is a client-to-client broadcast and never touches the database. The only request a
+   client makes on a timer is a single **nudge** at the exact instant the clock implies
+   something is due — see section 5.
+
+**An empty queue is not a dead end.** A game with no players is the normal state of a new
+game, so after about twenty seconds of searching the screen offers the auto-draft agent of
+section 4 as the opponent. `source = 'BOT'`, `opponent_id is null`, `bot_side` set; everything
+else about the room is identical, which is why there is one draft screen and not two. The
+search carries on underneath the offer, so a human who turns up still wins.
+
+**The watch cannot be scrubbed.** No play, no pause, no skip — a shared clock is the point,
+and the moment either side can move it the two of them are watching different games. The
+sandbox replay at `/replay` keeps its transport controls; both render through the same
+`<MatchWatch>` component and differ only in who owns the clock.
+
+## 1. Timeline of a live session (leagues)
+
+The schedule below is the *league fixture* version of the same session, for when leagues land.
+A fixture becomes another thing that can open a duel room; the room itself does not change.
 
 | Clock | Event |
 |---|---|
@@ -126,54 +170,76 @@ the entire difference between "competent" and "oppressive".
 ## 5. Realtime transport
 
 ```
-Client (Nuxt)                Nitro server                 Supabase
+Client A (Nuxt)              Nitro (stateless)            Supabase
    |                              |                          |
-   |-- POST /api/draft/action --->|                          |
-   |                              |-- validate in DraftRoom   |
-   |                              |-- persist action row ---->|
-   |                              |-- broadcast on channel -->|
-   |<------- realtime: ACTION_LOCKED / TURN_CHANGED ----------|
-   |                              |                          |
-   |-- channel presence track --->|                          |  (direct to Supabase)
+   |-- POST /api/duel/:id/action->|                          |
+   |                              |-- catch up the clock ---->|
+   |                              |-- insert duel_actions --->|
+   |                              |-- advance duels.turn ---->|
+   |<===== postgres changes on duels + duel_actions ==========|
+Client B                                                      |
+   |<===== the same WAL event, the same instant ==============|
+   |                                                          |
+   |--- broadcast: hover ---> (channel duel:{id}) ---> Client B
+   |--- presence track ----->                       (direct to Supabase)
+   |                                                          |
+   |-- POST /api/duel/:id/nudge ->| (once, when a clock is due)
 ```
 
-- **Authoritative state** lives in an in-memory `DraftRoom` on the Nitro server, one per active
-  fixture, hydrated from Postgres on first access.
-- **Every action is persisted** to `draft_actions` before it is broadcast, so a server restart
-  mid-draft rehydrates exactly where it left off.
-- **Broadcast** goes over a Supabase Realtime channel `draft:{fixture_id}`. Clients subscribe
-  directly to Supabase; the Nitro server publishes.
-- **Presence** uses Supabase Realtime presence on the same channel, client-tracked. Presence is
-  advisory only — it drives the "opponent is here" indicator and the no-show decision, never
-  the draft state itself.
-- **Timer enforcement** is a `setTimeout` inside the `DraftRoom`, plus a lazy check on every
-  inbound action (`if now > deadline, resolve the expiry first`), plus a 10-second sweeper that
-  walks all active rooms. Three layers because a missed timer freezes a live match.
+- **Authoritative state is Postgres**, not an in-memory room. `duel_actions` is append-only and
+  *is* the draft; `duels.turn` is a cursor over it. Two unique indexes — one champion once, one
+  slot once per side — mean a race is refused by the database rather than by a check that may
+  have read stale state.
+- **State reaches both clients as a push.** Postgres changes on the duel row and on its action
+  log, from the same WAL event, which is as close to simultaneous as two devices get. The
+  server publishes nothing of its own: the write *is* the notification, so there is no
+  broadcast that can get out of step with the row it describes.
+- **Hover is a broadcast** on `duel:{duel_id}`, client to client, never persisted. Migration
+  0006 had to make hover a column because polling gave it nowhere to live; on a channel it
+  costs one hop and no write.
+- **Presence** is Supabase Realtime presence on the same channel, client-tracked and advisory
+  only — it drives "they are here" and never the draft state.
+- **Timer enforcement** is lazy, and the client schedules it. There is no in-process timer and
+  nothing to sweep: `catchUp()` resolves whatever the clock implies and runs on every read or
+  write of a room, and each client sets **one** timer for the exact instant something is due
+  (the deadline, or the moment the agent will move) and sends a single `POST /nudge` then. A
+  whole draft costs about twenty of those rather than ~500 polls, and correctness does not
+  depend on the client getting it right: an early nudge finds nothing expired, and a nudge that
+  never comes leaves the room exactly as stale as an unwatched draft always was.
 
-### 5.1 Known v1 limitation: single instance
+### 5.1 Why this needs no single instance
 
-`DraftRoom` being in-memory means the Nitro server **must run as a single instance** in v1.
-With at most a handful of private leagues this is fine, and it buys a dramatically simpler
-implementation than a distributed lock.
+The first design kept authoritative state in an in-memory `DraftRoom`, which forced the Nitro
+server to **run as a single instance** and was written down here as a known v1 constraint. The
+v2 path listed option 2 as "move the authoritative loop into Postgres: actions as an RPC with
+`SELECT … FOR UPDATE`". That is what shipped, a milestone early, for a reason that was not in
+the original list: the deploy target is Vercel, where a long-lived in-process room and a
+`setTimeout` that has to survive between requests do not exist at all.
 
-This is written down as a constraint, not an accident. The v2 path, in order of preference:
-1. Move room state to Redis with a per-fixture lock (Upstash, keeps Nitro stateless).
-2. Move the authoritative loop into Postgres: actions as an RPC with `SELECT ... FOR UPDATE`
-   on the fixture row, and `pg_cron` every 5 s for timeouts. Slower but needs no new service.
-3. Durable Objects / stateful actors if the deployment target ever becomes Cloudflare.
+So: Nitro is stateless, any number of instances is fine, `replicas: 1` is not required, and
+pairing — the one genuinely concurrent write in the system — is a `for update skip locked`
+inside `duel_matchmake()`. No Redis, no Durable Objects, no new service.
 
-The deployment doc must state `replicas: 1` explicitly, and a startup assertion should fail
-loudly if more than one instance registers.
+What was given up is latency. A push is bounded by a database write plus WAL delivery, tens of
+milliseconds rather than the single-digit milliseconds an in-memory room with its own socket
+could manage. For a draft where the unit of action is a human deciding for thirty seconds, that
+is not a cost anyone can perceive.
 
 ### 5.2 Reconnection
 
-On reconnect the client calls `GET /api/draft/:fixtureId/state` and receives the full
-authoritative state (filtered for what that manager may see), then resubscribes. Lost
-broadcasts are therefore never fatal. The client treats realtime as an accelerator over a
-pollable source of truth, not as the source of truth.
+On reconnect the client calls `GET /api/duel/:id` and receives the full authoritative state —
+including every instant the room's phases turn on, so one read is enough to draw any phase and
+schedule the next nudge — then resubscribes. Lost pushes are therefore never fatal. The client
+treats realtime as an accelerator over a pollable source of truth, not as the source of truth.
+
+A resync is also triggered by `visibilitychange`, which is the one moment a client is
+guaranteed to be wrong: a backgrounded mobile browser throttles timers and may have dropped the
+socket without saying so, so the draft on screen can be a minute old.
 
 If realtime is unavailable entirely, the client falls back to polling that same endpoint every
-2 seconds. The draft becomes less snappy and remains completely playable.
+2 seconds. The draft becomes less snappy and remains completely playable. Deliberately 2 s and
+not the 700 ms the first implementation polled at: if realtime is gone the room has already
+lost the thing that made it shared, and hammering the endpoint will not bring it back.
 
 ## 6. Anti-cheat surface
 

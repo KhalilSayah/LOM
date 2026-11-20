@@ -13,16 +13,30 @@ export default defineEventHandler(async (event) => {
   const db = serverSupabaseServiceRole(event);
   const profileId = await ensureProfile(db, manager);
 
-  const [{ count: incoming }, { count: drafting }] = await Promise.all([
+  const [{ count: incoming }, { data: live }] = await Promise.all([
     db.from('duels')
       .select('id', { count: 'exact', head: true })
       .eq('opponent_id', profileId)
       .eq('status', 'PENDING'),
+    /**
+     * A live room is a draft *or* a match being watched, and unlike a count it comes back
+     * with an id. That matters now: a room you are in is somewhere you should be put back
+     * rather than merely told about, so the nav links straight to it.
+     */
     db.from('duels')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'DRAFTING')
-      .or(`challenger_id.eq.${profileId},opponent_id.eq.${profileId}`),
+      .select('id, status')
+      .in('status', ['DRAFTING', 'WATCHING'])
+      .or(`challenger_id.eq.${profileId},opponent_id.eq.${profileId}`)
+      .order('updated_at', { ascending: false })
+      .limit(1),
   ]);
 
-  return { incoming: incoming ?? 0, drafting: drafting ?? 0 };
+  const room = live?.[0] ?? null;
+
+  return {
+    incoming: incoming ?? 0,
+    drafting: room ? 1 : 0,
+    liveDuelId: room?.id ?? null,
+    liveStatus: room?.status ?? null,
+  };
 });

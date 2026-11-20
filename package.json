@@ -17,6 +17,7 @@
     "sim:match": "node packages/sim/cli.mjs",
     "sim:balance": "node packages/sim/balance.mjs",
     "sim:test": "node --test packages/sim/test/*.test.mjs",
+    "test": "node --test packages/sim/test/*.test.mjs && node --test --experimental-strip-types shared/test/*.test.ts",
     "map:fetch": "node scripts/fetch-map.mjs",
     "ingest:oe": "node scripts/ingest-oracleselixir.mjs",
     "champions:build": "node scripts/build-champions.mjs"

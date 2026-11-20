@@ -1,7 +1,8 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { snapshotLineup, lineupComplete, deadlineFor } from '~~/server/utils/duel';
-import { BONUS_SECONDS } from '~~/shared/draft';
+import { snapshotLineup, lineupComplete } from '~~/server/utils/duel';
+import { ACTION_SECONDS, BONUS_SECONDS } from '~~/shared/draft';
+import { LOBBY_SECONDS, WATCH_SPEED } from '~~/shared/duelRoom';
 
 /**
  * Accept or decline a challenge.
@@ -76,8 +77,20 @@ export default defineEventHandler(async (event) => {
   const blueId = challengerIsBlue ? duel.challenger_id : profileId;
   const redId = challengerIsBlue ? profileId : duel.challenger_id;
 
+  /**
+   * A friendly opens the same room a queue match does, with the same lobby.
+   *
+   * The challenger is not necessarily looking at their phone when this runs, so the lobby is
+   * doing less here than it does for a queue match — but it costs the accepting player
+   * nothing (it is inside the first action's deadline) and it means the draft screen has one
+   * shape to render rather than two. The agent covers the challenger's first actions if they
+   * are away, exactly as it always did.
+   */
+  const startsAt = new Date(Date.now() + LOBBY_SECONDS * 1000);
+
   const { error } = await db.from('duels').update({
     status: 'DRAFTING',
+    source: 'CHALLENGE',
     blue_id: blueId,
     red_id: redId,
     blue_lineup: challengerIsBlue ? theirs : mine,
@@ -85,7 +98,9 @@ export default defineEventHandler(async (event) => {
     catalogue_version_id: active.id,
     turn: 0,
     bonus: { BLUE: BONUS_SECONDS, RED: BONUS_SECONDS },
-    deadline_at: deadlineFor(),
+    starts_at: startsAt.toISOString(),
+    deadline_at: new Date(startsAt.getTime() + ACTION_SECONDS * 1000).toISOString(),
+    watch_speed: WATCH_SPEED,
     accepted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', duel.id).eq('status', 'PENDING');

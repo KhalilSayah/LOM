@@ -4,6 +4,9 @@ import {
   type LockedAction, type Side, type Slot,
 } from '~~/shared/draft';
 import { chemistryFor } from '~~/shared/roster';
+import {
+  WATCH_LEAD_SECONDS, botThinkSeconds, watchSettled, type RoomTiming,
+} from '~~/shared/duelRoom';
 import { championRoles, roleForFit } from './championRoles';
 import {
   snapshotLineup, ratingFor, autoPick, autoBan, deadlineFor, expiredBy,
@@ -97,13 +100,23 @@ async function lock(
 
   const nextTurn = action.idx + 1;
   const done = nextTurn >= DRAFT_LENGTH;
+  const nextDeadline = done ? null : deadlineFor();
 
+  /**
+   * This update is also the notification.
+   *
+   * Both clients are subscribed to this row, so advancing the cursor is what tells them the
+   * turn moved — there is no separate broadcast to get out of step with it. `updated_at` is
+   * bumped every time for the same reason: it guarantees the row changes even when nothing
+   * else in it did, so the push always fires.
+   *
+   * `hover` is not cleared here any more, because it is not written any more: a hover is a
+   * broadcast between the two clients and never touches the database (migration 0007).
+   */
   const { error: advanceError } = await db.from('duels').update({
     turn: nextTurn,
     bonus,
-    deadline_at: done ? null : deadlineFor(),
-    // The turn moved, so whatever the last side was considering is history.
-    hover: null,
+    deadline_at: nextDeadline,
     updated_at: new Date().toISOString(),
   }).eq('id', duel.id);
 
@@ -119,22 +132,83 @@ async function lock(
 
   duel.turn = nextTurn;
   duel.bonus = bonus;
-  duel.hover = null;
+  /**
+   * The new deadline has to land on the in-memory row too, and not only in the database.
+   *
+   * It did not, and the consequence was that one expired turn could auto-draft everything
+   * left. catchUp loops while the deadline is expired; after a lock the row still held the
+   * deadline that had just expired, so the next iteration read it, found it expired, and
+   * acted again — and again — with the side that had just been given thirty fresh seconds
+   * never getting them. The database was correct the whole time, which is why it was only
+   * visible in a draft somebody actually walked away from.
+   *
+   * With this, a lock always leaves the loop looking at a future deadline, so it stops and
+   * the next side gets its clock.
+   */
+  duel.deadline_at = nextDeadline;
+}
+
+/** The duel row as shared/duelRoom.ts wants to read it. */
+export const timingOf = (duel: any): RoomTiming => ({
+  status: duel.status,
+  startsAt: duel.starts_at ?? null,
+  watchStartAt: duel.watch_start_at ?? null,
+  watchSpeed: duel.watch_speed ?? 60,
+  gameLength: duel.result?.gameLength ?? null,
+});
+
+/**
+ * When the agent will move, on a side it is playing on purpose.
+ *
+ * Only meaningful for a bot duel. A deadline is a side's thirty seconds, so the turn began
+ * thirty seconds before it; the agent acts a few seconds into that rather than the instant
+ * the turn opens, because an instant answer does not read as an opponent — see
+ * shared/duelRoom.ts. Deterministic from the seed, so the server and both clients agree on
+ * the moment without anyone being told.
+ */
+export function botActsAt(duel: any, turn: number): number | null {
+  if (!duel.bot_side || !duel.deadline_at) return null;
+  const step = stepAt(turn);
+  if (!step || step.side !== duel.bot_side) return null;
+  const turnStart = new Date(duel.deadline_at).getTime() - ACTION_SECONDS * 1000;
+  return turnStart + botThinkSeconds(duel.seed, turn) * 1000;
 }
 
 /**
  * Bring a duel up to date with the clock before anyone reads or writes it.
  *
- * Nothing schedules this: it runs whenever a duel is touched, which means a draft that both
- * players walked away from is only resolved when someone looks at it. That is deliberate —
- * a background job to advance drafts nobody is watching is a lot of machinery to make an
- * abandoned game finish slightly sooner.
+ * Nothing schedules this: it runs whenever a duel is touched. With polling gone that is no
+ * longer "whenever somebody's screen refreshes" but "whenever a client that is sitting in
+ * the room tells us a deadline has passed" — see /api/duel/[id]/nudge. A room nobody is in
+ * is still only resolved when somebody next opens it, which remains deliberate: a background
+ * job to advance drafts nobody is watching is a lot of machinery to make an abandoned game
+ * finish slightly sooner.
  */
 export async function catchUp(
   db: SupabaseClient,
   duel: any,
   actions: LockedAction[],
 ): Promise<LockedAction[]> {
+  /**
+   * The shared watch has run out: close the room.
+   *
+   * This is the server deciding, from the same function the client draws the screen with
+   * (watchSettled), that the match is over and has been looked at. Letting the client say so
+   * would mean a player who closed the tab leaves a duel that is never finished, and a
+   * player who lies leaves one that finished before it was watched.
+   */
+  if (duel.status === 'WATCHING') {
+    if (watchSettled(timingOf(duel), Date.now())) {
+      await db.from('duels').update({
+        status: 'COMPLETE',
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('id', duel.id).eq('status', 'WATCHING');
+      duel.status = 'COMPLETE';
+    }
+    return actions;
+  }
+
   if (duel.status !== 'DRAFTING') return actions;
 
   /**
@@ -158,10 +232,26 @@ export async function catchUp(
     }
   }
 
-  const [roles, pool] = await Promise.all([
-    championRoles(db, duel.catalogue_version_id),
-    draftPool(db, duel.catalogue_version_id),
-  ]);
+  /**
+   * The agent's inputs, read only if the agent is going to act.
+   *
+   * Both are cached per catalogue version in module scope, so this is free on a warm process
+   * — but a serverless cold start is not warm, and catchUp now runs on every resync rather
+   * than on a poll, which means most calls reach this line with nothing expired and nothing
+   * to decide. Loading a 172-champion pool and a role table to then do nothing is the kind of
+   * cost that is invisible until it is on a bill.
+   */
+  let agentInputs: { roles: Awaited<ReturnType<typeof championRoles>>; pool: Champion[] } | null = null;
+  const inputs = async () => {
+    if (!agentInputs) {
+      const [roles, pool] = await Promise.all([
+        championRoles(db, duel.catalogue_version_id),
+        draftPool(db, duel.catalogue_version_id),
+      ]);
+      agentInputs = { roles, pool };
+    }
+    return agentInputs;
+  };
 
   // Deterministic per duel and turn, so the agent's choice is reproducible from the record.
   let counter = 0;
@@ -172,12 +262,25 @@ export async function catchUp(
 
   let guard = 0;
   while (duel.turn < DRAFT_LENGTH && guard++ < DRAFT_LENGTH + 1) {
-    const over = expiredBy(duel.deadline_at);
-    if (!over) break;
-
     const step = stepAt(duel.turn)!;
     const bonus = { ...(duel.bonus || {}) } as Record<string, any>;
-    const left = Number(bonus[step.side] ?? 0);
+
+    /**
+     * A side the agent is playing moves on its own short clock, not on the expiry.
+     *
+     * Without this branch a bot duel is thirty seconds of staring per action and then a
+     * minute of bonus time nobody is spending — the agent would only ever act because the
+     * clock ran out, which is how it behaves for an absence and is nonsense when it is the
+     * opponent. It also never stakes bonus time: there is nothing to protect it from.
+     */
+    const botMoment = botActsAt(duel, duel.turn);
+    if (botMoment !== null) {
+      if (Date.now() < botMoment) break;
+    } else {
+      if (!expiredBy(duel.deadline_at)) break;
+    }
+
+    const left = botMoment !== null ? 0 : Number(bonus[step.side] ?? 0);
 
     /**
      * Bonus time is staked, not metered per poll (docs/05 section 3.3).
@@ -213,6 +316,8 @@ export async function catchUp(
     const red = duel.red_lineup as Lineup;
     const mine = step.side === 'BLUE' ? blue : red;
     const theirs = step.side === 'BLUE' ? red : blue;
+
+    const { roles, pool } = await inputs();
 
     const chosen = step.kind === 'PICK'
       ? autoPick(mine, theirs, actions, step.side, pool, roles, rand)
@@ -312,16 +417,32 @@ async function finish(db: SupabaseClient, duel: any, actions: LockedAction[]) {
     red: build(duel.red_lineup as Lineup, 'RED'),
   });
 
+  /**
+   * The draft ends into the watch, not into a result.
+   *
+   * `watch_start_at` is the whole shared-watch mechanism: one instant, written once, from
+   * which both clients compute how far into the match they are. A few seconds out so that
+   * neither player's first sight of the map is halfway through the first fight, and so the
+   * twentieth pick is on screen long enough to be seen.
+   *
+   * The result is written in the same statement, because the match is already decided and
+   * pretending otherwise would mean a second place where it could fail to be. Either player
+   * can read the winner out of the payload before watching it — docs/05 section 6 accepts
+   * that: spoiling your own replay is your business.
+   */
+  const watchStart = new Date(Date.now() + WATCH_LEAD_SECONDS * 1000).toISOString();
+
   await db.from('duels').update({
-    status: 'COMPLETE',
+    status: 'WATCHING',
     result,
     deadline_at: null,
-    completed_at: new Date().toISOString(),
+    watch_start_at: watchStart,
     updated_at: new Date().toISOString(),
   }).eq('id', duel.id);
 
-  duel.status = 'COMPLETE';
+  duel.status = 'WATCHING';
   duel.result = result;
+  duel.watch_start_at = watchStart;
 }
 
 function hash(s: string): number {

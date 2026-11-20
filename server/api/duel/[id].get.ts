@@ -1,23 +1,29 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { stepAt, DRAFT_ORDER, DRAFT_LENGTH } from '~~/shared/draft';
-import { loadActions, catchUp, draftPool, sideOf } from '~~/server/utils/duelRun';
+import { loadActions, catchUp, draftPool, sideOf, botActsAt } from '~~/server/utils/duelRun';
 
 /**
- * The whole state of a duel, as the draft screen needs it.
+ * The whole state of a duel room, as all three of its screens need it.
  *
- * This is the polled endpoint, so it is also where the clock is enforced: every read brings
- * the duel up to date first, which means an expired turn is resolved by whoever looks next
- * rather than by a background job. A draft that both players abandoned finishes the moment
- * either of them opens it again.
+ * This used to be the polled endpoint, read every 700 ms, and the clock was enforced as a
+ * side effect of being read. It is now the *resync* endpoint: a client reads it once when it
+ * enters the room, and again only if its realtime channel drops (docs/05 section 5.2). The
+ * steady state is a push.
  *
- * `serverNow` goes out with every response so the client can measure its own clock offset
- * and render a countdown that is right even on a device whose clock is wrong. The client
- * never decides an expiry — docs/05 section 3.3.
+ * That changes what belongs in the response. It now carries every instant the room's phases
+ * turn on — `startsAt` for the lobby, `deadlineAt` for the action, `botActsAt` for the
+ * agent, `watchStartAt` and `watchSpeed` for the shared match — so that a client which has
+ * read this once can draw every screen and schedule every nudge without asking again.
  *
- * The champion pool is only sent when asked for. It is 172 entries that never change during
- * a draft, and shipping it once a second is the difference between a small poll and a silly
- * one.
+ * `serverNow` goes out with it so the client can measure its clock offset and render a
+ * countdown that is right even on a device whose clock is wrong. The client never decides an
+ * expiry, and with two people watching the same clock that stopped being a nicety: a draft
+ * where each side's timer says something different is a draft where one of them has been
+ * robbed.
+ *
+ * The champion pool is only sent when asked for. It is ~172 entries that never change during
+ * a draft, and shipping it on every resync would be silly.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -44,15 +50,30 @@ export default defineEventHandler(async (event) => {
   const side = sideOf(duel, profileId);
   const step = duel.status === 'DRAFTING' ? stepAt(duel.turn) : null;
 
+  /**
+   * Who the opponent is, or that there is not one.
+   *
+   * A bot duel has `opponent_id is null`, so there is no profile to read and nothing to
+   * invent. The screen is told plainly that it is playing the agent rather than being handed
+   * a name that looks like a person's — a draft against "Shadow Manager" that you cannot
+   * find in discovery is worse than one that says what it is.
+   */
   const otherId = duel.challenger_id === profileId ? duel.opponent_id : duel.challenger_id;
-  const { data: other } = await db
-    .from('profiles').select('handle, display_name').eq('id', otherId).maybeSingle();
+  const { data: other } = otherId
+    ? await db.from('profiles').select('handle, display_name').eq('id', otherId).maybeSingle()
+    : { data: null };
 
   return {
     id: duel.id,
     status: duel.status,
+    source: duel.source ?? 'CHALLENGE',
     side,
-    opponent: other?.display_name || other?.handle || 'Unknown manager',
+    opponent: duel.bot_side
+      ? 'The agent'
+      : other?.display_name || other?.handle || 'Unknown manager',
+    opponentHandle: other?.handle ?? null,
+    isBot: Boolean(duel.bot_side),
+    botSide: duel.bot_side ?? null,
     iChallenged: duel.challenger_id === profileId,
 
     turn: duel.turn,
@@ -61,14 +82,16 @@ export default defineEventHandler(async (event) => {
     step,
     myTurn: Boolean(step && side && step.side === side),
 
+    // Every instant the room's phases turn on, so one read is enough to draw any of them.
+    startsAt: duel.starts_at ?? null,
     deadlineAt: duel.deadline_at,
+    botActsAt: botActsAt(duel, duel.turn),
+    watchStartAt: duel.watch_start_at ?? null,
+    watchSpeed: duel.watch_speed ?? 60,
     serverNow: new Date().toISOString(),
     bonus: duel.bonus,
 
     actions,
-    // Only while it still belongs to the turn on the clock. A hover left over from the
-    // previous action would show the opponent considering something they already locked.
-    hover: duel.hover && duel.hover.turn === duel.turn ? duel.hover : null,
     // Both lineups and both champion pools are open from the first ban. docs/05 section 2:
     // banning is only interesting when you know what you are banning against.
     blueLineup: duel.blue_lineup,
@@ -78,6 +101,16 @@ export default defineEventHandler(async (event) => {
       ? await draftPool(db, duel.catalogue_version_id)
       : undefined,
 
-    result: duel.status === 'COMPLETE' ? duel.result : null,
+    /**
+     * The result travels with the room from the moment the draft ends, because the shared
+     * watch is a rendering of it: both clients need the whole event log in hand before the
+     * clock starts, or the first one to finish downloading it would be ahead of the other.
+     *
+     * That means the winner is readable before it has been watched. docs/05 section 6 made
+     * that call already — spoiling your own replay is your business — and the alternative,
+     * streaming the log in step with a clock, buys secrecy from a person who can open the
+     * network tab anyway at the cost of the only thing that makes the watch shared.
+     */
+    result: duel.status === 'WATCHING' || duel.status === 'COMPLETE' ? duel.result : null,
   };
 });

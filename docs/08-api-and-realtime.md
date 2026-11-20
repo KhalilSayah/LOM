@@ -78,14 +78,58 @@ already-decided result.
 `GET /api/fixtures/:id/lineup` also returns a **chemistry preview** computed by `@lom/core`, so
 the number on the lineup screen is provably the number the sim will use.
 
+## 6b. Matchmaking (shipped: duel rooms)
+
+Pairing for duels, which exist before leagues do. See
+[05 section 0](05-draft-and-live-session.md) for the room these open.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/duel/queue/join` | Press Battle. Returns `{ duelId }` if it paired, `{ searching: true, waiting }` if not. Also the heartbeat: re-posting refreshes the claim without losing queue position |
+| `POST` | `/api/duel/queue/leave` | Stop searching. Unconditional — a Cancel button that sometimes does not cancel is worse than a no-op |
+| `GET` | `/api/duel/queue/status` | Resync for the Battle screen. Not in the fast path |
+| `POST` | `/api/duel/queue/bot` | Take the agent instead, offered after ~20 s of an empty queue |
+| `POST` | `/api/duel/challenge` | Friendly: challenge a named manager (the pre-queue path, kept) |
+| `POST` | `/api/duel/respond` | Accept or decline a friendly |
+
+The pairing itself is **not** in a route. It is `duel_matchmake(profile, lineup, catalogue, …)`,
+a `security definer` function whose one interesting line is
+`select … from duel_queue where duel_id is null order by joined_at limit 1 for update skip locked`.
+That is the whole answer to two people pressing Battle in the same instant: whichever
+transaction reaches a waiting row first owns it, the other does not block and does not see it,
+finds nothing, and returns having been paired by the winner — which it learns by reading its
+own row. The lineup snapshot is frozen onto the queue row at join so the duel can be created
+complete inside that one transaction.
+
 ## 7. Draft
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/draft/:fixtureId/state` | Full authoritative state, filtered for the caller |
-| `POST` | `/api/draft/:fixtureId/action` | Submit a ban or pick |
-| `POST` | `/api/draft/:fixtureId/hover` | Broadcast a hover (fire and forget, not persisted) |
-| `POST` | `/api/draft/:fixtureId/auto` | "Auto-draft the rest for me" |
+| `GET` | `/api/duel/:id` | Full authoritative state, filtered for the caller. **Resync only** — the steady state is a push |
+| `POST` | `/api/duel/:id/action` | Submit a ban or pick |
+| `POST` | `/api/duel/:id/nudge` | "A clock in here has run out — go and look." Replaces polling; see below |
+| `POST` | `/api/duel/:id/auto` | "Auto-draft the rest for me" *(not built)* |
+
+Hover is **not** an endpoint any more. It is a broadcast on the room channel, client to client,
+and never touches the database.
+
+### 7.0 Why `/nudge` exists
+
+The clock is enforced lazily: `catchUp()` resolves whatever the deadline implies, and it runs on
+every read or write of a room. The first implementation got that enforcement for free, as a side
+effect of a draft screen polling every 700 ms. Take the polling away and the enforcement goes
+with it — the deadline passes, nothing on the server is listening, and both players sit watching
+a timer at zero on a turn that will never move.
+
+So the client keeps the one thing polling was buying and discards the rest: instead of a request
+a second it sets a single timer for the exact instant something is due (the action deadline, or
+the moment the agent is going to act in a bot duel) and sends one `POST /nudge` then. There is no
+payload and nothing to assert — a participant asking for a room to be brought up to date can
+only ever produce the state the clock already implies — so an early nudge is a no-op and a
+duplicate from the other player finds the work already done. Clients back off exponentially when
+a nudge changes nothing, because "already due and asking does not help" is a reachable state
+(a staked bonus pool extends a deadline without moving the turn) and the naive version of this
+is a hot loop.
 
 ### 7.1 State DTO
 
@@ -153,30 +197,47 @@ summary and so it can be cached hard — the log never changes once written.
 All over Supabase Realtime. Clients subscribe directly with the anon key; authorisation is by
 channel-name convention plus an RLS-backed `realtime.messages` policy.
 
-### 9.1 `draft:{fixtureId}` — broadcast + presence
+### 9.1 `duel:{duelId}` — postgres changes + broadcast + presence
 
-Presence payload (tracked by each client):
+Three different things on one channel, and which mechanism carries what is the design:
 
-```ts
-{ memberId: string; team: 'BLUE' | 'RED'; at: string }
-```
+**Postgres changes** — state. No server-published events at all.
 
-Broadcast events (published by the Nitro server only):
+| Subscription | Means |
+|---|---|
+| `UPDATE public.duels id=eq.{duelId}` | The turn moved, the clock changed, or the phase did (`DRAFTING` → `WATCHING` → `COMPLETE`). Every server write bumps `updated_at`, so this fires even when the only visible change is a cursor |
+| `INSERT public.duel_actions duel_id=eq.{duelId}` | A ban or pick is final. Subscribed separately rather than inferred from the duel row, because the insert *is* the lock — it is the row whose unique indexes decide a champion is gone — and it is the event the screen animates |
+
+There is deliberately no `ACTION_LOCKED`/`TURN_CHANGED` pair published by the server. A
+broadcast describing a row can disagree with the row; a change feed from the row cannot.
+
+**Broadcast** — the one thing that is not state:
 
 | Event | Payload | Meaning |
 |---|---|---|
-| `DRAFT_STARTED` | `{ actionIndex, turn, deadlineAt }` | Both present, or grace expired |
-| `ACTION_LOCKED` | `{ action, actionIndex }` | A ban or pick is final |
-| `TURN_CHANGED` | `{ actionIndex, turn, deadlineAt, bonusMs }` | Whose turn, and until when |
-| `HOVER` | `{ team, championKey \| null }` | Opponent is hovering |
-| `BONUS_CONSUMED` | `{ team, bonusMs }` | A timer expired into the bonus pool |
-| `AUTO_ACTION` | `{ team, reason }` | The agent acted; UI shows a badge |
-| `DRAFT_COMPLETE` | `{ }` | 20 actions done, simulating |
-| `MATCH_READY` | `{ fixtureId }` | Event log written, replay available |
+| `hover` | `{ side, kind, turn, championKey, championName, slot } \| null` | The side on the clock is considering something. Client to client, never persisted, never trusted. The action log still decides what happened |
 
-**Clients never trust broadcasts as the source of truth.** Each one triggers a local state
-patch; a sequence gap or any ambiguity triggers a `GET /state` resync. Worst case the UI is
-2 seconds stale via the polling fallback.
+**Presence** — who is actually in the room, client-tracked, advisory only. Drives "they are
+here" in the lobby and nothing else.
+
+**Clients never trust a push as the source of truth.** Each one triggers a debounced resync
+against `GET /api/duel/:id` (60 ms, because one server write can produce two pushes and a burst
+at the end of the draft produces several). Worst case the UI is 2 seconds stale via the polling
+fallback.
+
+### 9.1b `queue:{profileId}` — postgres changes
+
+| Subscription | Means |
+|---|---|
+| `UPDATE public.duel_queue profile_id=eq.{me}` | You have been paired; `duel_id` is the room |
+
+Our own queue row being updated means exactly one thing, because `duel_matchmake()` sets
+`duel_id` on both rows inside the pairing transaction. This push is therefore the first moment
+either client could know, and it is the same moment for both of them — which is why searching
+does not poll.
+
+RLS does the authorisation: `duel_queue` is `profile_id = auth.uid()`, so the push that tells
+somebody they have been paired is not visible to anyone else.
 
 ### 9.2 `league:{leagueId}` — broadcast
 
@@ -190,10 +251,31 @@ patch; a sequence gap or any ambiguity triggers a `GET /state` resync. Worst cas
 
 ### 9.3 Clock discipline
 
-Every countdown in the UI is computed as `deadlineAt - (Date.now() + clockOffset)`, where
-`clockOffset` is the median of the last five `serverTime` observations. Never a local
-`setInterval` decrement — those drift when a mobile browser backgrounds the tab, which is
+Every countdown in the UI is computed as `deadlineAt - (Date.now() + clockOffset)`. Never a
+local `setInterval` decrement — those drift when a mobile browser backgrounds the tab, which is
 exactly when a draft timer is running.
+
+`clockOffset` is measured from the `serverNow` on every state read, **corrected for the round
+trip**: `serverNow + rtt/2 - Date.now()`. Taking `serverNow` at face value leaves each device
+out by its own latency, so two phones on different connections show different numbers for the
+same deadline — which is exactly what it looked like. Charging half the measured round trip puts
+them within tens of milliseconds of each other.
+
+This stopped being a nicety once two people share a clock. The same offset drives three things,
+and all three are wrong together or right together:
+
+| Rendered from | Instant |
+|---|---|
+| "Match found" countdown | `starts_at` |
+| Action countdown | `deadline_at` |
+| How far into the match we are | `(now - watch_start_at) × watch_speed` |
+
+The last one is the shared watch, and it is the reason there is no play, pause or scrub on it:
+the clock is a server instant, not a player's position in a video. Both clients compute the same
+match second from the same timestamp, and every frame is a pure function of it — so a client
+backgrounded for ten seconds is instantly correct on return rather than ten seconds behind.
+`shared/duelRoom.ts` holds that arithmetic, and both the client's screen change and the server's
+decision to close the room read the same `watchSettled()`.
 
 ## 10. Internal / admin
 
@@ -209,12 +291,27 @@ Not exposed to players; behind an allowlist of profile IDs.
 
 ## 11. Open questions
 
-- **Is a polling fallback worth building in v1,** or is realtime reliable enough that a
-  "reconnecting" banner plus manual refresh suffices? Leaning toward building it: it is ~30
-  lines and it is the difference between a broken evening and a slow one.
 - **Idempotency keys** are specified for three endpoints; audit whether lineup `PUT` and
   `items/use` need them too.
 - **`/events` payload size** on a slow connection — consider server-side gzip plus a
-  `?from=` parameter so the replay can start before the whole log arrives.
-- **Channel authorisation.** Convention-based channel names plus RLS on `realtime.messages`
-  needs a real test: can a league member subscribe to another league's draft channel?
+  `?from=` parameter so the replay can start before the whole log arrives. More pressing now
+  that the shared watch needs the whole log in hand on *both* clients before the clock starts.
+- **Channel authorisation.** State now rides on postgres changes, which Realtime filters
+  through RLS, so the duel and queue subscriptions are authorised by the same policies as a
+  normal read. The remaining untested surface is `broadcast`: the hover event's channel name
+  is convention-based, so somebody who knows a duel id could in principle subscribe and watch
+  a stranger hover. Worth a test, and worth noting that the information leaked is a champion
+  somebody is looking at in a game they are not in.
+- **Rooms nobody is in.** Timer enforcement is lazy and nudged by the clients in the room, so
+  a draft both players abandoned is only resolved when one of them next opens it — same as
+  before, since the old version depended on somebody's screen polling. `pg_cron` calling a
+  sweeper every 30 s would close them properly and is the obvious next step if abandoned rooms
+  ever show up in the data.
+- **Pairing is first-come, not matched.** `duel_matchmake()` takes the oldest waiting row and
+  nothing else. There is no rating, no collection-strength band, and with a handful of players
+  there should not be — but the function is where that would go, and the queue row is where
+  the number would live.
+
+*Resolved:* the polling fallback was worth building (it is the `CHANNEL_ERROR` path in
+`useDuelRoom`, ~10 lines, 2 s) and the single-instance `DraftRoom` constraint is gone — see
+[05 section 5.1](05-draft-and-live-session.md).
