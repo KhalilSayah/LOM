@@ -31,8 +31,16 @@ const password = ref('');
 const busy = ref(false);
 const error = ref('');
 
+/**
+ * Where the door leads. Normally the pack; an invite link that was followed while
+ * signed out leaves its own destination in `?next=`, and that is where a manager who
+ * has just signed up to join a league has to end up.
+ */
+const route = useRoute();
+const next = computed(() => safeNext(route.query.next));
+
 watchEffect(() => {
-  if (user.value) navigateTo('/pack');
+  if (user.value) navigateTo(next.value);
 });
 
 async function submit() {
@@ -66,7 +74,7 @@ async function submit() {
       });
       if (err) throw err;
     }
-    await navigateTo('/pack');
+    await navigateTo(next.value);
   } catch (e: any) {
     const raw = e?.data?.statusMessage || e?.statusMessage || e?.message
       || 'That did not work. Try again.';

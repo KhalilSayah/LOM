@@ -81,9 +81,15 @@ const battleTo = computed(() => (liveDuelId.value ? `/duel/${liveDuelId.value}` 
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3.2 3.2 0 1 0 0 6.4A3.2 3.2 0 0 0 12 3ZM5 10.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Zm14 0a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2ZM12 11c-2.9 0-5.2 1.7-5.2 3.8V21h10.4v-6.2c0-2.1-2.3-3.8-5.2-3.8ZM5 12c-2.2 0-4 1.3-4 3V21h3.8v-6.2c0-1 .4-2 1.1-2.7A5 5 0 0 0 5 12Zm14 0c-.3 0-.6 0-.9.1.7.7 1.1 1.7 1.1 2.7V21H23v-6c0-1.7-1.8-3-4-3Z"/></svg>
         Roster
       </NuxtLink>
-      <NuxtLink to="/discovery">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm3.9 6.1-2.2 5-5 2.2 2.2-5 5-2.2ZM12 11a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>
-        Discover
+      <!--
+        League takes the sixth tab rather than making a seventh: six at 390px is
+        already the limit the label size was cut for. Discovery keeps its screen and
+        is one tap from here — finding a manager by code is the rarer intention now
+        that a league lists the people you play.
+      -->
+      <NuxtLink to="/leagues">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14l-1 5.2a6 6 0 0 1-4.3 4.6l-.7.2v3h3v2.5H8V18h3v-3l-.7-.2A6 6 0 0 1 6 10.2L5 3Zm2.4 2.5.5 2.7H6.9l-.4-2.7h.9Zm9.2 0h.9l-.4 2.7h-1l.5-2.7ZM4 20.5h16V23H4v-2.5Z"/></svg>
+        League
       </NuxtLink>
       <NuxtLink :to="battleTo" :class="{ 'is-live': liveDuelId }">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.9 3 3 6.9l9.1 9.1 1.4-1.4-1.1-1.1 1.4-1.4 1.1 1.1 1.4-1.4L6.9 3Zm10.2 0L13 7.1l1.4 1.4 1.1-1.1 1.4 1.4-1.1 1.1 1.4 1.4L21 6.9 17.1 3ZM4.5 17.1 3 18.6 5.4 21l1.5-1.5-2.4-2.4Zm15 0-2.4 2.4L18.6 21 21 18.6l-1.5-1.5Z"/></svg>
