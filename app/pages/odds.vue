@@ -63,7 +63,7 @@ const dailyTime = computed(() => {
       <NuxtLink class="topbar__meta" to="/shop">Shop</NuxtLink>
     </header>
 
-    <p v-if="error" class="notice notice--bad" role="alert">Could not load the odds. Try again in a moment.</p>
+    <p v-if="error || (data && !data.pity)" class="notice notice--bad" role="alert">Could not load the odds. Try again in a moment.</p>
     <div v-else-if="!data" class="skeleton odds__skeleton" />
 
     <template v-else>

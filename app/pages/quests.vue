@@ -39,7 +39,10 @@ let drift = 0;
 
 async function load() {
   try {
-    board.value = await $fetch<Board>('/api/quests');
+    const res = await $fetch<Board>('/api/quests');
+    // A half-shaped answer (a proxy, an old server) is an error, not a board to draw.
+    if (!res?.daily?.quests || !res?.weekly?.quests) throw new Error('Could not load quests.');
+    board.value = res;
     questsReady.value = board.value.claimable;
     drift = new Date(board.value.serverNow).getTime() - Date.now();
     error.value = '';

@@ -172,7 +172,7 @@ const ownedKeys = computed(() => new Set(cards.value.map((c) => c.card.cardKey))
 /** Owned and total per rarity: the rarity strip doubles as completion. */
 const bands = computed(() => {
   const out: Record<string, { owned: number; total: number | null }> = {};
-  for (const b of ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON']) out[b] = { owned: 0, total: catalogue.value ? 0 : null };
+  for (const b of ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON']) out[b] = { owned: 0, total: catalogue.value?.length ? 0 : null };
   if (catalogue.value?.length) {
     for (const c of catalogue.value) {
       const n = out[c.rarity];

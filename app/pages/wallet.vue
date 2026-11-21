@@ -53,6 +53,7 @@ const error = ref('');
 
 async function loadLedger(before?: number) {
   const res = await $fetch<Ledger>('/api/wallet/ledger', { query: before ? { before } : {} });
+  if (!Array.isArray(res?.entries) || typeof res?.credits !== 'number') throw new Error('Could not load your wallet.');
   if (before && ledger.value) {
     ledger.value = { ...res, entries: [...ledger.value.entries, ...res.entries] };
   } else {
@@ -63,6 +64,7 @@ async function loadLedger(before?: number) {
 
 async function loadOpenings(before?: string) {
   const res = await $fetch<{ openings: Opening[]; next: string | null }>('/api/wallet/openings', { query: before ? { before } : {} });
+  if (!Array.isArray(res?.openings)) throw new Error('Could not load your pack history.');
   openings.value = before ? [...openings.value, ...res.openings] : res.openings;
   openingsNext.value = res.next;
   openingsLoaded.value = true;

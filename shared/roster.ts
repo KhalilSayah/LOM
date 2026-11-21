@@ -14,7 +14,7 @@
  * the whole teaching mechanism of the screen.
  */
 
-import { effRating } from '../packages/core/src/index.js';
+import { effRating } from '~~/packages/core/src/index.js';
 
 export const ROLES = ['TOP', 'JNG', 'MID', 'BOT', 'SUP'] as const;
 export type Role = (typeof ROLES)[number];

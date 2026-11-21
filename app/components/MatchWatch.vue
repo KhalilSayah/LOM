@@ -539,8 +539,14 @@ const finalKills = computed(() => {
   return out;
 });
 
-const reasonText = computed(() =>
-  String(props.result?.endReason || '').toLowerCase().replaceAll('_', ' '));
+/** How it ended, as a broadcaster would say it. */
+const REASONS: Record<string, string> = { NEXUS: 'Nexus destroyed', SURRENDER: 'Surrender', TIME: 'Time limit' };
+const reasonText = computed(() => {
+  const r = String(props.result?.endReason || '').toUpperCase();
+  if (!r) return '';
+  const t = REASONS[r] || r.toLowerCase().replaceAll('_', ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+});
 
 const pct = (v: number) => `${Math.round((v || 0) * 100)}%`;
 const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Math.round(v * 1000) / 10)}%`;
@@ -666,7 +672,7 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
         </p>
         <h2 id="mw-verdict" class="verdict__title">
           <span :class="result.winner === 'BLUE' ? 'is-blue' : 'is-red'">{{ nameOf(result.winner) }}</span>
-          wins
+          {{ nameOf(result.winner) === 'You' ? 'win' : 'wins' }}
         </h2>
         <p class="verdict__line">
           <span class="tnum verdict__score">

@@ -292,7 +292,7 @@ useHead({ title: 'Battle — LOM' });
         <ul class="rows">
           <li v-for="d in data.incoming" :key="d.id" class="row">
             <span class="row__mark" aria-hidden="true">{{ (d.opponent || '?').slice(0, 2) }}</span>
-            <p class="row__t">{{ d.opponent }} challenged you<span class="row__s">A friendly: it does not count anywhere · {{ ago(d.createdAt) }}, expires after a day</span></p>
+            <p class="row__t">{{ d.opponent }} challenged you<span class="row__s">A friendly: it does not count anywhere<template v-if="d.createdAt"> · {{ ago(d.createdAt) }}</template> · expires after a day</span></p>
             <span class="row__acts">
               <button
                 class="btn btn--quiet btn--sm" type="button"
@@ -382,6 +382,7 @@ useHead({ title: 'Battle — LOM' });
 .practice__t { margin: 0; font-size: 13px; font-weight: 650; color: var(--ink-2); }
 .practice__t span { font-weight: 500; }
 .practice__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+@media (max-width: 420px) { .practice__row { grid-template-columns: 1fr; } .practice__seg { display: grid; grid-template-columns: repeat(3, 1fr); } }
 .practice__seg button { min-height: 44px; }
 .practice__go { min-height: 44px; }
 
