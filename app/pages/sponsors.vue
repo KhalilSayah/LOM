@@ -151,16 +151,17 @@ onMounted(load);
       <span class="topbar__meta">{{ signedCount }} of {{ book?.slotCount ?? 2 }} slots signed</span>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
-    <p v-else-if="note" class="notice">{{ note }}</p>
+    <div role="alert" aria-live="assertive"><p v-if="error" class="notice notice--bad">{{ error }}</p></div>
+    <div role="status" aria-live="polite"><p v-if="!error && note" class="notice notice--live">{{ note }}</p></div>
 
     <div v-if="loading" class="skeleton spon__skeleton" />
 
     <template v-else>
       <!-- what the meeting produced -->
-      <section v-if="pulled" class="pulled">
+      <section v-if="pulled" class="pulled" aria-live="polite">
+        <span class="corner corner--tl" aria-hidden="true" /><span class="corner corner--br" aria-hidden="true" />
         <template v-if="pulled.sponsor && !pulled.duplicate">
-          <p class="label">New contract · {{ TIER_LABEL[pulled.sponsor.tier] }}</p>
+          <p class="label tierline"><i class="gem" :class="`gem--${pulled.sponsor.tier.toLowerCase()}`" aria-hidden="true" />New contract · {{ TIER_LABEL[pulled.sponsor.tier] }}</p>
           <h2 class="pulled__name">{{ pulled.sponsor.name }}</h2>
           <p class="pulled__demand">{{ pulled.sponsor.demandLabel }}</p>
           <p class="pulled__money tnum">
@@ -168,7 +169,7 @@ onMounted(load);
           </p>
         </template>
         <template v-else>
-          <p class="label">{{ TIER_LABEL[pulled.tier] }} meeting</p>
+          <p class="label tierline"><i class="gem" :class="`gem--${pulled.tier.toLowerCase()}`" aria-hidden="true" />{{ TIER_LABEL[pulled.tier] }} meeting</p>
           <h2 class="pulled__name">Nothing new on the table</h2>
           <p class="pulled__demand">
             <template v-if="pulled.sponsor">You already hold {{ pulled.sponsor.name }}.</template>
@@ -188,10 +189,11 @@ onMounted(load);
             :style="slot?.accent ? { '--accent': slot.accent } : undefined"
           >
             <template v-if="slot">
+              <span class="corner corner--tl" aria-hidden="true" /><span class="corner corner--br" aria-hidden="true" />
               <header class="slot__top">
                 <div>
-                  <p class="label">Slot {{ i + 1 }} · {{ TIER_LABEL[slot.tier] }}</p>
-                  <h2 class="slot__name">{{ slot.name }}</h2>
+                  <p class="label tierline"><i class="gem" :class="`gem--${slot.tier.toLowerCase()}`" aria-hidden="true" />Slot {{ i + 1 }} · {{ TIER_LABEL[slot.tier] }}</p>
+                  <h2 class="slot__name"><i class="brandmark" aria-hidden="true" />{{ slot.name }}</h2>
                 </div>
                 <span class="slot__ceiling tnum"><i class="coin coin--s" aria-hidden="true" />{{ ceiling(slot) }}</span>
               </header>
@@ -237,6 +239,7 @@ onMounted(load);
 
         <!-- the meeting -->
         <section v-if="book" class="meet">
+          <span class="corner corner--tl" aria-hidden="true" /><span class="corner corner--br" aria-hidden="true" />
           <div>
             <h2 class="meet__name">{{ book?.pack.name }}</h2>
             <p class="meet__blurb">{{ book?.pack.blurb }}</p>
@@ -258,8 +261,8 @@ onMounted(load);
           <h2 class="shelf__head">In the drawer</h2>
           <ul class="deck">
             <li v-for="s in book.drawer" :key="s.key" class="deal" :style="s.accent ? { '--accent': s.accent } : undefined">
-              <p class="label">{{ TIER_LABEL[s.tier] }}</p>
-              <h3 class="deal__name">{{ s.name }}</h3>
+              <p class="label tierline"><i class="gem" :class="`gem--${s.tier.toLowerCase()}`" aria-hidden="true" />{{ TIER_LABEL[s.tier] }}</p>
+              <h3 class="deal__name"><i class="brandmark" aria-hidden="true" />{{ s.name }}</h3>
               <p class="deal__demand">{{ s.demandLabel }}</p>
               <p class="deal__money tnum">{{ s.basePayout }} + {{ s.bonusPayout }} a match</p>
               <button
@@ -284,8 +287,8 @@ onMounted(load);
           </p>
           <ul class="deck">
             <li v-for="s in locked" :key="s.key" class="deal is-locked">
-              <p class="label">{{ TIER_LABEL[s.tier] }}</p>
-              <h3 class="deal__name">{{ s.name }}</h3>
+              <p class="label tierline"><i class="gem" :class="`gem--${s.tier.toLowerCase()}`" aria-hidden="true" />{{ TIER_LABEL[s.tier] }}</p>
+              <h3 class="deal__name"><i class="brandmark" aria-hidden="true" />{{ s.name }}</h3>
               <p class="deal__demand">{{ s.demandLabel }}</p>
               <p class="deal__money tnum">{{ s.basePayout }} + {{ s.bonusPayout }} a match</p>
               <p v-if="s.blurb" class="deal__blurb">{{ s.blurb }}</p>
@@ -304,103 +307,138 @@ onMounted(load);
 </template>
 
 <style scoped>
+/* Broadcast Night pass: tokens instead of raw whites, no stripe accents (a brand shows as a
+   small mark beside its name), tier always as gem + word, gold corners on what you hold. */
 .spon__skeleton { height: 40vh; }
 
-.slots {
-  display: grid;
-  gap: 12px;
-  margin-bottom: 16px;
+.corner { position: absolute; width: 12px; height: 12px; border: 1.5px solid var(--gold-2); pointer-events: none; }
+.corner--tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.corner--br { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
+
+.tierline { display: flex; align-items: center; gap: 7px; margin: 0; }
+.tierline .gem { width: 10px; height: 10px; }
+
+/* The brand's own colour, as a mark rather than a stripe. */
+.brandmark {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-right: 9px;
+  vertical-align: 0.1em;
+  transform: rotate(45deg);
+  background: var(--accent);
 }
 
+.slots { display: grid; gap: 12px; margin-bottom: 16px; }
+
 .slot {
-  --accent: var(--gold, #d8b064);
+  --accent: var(--gold-2);
   position: relative;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-left: 3px solid var(--accent);
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line-2);
   border-radius: var(--radius);
-  background: var(--bg-2);
+  background: linear-gradient(165deg, #121b2d, #0a0f19 75%);
 }
 .slot.is-empty {
-  border-left-color: rgba(255, 255, 255, 0.12);
-  border-style: dashed;
+  align-content: center;
+  min-height: 120px;
+  border: 1px dashed var(--line-2);
   background: transparent;
 }
 .slot__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.slot__name { margin: 2px 0 0; font-size: 18px; }
-.slot__ceiling { display: inline-flex; align-items: center; gap: 4px; font-weight: 680; }
+.slot__name { margin: 4px 0 0; font-size: 22px; overflow-wrap: anywhere; }
+.slot__ceiling { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--gold-1); font-weight: 760; font-size: 15px; }
 .slot__demand {
-  margin: 10px 0 12px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 2px;
+  background: var(--bg-0);
+  box-shadow: inset 0 0 0 1px var(--line-1);
   font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 .slot__free { margin: 6px 0 0; color: var(--ink-2); font-size: 13.5px; }
+.slot .btn { justify-self: start; }
 
-.terms { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 12px; }
-.terms dt { color: var(--ink-2); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; }
-.terms dd { margin: 2px 0 0; font-weight: 680; }
+.terms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.terms div { min-width: 0; }
+.terms dt { color: var(--ink-3); font-size: 12px; font-weight: 600; }
+.terms dd { margin: 2px 0 0; font-weight: 760; font-size: 17px; font-stretch: 85%; }
 
-.slot__term { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: var(--ink-2); font-size: 12.5px; }
+.slot__term { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--ink-2); font-size: 12.5px; }
 .pips { display: inline-flex; gap: 3px; }
-.pips i {
-  width: 14px; height: 4px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.16);
-}
-.pips i.is-on { background: var(--accent); }
+.pips i { width: 16px; height: 4px; border-radius: 2px; background: var(--bg-4); }
+.pips i.is-on { background: var(--gold-2); }
 
 .meet {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  position: relative;
+  display: grid;
   gap: 14px;
-  flex-wrap: wrap;
-  padding: 14px;
-  margin-bottom: 20px;
+  padding: 16px;
+  margin-bottom: 24px;
   border: 1px solid rgba(216, 176, 100, 0.3);
   border-radius: var(--radius);
-  background: var(--bg-2);
+  background: rgba(216, 176, 100, 0.05);
 }
-.meet__name { margin: 0; font-size: 17px; }
-.meet__blurb { margin: 4px 0 0; color: var(--ink-2); font-size: 13px; max-width: 42ch; }
+.meet__name { margin: 0; font-size: 19px; }
+.meet__blurb { margin: 4px 0 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; max-width: 46ch; }
+.meet .btn { width: 100%; }
 
-.shelf { margin-bottom: 22px; }
-.shelf__head { margin: 0 0 4px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
-.shelf__note { margin: 0 0 10px; font-size: 12.5px; }
+.shelf { margin-bottom: 24px; }
+.shelf__head { margin: 0 0 4px; font-stretch: 92%; font-weight: 720; font-size: 17px; }
+.shelf__note { margin: 0 0 12px; font-size: 12.5px; }
 
 .deck { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 
 .deal {
-  --accent: rgba(255, 255, 255, 0.2);
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-left: 3px solid var(--accent);
+  --accent: var(--ink-4);
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 14px;
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
   background: var(--bg-2);
 }
-.deal.is-locked { opacity: 0.62; }
-.deal__name { margin: 2px 0 6px; font-size: 16px; }
-.deal__demand { margin: 0 0 6px; font-size: 13.5px; }
-.deal__money { margin: 0 0 10px; color: var(--ink-2); font-size: 12.5px; }
-.deal__blurb { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+.deal.is-locked { background: transparent; }
+.deal.is-locked .deal__name, .deal.is-locked .deal__demand { color: var(--ink-2); }
+.deal__name { margin: 2px 0 0; font-size: 17px; overflow-wrap: anywhere; }
+.deal__demand { margin: 0; font-size: 13.5px; line-height: 1.45; }
+.deal__money { margin: 0; color: var(--gold-1); font-size: 13px; font-weight: 680; }
+.deal.is-locked .deal__money { color: var(--ink-3); }
+.deal__blurb { margin: 0; color: var(--ink-3); font-size: 12.5px; line-height: 1.5; }
+.deal .btn { justify-self: start; margin-top: 6px; }
 
 .pulled {
-  padding: 22px 16px;
+  position: relative;
+  display: grid;
+  justify-items: center;
+  padding: 28px 18px 22px;
   border: 1px solid rgba(216, 176, 100, 0.34);
   border-radius: var(--radius);
-  background: var(--bg-2);
+  background: linear-gradient(165deg, #121b2d, #0a0f19 70%);
   text-align: center;
 }
-.pulled__name { margin: 6px 0 8px; font-size: 22px; }
-.pulled__demand { margin: 0 auto 10px; max-width: 44ch; font-size: 14px; }
-.pulled__money { margin: 0 0 16px; color: var(--ink-2); font-size: 13px; }
+.pulled .tierline { justify-content: center; }
+.pulled__name { margin: 8px 0; font-size: clamp(24px, 7vw, 32px); }
+.pulled__demand { margin: 0 auto 10px; max-width: 44ch; font-size: 14px; line-height: 1.5; }
+.pulled__money { margin: 0 0 18px; color: var(--gold-1); font-size: 13.5px; font-weight: 680; }
 
-.spon__foot { margin: 4px 0 0; font-size: 12.5px; }
+.spon__foot { margin: 4px 0 0; font-size: 12.5px; line-height: 1.55; }
 
+@media (min-width: 560px) {
+  .meet { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .meet .btn { width: auto; }
+}
 @media (min-width: 720px) {
   .slots { grid-template-columns: 1fr 1fr; }
   .deck { grid-template-columns: 1fr 1fr; }
+}
+@media (min-width: 1024px) {
+  .deck { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 </style>

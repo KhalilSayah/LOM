@@ -74,16 +74,47 @@ function ensure(): AudioContext | null {
   return ctx;
 }
 
-/** Called from the first gesture. */
+/**
+ * Any state but running needs a resume: 'suspended' before the first gesture or after the
+ * tab was hidden, and 'interrupted' — Safari's own state — after a phone call, Siri, or
+ * another app taking the audio session.
+ */
+const needsResume = (c: AudioContext) => (c.state as string) !== 'running' && (c.state as string) !== 'closed';
+let primed = false;
+
+/** Called from every gesture (see plugins/sound.client.ts); cheap once audio is running. */
 export function unlockAudio() {
   loadPrefs();
   const c = ensure();
-  if (c && c.state === 'suspended') c.resume().catch(() => {});
+  if (!c) return;
+  if (needsResume(c)) c.resume().catch(() => {});
+  // Older iOS only truly unlocks once a buffer has been started inside the gesture itself.
+  if (!primed) {
+    primed = true;
+    try {
+      const src = c.createBufferSource();
+      src.buffer = c.createBuffer(1, 1, c.sampleRate);
+      src.connect(c.destination);
+      src.start(0);
+    } catch { primed = false; }
+  }
 }
 
+/** Coming back to the tab: wake a context that already exists, never create one. */
+export function resumeAudio() {
+  if (ctx && needsResume(ctx)) ctx.resume().catch(() => {});
+}
+
+/**
+ * Two seconds of white noise, played looped from a random point.
+ *
+ * Looping is what lets one short buffer serve a hiss of any length — before, a long sweep
+ * that started late in a 1.2s buffer simply ran out and cut off. White noise has no
+ * audible seam at the loop point, and the random start keeps two hisses from phasing.
+ */
 function noise(c: AudioContext) {
   if (noiseBuffer) return noiseBuffer;
-  const len = c.sampleRate * 1.2;
+  const len = c.sampleRate * 2;
   noiseBuffer = c.createBuffer(1, len, c.sampleRate);
   const data = noiseBuffer.getChannelData(0);
   for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
@@ -145,7 +176,9 @@ function hiss(c: AudioContext, o: NoiseOpts) {
   const t0 = c.currentTime + (o.at ?? 0);
   const dur = o.dur ?? 0.2;
   const src = c.createBufferSource();
-  src.buffer = noise(c);
+  const buf = noise(c);
+  src.buffer = buf;
+  src.loop = true;
   const f = c.createBiquadFilter();
   f.type = o.type ?? 'bandpass';
   f.frequency.setValueAtTime(o.freq ?? 2000, t0);
@@ -156,7 +189,7 @@ function hiss(c: AudioContext, o: NoiseOpts) {
   g.gain.exponentialRampToValueAtTime(o.gain ?? 0.15, t0 + (o.attack ?? 0.01));
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   src.connect(f).connect(g).connect(master!);
-  src.start(t0, Math.random() * 0.5);
+  src.start(t0, Math.random() * buf.duration);
   src.stop(t0 + dur + 0.05);
 }
 
@@ -284,7 +317,13 @@ export function playSound(name: SoundName) {
   loadPrefs();
   if (!enabled.value || volume.value <= 0) return;
   const c = ensure();
-  if (!c || !master || c.state !== 'running') return;
+  if (!c || !master) return;
+  if (c.state !== 'running') {
+    // Interrupted or suspended behind our back: ask to wake up, and skip this one sound
+    // rather than queueing it to play late.
+    if (needsResume(c)) c.resume().catch(() => {});
+    return;
+  }
   const now = performance.now();
   const gap = MIN_GAP[name] ?? 30;
   if (now - (lastPlayed[name] ?? 0) < gap) return;

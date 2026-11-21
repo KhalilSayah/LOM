@@ -235,6 +235,7 @@ useHead({ title: 'Home — LOM' });
 
     <div class="home__grid">
       <div class="home__main">
+        <FirstRunChecklist />
         <div v-if="loading" class="skeleton home__skeleton" />
 
         <!-- no cards loaded yet -->
