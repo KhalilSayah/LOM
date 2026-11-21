@@ -1,10 +1,16 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { CARD_SELECT, toCard } from '~~/shared/cardShape';
-import { ROLES, chemistryFor } from '~~/shared/roster';
-import { simulate } from '~~/packages/sim/src/index.js';
-import { effRating } from '~~/packages/core/src/index.js';
+import { ROLES, matchRatingFor } from '~~/shared/roster';
+import { simulate, configureChampionData } from '~~/packages/sim/src/index.js';
 import { TEAM_A, TEAM_B } from '~~/packages/sim/fixtures/teams.mjs';
+import { strategyFor } from '~~/server/utils/strategy';
+import { activeChampionRoles, withFitRoles } from '~~/server/utils/rosterFit';
+import championTable from '~~/data/champions.json';
+
+// Same as server/utils/duel.ts: without the champion table the composition modifier is a
+// flat 1.0, and the sandbox would be a different game from the one duels play.
+configureChampionData((championTable as any).champions);
 
 /**
  * Run one match and hand back the whole thing.
@@ -17,6 +23,8 @@ import { TEAM_A, TEAM_B } from '~~/packages/sim/fixtures/teams.mjs';
  * It fields the manager's own roster when it is complete, because watching a match
  * is a different thing when the five dots are cards you opened. If any slot is
  * empty, both sides come from the fixtures and the response says so.
+ *
+ * Either way the blue side plays the manager's strategy preset (migration 0018).
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -27,9 +35,12 @@ export default defineEventHandler(async (event) => {
   const seed = String(query.seed || `sandbox-${Date.now()}`);
   const useRoster = query.roster !== '0';
 
-  const mine = useRoster ? await rosterTeam(db, manager.id) : null;
+  const [mine, strategy] = await Promise.all([
+    useRoster ? rosterTeam(db, manager.id) : null,
+    strategyFor(db, manager.id),
+  ]);
 
-  const blue = mine?.team || { ...TEAM_A, managerId: manager.id };
+  const blue = { ...(mine?.team || { ...TEAM_A, managerId: manager.id }), strategy };
   const red = { ...TEAM_B };
 
   const result = simulate({ seed, blue, red });
@@ -40,6 +51,7 @@ export default defineEventHandler(async (event) => {
     missing: mine ? [] : (useRoster ? await emptySlots(db, manager.id) : []),
     blueName: mine ? 'Your roster' : 'T1 2024',
     redName: 'BLG 2024',
+    strategy,
     result,
   };
 });
@@ -54,10 +66,11 @@ async function emptySlots(db: any, profileId: string) {
 /**
  * The manager's five, as the engine wants them.
  *
- * There is no draft yet, so each card plays the champion it is best at: the deepest
- * mastery in its pool. That is the same assumption the roster screen's pool-depth
- * number makes, and it is the one that flatters nobody — a card with a shallow pool
- * walks in on a champion it barely knows and the rating reflects it.
+ * There is no draft in a sandbox, so each card plays the champion it is rated best on, with
+ * no champion fielded twice — shared/roster.ts assignChampions, the same choice the Team
+ * screen's match rating makes, so the number on that screen is the number this match reads.
+ * Ratings are packages/core effRating with the card's level and the champion's own role
+ * from the catalogue (server/utils/championRoles.ts), the way a duel rates a pick.
  */
 async function rosterTeam(db: any, profileId: string) {
   const { data: slots } = await db
@@ -67,54 +80,44 @@ async function rosterTeam(db: any, profileId: string) {
 
   if (!slots || slots.length < ROLES.length) return null;
 
-  const { data: owned } = await db
-    .from('collection_cards')
-    .select(`id, level, card_definitions ( ${CARD_SELECT} )`)
-    .in('id', slots.map((s: any) => s.collection_card_id));
+  const [{ data: owned }, roles] = await Promise.all([
+    db.from('collection_cards')
+      .select(`id, level, card_definitions ( ${CARD_SELECT} )`)
+      .in('id', slots.map((s: any) => s.collection_card_id)),
+    activeChampionRoles(db),
+  ]);
 
   const byId = new Map((owned || []).map((row: any) => [row.id, row]));
   const cards: Record<string, any> = {};
-  const players = [];
 
   for (const slot of slots) {
-    const row = byId.get(slot.collection_card_id);
+    const row: any = byId.get(slot.collection_card_id);
     if (!row?.card_definitions) return null;
+    cards[slot.role] = withFitRoles(toCard(row.card_definitions, row.level), roles);
+  }
 
-    const card = toCard(row.card_definitions);
-    const best = [...card.championPool].sort((a: any, b: any) => b.mastery - a.mastery)[0];
-    cards[slot.role] = card;
-
-    players.push({
+  const rating = matchRatingFor(cards);
+  const players = ROLES.map((role) => {
+    const card = cards[role];
+    const pick = rating.byRole[role]!;
+    return {
       cardKey: card.cardKey,
       name: card.playerName,
-      slot: slot.role,
-      champion: best?.champion || null,
-      mastery: best?.mastery ?? 0,
-      effRating: effRating({
-        ovr: card.ovr,
-        level: row.level,
-        mastery: best?.mastery ?? 0,
-        championRole: card.role,
-        slot: slot.role,
-      }),
+      slot: role,
+      champion: pick.champion,
+      mastery: pick.mastery,
+      effRating: pick.rating,
       subStats: card.subStats,
-      chemistry: 0,
-    });
-  }
-
-  // Chemistry is a property of the five together, so it is resolved once the whole
-  // lineup is known and then written onto each player the engine sees.
-  const chemistry = chemistryFor(cards as any);
-  for (const player of players) {
-    player.chemistry = chemistry.byRole[player.slot]?.bonus ?? 0;
-  }
+      chemistry: pick.chemistry,
+    };
+  });
 
   return {
     team: {
       managerId: profileId,
       strategy: 'STANDARD',
       coach: null,
-      players: players.sort((a, b) => ROLES.indexOf(a.slot as any) - ROLES.indexOf(b.slot as any)),
+      players,
     },
   };
 }

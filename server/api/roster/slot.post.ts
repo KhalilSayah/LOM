@@ -1,6 +1,6 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { ROLES } from '~~/shared/roster';
+import { ROLES, slotForRole } from '~~/shared/roster';
 
 /**
  * Put a card in a slot, or empty the slot.
@@ -13,6 +13,9 @@ import { ROLES } from '~~/shared/roster';
  * policy: the card exists, it belongs to the person asking, and its role fits the
  * slot. The second is the one that matters — `collection_card_id` comes from the
  * request, so without it a manager could field somebody else's Faker.
+ *
+ * Several slots at once (the "use my best five" plan) go through /api/roster/lineup, which
+ * makes the same checks and writes them in one statement.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -54,26 +57,21 @@ export default defineEventHandler(async (event) => {
   }
 
   const definition = held.card_definitions as any;
+  const cardRole = slotForRole(definition?.role);
 
-  if (definition?.role && definition.role !== role) {
+  // A card only ever goes in its own lane. A card with no role is a MID card, because that
+  // is how toCard() shows it and so the only slot the Team screen offers it in.
+  if (cardRole !== role) {
     throw createError({
       statusCode: 400,
-      statusMessage: `${definition.player_name} plays ${definition.role}, not ${role}.`,
+      statusMessage: `${definition?.player_name ?? 'That card'} plays ${cardRole}, not ${role}.`,
     });
   }
 
-  // Two writes rather than an upsert with one conflict target: a card already sitting
-  // in another slot has to leave it first, or the (profile_id, collection_card_id)
-  // unique index rejects the move. Moving a card is the ordinary case — you shuffle
-  // the five you own — so it should not be the case that errors.
-  const { error: clearError } = await db
-    .from('roster_slots')
-    .delete()
-    .eq('profile_id', manager.id)
-    .eq('collection_card_id', held.id);
-
-  if (clearError) throw createError({ statusCode: 500, statusMessage: clearError.message });
-
+  // One statement. A card can only sit in its own role's slot, so the slot is the only
+  // conflict there can be: the old delete-then-insert existed to move a card between slots,
+  // which the rule above makes impossible, and it could leave the slot empty if the second
+  // write failed.
   const { error: writeError } = await db
     .from('roster_slots')
     .upsert(
