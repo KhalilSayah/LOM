@@ -24,7 +24,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rngFor } from '../packages/card-engine/src/rng.js';
 import { rarityForOvr } from '../packages/card-engine/src/rarity.js';
-import { championKey } from '../packages/card-engine/src/assets.js';
+import { championKey, championName } from '../packages/card-engine/src/champions.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -62,28 +62,10 @@ const SUB_KEYS = ['laning', 'teamfight', 'mechanics', 'macro', 'vision', 'consis
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-/** Champion display name from a Data Dragon key, for the few that are not literal. */
-const CHAMP_NAMES = {
-  Leblanc: 'LeBlanc',
-  LeeSin: 'Lee Sin',
-  RekSai: "Rek'Sai",
-  Khazix: "Kha'Zix",
-  Kaisa: "Kai'Sa",
-  JarvanIV: 'Jarvan IV',
-  XinZhao: 'Xin Zhao',
-  TahmKench: 'Tahm Kench',
-  TwistedFate: 'Twisted Fate',
-  MonkeyKing: 'Wukong',
-  KSante: "K'Sante",
-  RenataGlasc: 'Renata Glasc',
-  Chogath: "Cho'Gath",
-  MasterYi: 'Master Yi',
-  MissFortune: 'Miss Fortune',
-  DrMundo: 'Dr. Mundo',
-  AurelionSol: 'Aurelion Sol',
-};
-
-const champName = (key) => CHAMP_NAMES[key] || key;
+// Champion display name from a Data Dragon key: "LeeSin" -> "Lee Sin", "MonkeyKing" ->
+// "Wukong". The table lives in the card engine, next to the id table it inverts, so the
+// pipeline, the asset layer and the server can never disagree about a champion.
+const champName = (key) => championName(key);
 
 /** Horizontal crop for the splash. Data Dragon art is 1215x717; only X matters. */
 function artFocus(rng) {
@@ -116,8 +98,9 @@ function championPool(keys, ovr, rng) {
     const games = Math.max(3, Math.round((27 - decay * 0.85) * rng.range(0.75, 1.15)));
     const winrate = clamp(0.5 + (ovr - 76) / 160 + rng.range(-0.08, 0.1), 0.3, 0.85);
     return {
-      // The hand-written keys in the table above are mostly Data Dragon ids already, but
-      // a couple ("RenataGlasc") are not, and a wrong one shows a card with no picture.
+      // The hand-written keys in the seed are Data Dragon ids, but run through the table
+      // anyway: one wrong one is a card with no picture, and two spellings of one champion
+      // ("Wukong", "MonkeyKing") are two champions to everything downstream.
       championKey: championKey(key),
       championName: champName(key),
       games,

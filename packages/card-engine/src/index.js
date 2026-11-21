@@ -11,5 +11,7 @@ export { artworkSvg, roleGlyph } from './artwork.js';
 export { cardHtml } from './template.js';
 export { attachTilt, enableGyro } from './tilt.js';
 export { setAssetResolver, splashUrl, squareUrl, portraitUrl, championKey, cardImageUrls, preloadCards, ART_VARIANTS, DDRAGON_IDS, DDRAGON_VERSION } from './assets.js';
+export { championName, CHAMPION_NAMES } from './champions.js';
 export { normaliseCard, createCard, mountCards } from './card.js';
+export { normaliseText, cardMatches, sortCards, SORTS, RARITY_ORDER, groupSets } from './collection.js';
 export { createPack, mountPack } from './pack.js';
