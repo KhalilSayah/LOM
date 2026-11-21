@@ -60,7 +60,9 @@ const isFocus = computed(() => focus.value || route.path.startsWith('/duel/'));
 const inBattle = computed(() => route.path.startsWith('/duel') || route.path === '/discovery' || route.path.startsWith('/m/'));
 const inLeague = computed(() => route.path.startsWith('/leagues') || route.path.startsWith('/join'));
 const inCards = computed(() => route.path.startsWith('/card'));
-const inTeam = computed(() => route.path.startsWith('/roster') || route.path.startsWith('/replay'));
+const inTeam = computed(() => route.path.startsWith('/roster')
+  || route.path.startsWith('/replay')
+  || route.path.startsWith('/sponsors'));
 
 const initial = computed(() => (user.value?.email || '?').slice(0, 1));
 </script>
@@ -92,6 +94,7 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
         </NuxtLink>
         <NuxtLink to="/leagues" :class="{ 'router-link-active': inLeague }" :aria-current="inLeague ? 'page' : undefined">League</NuxtLink>
         <NuxtLink to="/roster" :class="{ 'router-link-active': inTeam }" :aria-current="inTeam ? 'page' : undefined">Team</NuxtLink>
+        <NuxtLink to="/sponsors">Sponsors</NuxtLink>
         <NuxtLink to="/shop">Shop</NuxtLink>
       </nav>
 

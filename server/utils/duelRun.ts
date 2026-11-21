@@ -13,6 +13,7 @@ import {
   type Champion, type DuelCard, type Lineup,
 } from './duel';
 import { recordFixtureResult } from './leagueFixture';
+import { payMatchRewards } from './rewards';
 import { effRating } from '~~/packages/core/src/index.js';
 import { simulate } from '~~/packages/sim/src/index.js';
 
@@ -496,6 +497,16 @@ async function finish(db: SupabaseClient, duel: any, actions: LockedAction[]) {
    * nothing; a fixture that cannot be updated logs and lets the match stand.
    */
   if (duel.source === 'LEAGUE') await recordFixtureResult(db, duel.id, result);
+
+  /**
+   * And the managers get paid (docs/01 section 5).
+   *
+   * After the fixture, not before: the first win of a season is decided by looking at the
+   * other fixtures in the league, and this one has to be FINAL before that question has a
+   * correct answer. Like the fixture write, it never throws — a payout that fails must not
+   * take the finished match down with it.
+   */
+  await payMatchRewards(db, duel, result);
 }
 
 function hash(s: string): number {

@@ -9,7 +9,8 @@ on an animated Summoner's Rift.
 ban/pick draft and the match simulation are all built — two managers can duel end to end.
 Leagues work: you host one, invite people with a link, the whole season's fixture list is
 generated when the owner starts the season, and those fixtures are played in the draft room
-and scored into a table. Playoffs, match rewards and forfeits for a no-show are still
+and scored into a table. A finished match pays Credits and card XP, and the sponsors you have
+signed pay alongside it. Playoffs, season placings and forfeits for a no-show are still
 specification.
 
 ## Running it
@@ -30,6 +31,8 @@ npm run dev              # http://localhost:3000
    that same welcome pack for every account that already exists. `0009_leagues.sql` adds
    leagues, membership and the fixture list, and `0010_league_fixtures_playable.sql` lets a
    fixture open a draft room and keep its result; without them the League tab loads nothing.
+   `0011_match_rewards.sql` makes a finished match pay, and `0012_sponsors.sql` adds the
+   sponsor book — without them matches pay nothing and the Sponsors tab loads nothing.
 3. **Authentication → Providers → Email**: on, and turn **Confirm email off**. Signing up
    then signs you straight in. The built-in SMTP is capped at a few messages an hour, so a
    confirmation step on a friends-only league buys nothing and gives `email rate limit
@@ -139,12 +142,31 @@ Three things are deliberately not there yet. **No forfeits** — a fixture nobod
 scheduled, and its button keeps working tomorrow, because a league of friends misses evenings
 and a missed evening is a worse game than a forfeit nobody chose; real absence handling is
 [docs/05 section 7](docs/05-draft-and-live-session.md). **No playoffs** — days 12-14 need a
-bracket built from the final table. **No match rewards** — [docs/01 section 5](docs/01-game-loop.md)
-pays credits and card XP per match, and duplicates are still the only source of either. And
+bracket built from the final table, and without a season that finishes there is nothing to
+pay the season placings in [docs/01 section 5](docs/01-game-loop.md) against either. And
 **a league does not own cards**: [docs/07](docs/07-data-model.md) gives each membership its
 own collection, while here a manager brings the one collection they have — noted in
 `supabase/migrations/0009_leagues.sql`, which is also where the schema for the per-league
 version is already laid out.
+
+### How a match pays
+
+Finishing a match writes one `match_rewards` row per manager and pays against it: 50 Credits
+for playing, 100 more for winning, 25 per starter who graded S, 200 for the first win of a
+league season, and card XP to the five who played. The receipt is stored on that row, and the
+result screen renders it rather than recomputing it — a screen that worked the numbers out
+for itself could disagree with the ledger, and the ledger is what the Credits pill counts.
+
+A Ghost pays half of all of it, and past three paid Ghost matches in a pack-day it pays card
+XP and no Credits: the Ghost in the spec is the bye in an odd league, one a day, but a bot
+duel can be started on demand and an unbounded Ghost is a faucet with a tap on it.
+
+**Sponsors** pay alongside. A contract is an appearance fee that always pays plus a bonus that
+only pays when the five you fielded met its demand — three starters from the LCK, nobody above
+Epic, win inside half an hour. Two slots, a three-match term, and a buy-out if you want out
+early. The whole point is that the bonus is a reason to build one way rather than another;
+[docs/12](docs/12-sponsors.md) is the spec, including the demands that were deliberately left
+out.
 
 ## Layout
 
@@ -153,9 +175,10 @@ version is already laid out.
 | `app/` | Nuxt 4 app — pages, components, the design system in `assets/css/main.css` |
 | `server/api/league/` | Hosting, joining, launching a season, playing a fixture, reading a leaguemate's squad |
 | `server/api/pack/` | Pack status and claim, the only writers of a collection |
+| `server/api/sponsors/` | The sponsor book, signing, releasing, and the sponsor meeting |
 | `server/api/gifts/` | Packs a manager has been given, and opening them |
 | `server/utils/` | The pack window, the roll |
-| `shared/` | Row → card mapping, draft order, and the league invite code and schedule — all used by both sides |
+| `shared/` | Row → card mapping, draft order, the league invite code and schedule, what a match pays and what a sponsor demands — all used by both sides |
 | `supabase/migrations/` | Forward-only SQL |
 | `scripts/` | Catalogue build, catalogue push, Leaguepedia ingest |
 | `data/` | The seed roster and the built catalogue |
@@ -202,6 +225,7 @@ version is already laid out.
 | 09 | [Screens](docs/09-screens.md) | Every screen in v1, mobile-first |
 | 10 | [Roadmap](docs/10-roadmap.md) | Build order for v1, then the management layer |
 | 11 | [Card assets & caching](docs/11-card-assets-and-caching.md) | Art derivatives, the catalogue bundle, what makes a preview open instantly |
+| 12 | [Sponsors](docs/12-sponsors.md) | Contracts, demands, slots and terms, and what a match pays |
 
 ## Open questions tracked
 

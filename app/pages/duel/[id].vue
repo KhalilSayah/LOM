@@ -242,6 +242,31 @@ const watchAt = computed(() => {
   return matchClock.value;
 });
 
+// --- what it paid ------------------------------------------------------------------
+/**
+ * The payout, read off the receipt the server wrote (docs/01 section 5).
+ *
+ * Not recomputed here. A result screen that worked the numbers out for itself could
+ * disagree with the ledger, and the ledger is what the Credits pill is counting — so this
+ * renders what was actually granted, including the lines that paid nothing.
+ */
+const payout = computed(() => (state.value as any)?.rewards || null);
+const payoutLines = computed<{ label: string; credits: number }[]>(() => payout.value?.detail?.lines ?? []);
+const sponsorLines = computed<any[]>(() => payout.value?.detail?.sponsors ?? []);
+
+/** Every starter got the same XP unless they graded S, so it reads as one line, not five. */
+const xpSpread = computed(() => {
+  const awards = (payout.value?.detail?.cardXp ?? []) as { name: string; xp: number; grade: string | null }[];
+  if (!awards.length) return null;
+  const base = Math.min(...awards.map((a) => a.xp));
+  const standout = awards.filter((a) => a.xp > base);
+  return { base, standout };
+});
+
+/** The pill in the header is a cached balance, and the match has just moved it. */
+const { refresh: refreshWallet } = useWallet();
+watch(payout, (paid) => { if (paid) refreshWallet(); }, { immediate: true });
+
 // --- sound -------------------------------------------------------------------------
 // The room's moments, voiced. Driven by the shared state rather than by clicks, so both
 // players hear an action land when it lands, not when one of them pressed something.
@@ -370,6 +395,40 @@ useHead(() => ({
             />
           </template>
         </MatchWatch>
+        <!-- What the match paid. docs/01 section 5. -->
+        <section v-if="phase === 'RESULT' && payout" class="payout">
+          <header class="payout__top">
+            <p class="label">Paid out</p>
+            <b class="payout__total tnum">
+              <i class="coin coin--s" aria-hidden="true" />+{{ payout.credits.toLocaleString('en') }}
+            </b>
+          </header>
+
+          <ul class="payout__lines">
+            <li v-for="(line, n) in payoutLines" :key="`m${n}`">
+              <span>{{ line.label }}</span>
+              <b class="tnum">{{ line.credits }}</b>
+            </li>
+            <li v-for="s in sponsorLines" :key="s.key" class="payout__sponsor">
+              <span>
+                {{ s.name }}
+                <i class="payout__terms" :class="{ 'is-met': s.met }">{{ s.demand }}</i>
+              </span>
+              <b class="tnum">{{ s.credits }}</b>
+            </li>
+          </ul>
+
+          <p v-if="payout.detail?.creditsWithheld" class="payout__note">
+            Today's Ghost allowance is spent, so this one paid card XP only.
+          </p>
+
+          <p v-if="xpSpread" class="payout__note">
+            <strong>+{{ xpSpread.base }} XP</strong> to each of your five<template
+              v-for="a in xpSpread.standout" :key="a.name"
+            >, <strong>+{{ a.xp }}</strong> to {{ a.name }} ({{ a.grade }})</template>.
+          </p>
+        </section>
+
         <div v-if="phase === 'RESULT'" class="again">
           <NuxtLink v-if="state.source === 'LEAGUE'" class="btn btn--ghost btn--lg" to="/leagues">League table</NuxtLink>
           <NuxtLink class="btn btn--lg" to="/duels">Battle again</NuxtLink>
@@ -581,6 +640,38 @@ useHead(() => ({
 
 .again { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; padding: 20px 0 0; }
 .room--watch .room__body, .room--result .room__body { padding: 0 16px 24px; }
+
+/* The receipt. Lines that paid nothing are still lines: a zero that is explained reads
+   better than a total that cannot be reconciled with what was just watched. */
+.payout {
+  margin: 14px auto 0;
+  max-width: 520px;
+  padding: 12px 14px;
+  border: 1px solid rgba(216, 176, 100, 0.26);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.payout__top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.payout__total { display: inline-flex; align-items: center; gap: 4px; font-size: 18px; }
+.payout__lines { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13.5px; }
+.payout__lines li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.payout__lines li:first-child { border-top: 0; }
+.payout__sponsor span { display: flex; flex-direction: column; }
+.payout__terms {
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-style: normal;
+}
+.payout__terms.is-met { color: #7fc29a; }
+.payout__terms.is-met::after { content: ' · met'; }
+.payout__note { margin: 8px 0 0; color: var(--ink-2); font-size: 12.5px; }
 .room--watch .notice { margin: 12px 0; }
 
 /* --- the draft ---------------------------------------------------------------- */

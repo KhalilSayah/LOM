@@ -116,9 +116,23 @@ v1 keeps the economy tiny on purpose: one soft currency (**Credits**) and card X
 [02 section 5.1.1](02-cards-and-collection.md). A mastery token for a specific champion (500)
 and a daily-pack re-roll (150) are still unbuilt.
 
-**Credits come from:** duplicate pulls, and nothing else yet. The table above is the intent,
-but it depends on the match and season loop running end to end, which it does not. Until
-then an operator hands them out with `select grant_credits_by_handle('someone', 1000);`.
+**Credits come from:** every row of the table above except the season placings, plus the
+sponsors a manager has signed ([12](12-sponsors.md)) and duplicate pulls. A finished match
+writes one `match_rewards` row per manager and pays against it; the unique index on
+`(duel_id, profile_id)` is what makes a duel that finishes twice pay once. The receipt is
+stored on that row and the result screen renders it, rather than recomputing numbers that
+could then disagree with the ledger.
+
+The **season placings are still unwired**, because a league has no finish: there are no
+playoffs and nothing marks a season done. Until there is, an operator closes a season by
+hand with `select grant_credits_by_handle('someone', 1500);`.
+
+Two details are not in this table. A Ghost pays at 50% (section 6), and past **three paid
+Ghost matches in a pack-day** a Ghost pays card XP and no Credits at all — the Ghost here is
+the bye in an odd league, one a day, but `/api/duel/queue/bot` will hand out an agent
+opponent on demand and an unbounded Ghost is a faucet with a tap on it. And the first win of
+the season is a league question: it is decided from the other fixtures in that league, so a
+friendly cannot be the first win of anything.
 
 **Card XP** levels a card 1 -> 10. Each level grants **+0.4 OVR** (max +3.6) and at levels 3, 6
 and 9 a **+8 mastery** bump to the card's most-played champion. This is the only progression
