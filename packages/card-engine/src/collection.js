@@ -141,3 +141,82 @@ export function groupSets(catalogue, ownedKeys) {
     || (Number(b.season) || 0) - (Number(a.season) || 0)
     || a.team.localeCompare(b.team));
 }
+
+// --- filters, as a URL can carry them ----------------------------------------
+
+/**
+ * The filter state of a collection screen. Everything is a string or null, because it
+ * round-trips through the URL query: that is what lets the back button from a card page
+ * land on the same filtered, sorted list instead of the top of an unfiltered one.
+ */
+export const FILTER_DEFAULTS = {
+  q: '', role: null, rarity: null, league: null, year: null, team: null, fav: null,
+  sort: 'rating', view: 'cards',
+};
+
+const first = (v) => (Array.isArray(v) ? v[0] : v);
+
+/** @param {Record<string, unknown>} query a route's query object */
+export function readFilters(query = {}) {
+  const out = { ...FILTER_DEFAULTS };
+  for (const key of Object.keys(FILTER_DEFAULTS)) {
+    const v = first(query[key]);
+    if (v != null && v !== '') out[key] = String(v);
+  }
+  if (!SORTS.some((s) => s.id === out.sort)) out.sort = FILTER_DEFAULTS.sort;
+  if (out.view !== 'sets') out.view = 'cards';
+  return out;
+}
+
+/** The query that reproduces a state, with every default left out so URLs stay short. */
+export function filtersToQuery(state) {
+  const out = {};
+  for (const [key, def] of Object.entries(FILTER_DEFAULTS)) {
+    const v = state[key];
+    if (v != null && v !== '' && v !== def) out[key] = String(v);
+  }
+  return out;
+}
+
+/** How many narrowing filters are on, not counting search, sort or view. */
+export function activeFilterCount(state) {
+  return ['role', 'rarity', 'league', 'year', 'team', 'fav'].filter((k) => state[k]).length;
+}
+
+/**
+ * Entries ({ card, ... }) that pass every filter and every search word.
+ * @param {object[]} items
+ * @param {object} state from readFilters()
+ * @param {WeakMap<object,string>} [cache] see cardMatches()
+ * @param {(item:object)=>boolean} [isFav] for the starred filter
+ */
+export function applyFilters(items, state, cache, isFav) {
+  const tokens = queryTokens(state.q);
+  return items.filter((it) => {
+    const c = it.card;
+    if (state.role && c.role !== state.role) return false;
+    if (state.rarity && c.rarity !== state.rarity) return false;
+    if (state.league && c.region !== state.league) return false;
+    if (state.year && String(c.season) !== String(state.year)) return false;
+    if (state.team && c.team !== state.team) return false;
+    if (state.fav && !(isFav && isFav(it))) return false;
+    return cardMatches(c, tokens, cache);
+  });
+}
+
+/** The leagues, seasons and teams present in a set of cards, for the filter controls. */
+export function filterOptions(cards) {
+  const leagues = new Set();
+  const years = new Set();
+  const teams = new Set();
+  for (const c of cards) {
+    if (c.region && c.region !== '—') leagues.add(c.region);
+    if (c.season && c.season !== '—') years.add(String(c.season));
+    if (c.team) teams.add(c.team);
+  }
+  return {
+    leagues: [...leagues].sort(),
+    years: [...years].sort((a, b) => Number(b) - Number(a)),
+    teams: [...teams].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })),
+  };
+}
