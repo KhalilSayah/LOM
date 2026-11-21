@@ -15,9 +15,25 @@ export default defineEventHandler(async (event) => {
   const db = serverSupabaseServiceRole(event);
   const profileId = await ensureProfile(db, manager);
 
+  /**
+   * My memberships, each with its league.
+   *
+   * `leagues!league_id` and not plain `leagues`, and the hint is load-bearing. There are
+   * now *two* foreign keys between these tables — `league_members.league_id -> leagues`
+   * from 0009, and `leagues.champion_member_id -> league_members` from 0013 — so PostgREST
+   * cannot pick one and refuses the whole request with "more than one relationship was
+   * found". The hint names the column to travel along, which is the direction this screen
+   * means: the league this membership is in, not the league this member won.
+   *
+   * Named by column rather than by constraint. `league_members_league_id_fkey` works too,
+   * but it is a name Postgres generated — 0009 never wrote it down — whereas `league_id` is
+   * spelled out in the DDL. Any future embed between these two tables, or between
+   * `league_members` and `league_seasons` (0014 adds a champion there as well), needs the
+   * same treatment.
+   */
   const { data: mine, error } = await db
     .from('league_members')
-    .select('id, league_id, leagues ( id, name, owner_id, invite_code, timezone, match_hour, season_length_days, status, starts_on, created_at, started_at, catalogue_version_id, season, champion_member_id )')
+    .select('id, league_id, leagues!league_id ( id, name, owner_id, invite_code, timezone, match_hour, season_length_days, status, starts_on, created_at, started_at, finished_at, catalogue_version_id, season, champion_member_id )')
     .eq('profile_id', profileId);
 
   if (error) throw createError({ statusCode: 500, statusMessage: error.message });
