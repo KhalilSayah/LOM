@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { squareUrl } from '@lom/card-engine';
 import { toCard } from '~~/shared/cardShape';
 
 const route = useRoute();
@@ -18,8 +19,6 @@ const SELECT = `
     pool:card_champion_pool ( champion_key, champion_name, games, winrate, mastery, slot )
   )
 `;
-
-const DDRAGON = 'https://ddragon.leagueoflegends.com/cdn/16.22.1/img/champion';
 
 const ACCOLADES: Record<string, string> = {
   WORLDS_WINNER: 'World champion',
@@ -88,7 +87,7 @@ useHead(() => ({
         <p class="eyebrow">Champion pool</p>
         <ul class="pool">
           <li v-for="p in held.card.championPool" :key="p.key">
-            <img :src="`${DDRAGON}/${p.key}.png`" alt="" width="32" height="32" loading="lazy">
+            <img :src="squareUrl(p.key)" alt="" width="32" height="32" loading="lazy">
             <span class="pool__name">{{ p.champion }}</span>
             <span class="pool__bar"><span :style="{ width: `${p.mastery}%` }" /></span>
             <span class="pool__m tnum">{{ p.mastery }}</span>

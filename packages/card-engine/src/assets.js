@@ -31,9 +31,45 @@ export const ART_VARIANTS = {
   splash: { w: 1215, h: 717, fit: 'cover', note: 'the full landscape splash, detail views only' },
 };
 
-/** "Lee Sin" -> "LeeSin". Real cards carry champion_key from the pipeline; this is a fallback. */
+/**
+ * Data Dragon ids that stripping punctuation off the display name does NOT produce.
+ *
+ * Every image on the CDN is filed under Riot's champion `id`, and for 164 of the 173
+ * champions that id is just the display name with the spaces and punctuation taken out:
+ * "Lee Sin" -> "LeeSin", "Rek'Sai" -> "RekSai", "K'Sante" -> "KSante". For the nine below
+ * it is not. Riot folded the letter after the apostrophe back to lower case in some names
+ * and kept it capital in others, with no rule behind which — so "Kha'Zix" is `Khazix`
+ * while "Kog'Maw" is `KogMaw`. Three more are renames the ids never followed.
+ *
+ * Getting this wrong is silent: the URL is well formed, the CDN answers 403, and the card
+ * falls back to generated art, so the champion simply never shows a picture. Keyed lower case so
+ * the lookup catches both the display name ("Cho'Gath") and any key already derived from
+ * it the old way ("ChoGath"), which is what makes rows already in the database render.
+ */
+export const DDRAGON_IDS = {
+  belveth: 'Belveth',        // Bel'Veth
+  chogath: 'Chogath',        // Cho'Gath
+  kaisa: 'Kaisa',            // Kai'Sa
+  khazix: 'Khazix',          // Kha'Zix
+  velkoz: 'Velkoz',          // Vel'Koz
+  leblanc: 'Leblanc',        // LeBlanc — the capital B is in the name, not the id
+  wukong: 'MonkeyKing',      // renamed in 2011; the id never was
+  monkeyking: 'MonkeyKing',
+  nunuwillump: 'Nunu',       // "Nunu & Willump" since 2018
+  nunu: 'Nunu',
+  renataglasc: 'Renata',     // shipped as "Renata", named "Renata Glasc"
+  renata: 'Renata',
+};
+
+/**
+ * Display name or loose key -> the Data Dragon id the CDN files art under.
+ * "Lee Sin" -> "LeeSin", "Kai'Sa" -> "Kaisa". Idempotent, so passing an id through again
+ * is safe: everything the pipeline, the database and the asset layer hand around is run
+ * through this, and the only names that change are the nine in DDRAGON_IDS.
+ */
 export function championKey(name) {
-  return String(name || '').replace(/[^A-Za-z0-9]/g, '');
+  const stripped = String(name || '').replace(/[^A-Za-z0-9]/g, '');
+  return DDRAGON_IDS[stripped.toLowerCase()] || stripped;
 }
 
 const ddragon = {
@@ -67,14 +103,22 @@ export function setAssetResolver(next) {
   resolver = { ...ddragon, ...next };
 }
 
-/** @param {string} key @param {string} [variant] */
+/**
+ * Every key is canonicalised on the way out rather than on the way in, so a card built
+ * before DDRAGON_IDS existed — or read straight out of a row written back then — still
+ * resolves to art instead of a dead URL.
+ *
+ * @param {string} key @param {string} [variant]
+ */
 export function splashUrl(key, variant = 'card') {
-  return key ? resolver.splash(key, variant) : null;
+  const id = championKey(key);
+  return id ? resolver.splash(id, variant) : null;
 }
 
 /** @param {string} key */
 export function squareUrl(key) {
-  return key ? resolver.square(key, 'square') : null;
+  const id = championKey(key);
+  return id ? resolver.square(id, 'square') : null;
 }
 
 /** @param {string} cardKey @param {string} [variant] */

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { splashUrl, squareUrl } from '@lom/card-engine';
 import { SLOTS, PHASE_LABEL, type Slot } from '~~/shared/draft';
 
 /**
@@ -144,12 +145,15 @@ async function lockIn() {
 const sideActions = (side: string, kind: string) =>
   (state.value?.actions || []).filter((a: any) => a.side === side && a.kind === kind);
 
-const DDRAGON = 'https://ddragon.leagueoflegends.com/cdn/16.22.1/img/champion';
+/**
+ * Both go through the card engine's resolver rather than interpolating a CDN path here,
+ * because a champion key is not always the id Data Dragon files its art under — "Kai'Sa"
+ * is `Kaisa`, "Cho'Gath" is `Chogath`. See packages/card-engine/src/assets.js.
+ */
 /** Square portrait, for bans and the picker grid. */
-const art = (key: string) => `${DDRAGON}/${key}.png`;
+const art = (key: string) => squareUrl(key);
 /** Tall loading art for the pick panels — 308x560, the shape the broadcast layout wants. */
-const splash = (key: string) =>
-  `https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${key}_0.jpg`;
+const splash = (key: string) => splashUrl(key, 'card');
 
 /** The pick that filled a slot for a side, if it has happened yet. */
 const pickFor = (side: string, slot: Slot) =>
