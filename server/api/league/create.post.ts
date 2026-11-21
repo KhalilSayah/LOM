@@ -1,7 +1,7 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import {
-  shapeLeague, membersOf, requireMatchHour, requireTimezone, assertLeagueRoom,
+  shapeLeague, membersOf, requireMatchHour, requireTimezone, assertLeagueRoom, defaultTeamName,
 } from '~~/server/utils/league';
 import { cleanTeamName } from '~~/shared/league';
 
@@ -41,12 +41,7 @@ export default defineEventHandler(async (event) => {
   // Finished leagues do not count against the cap (server/utils/league.ts).
   await assertLeagueRoom(db, profileId);
 
-  const { data: profile } = await db
-    .from('profiles').select('handle, display_name').eq('id', profileId).maybeSingle();
-
-  const teamName = cleanTeamName(body?.teamName)
-    ?? cleanTeamName(profile?.display_name || profile?.handle)
-    ?? 'Manager';
+  const teamName = cleanTeamName(body?.teamName) ?? await defaultTeamName(db, profileId);
 
   const { data: league, error } = await db
     .from('leagues')

@@ -1,6 +1,8 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { leagueByCode, membersOf, shapeLeague, assertLeagueRoom } from '~~/server/utils/league';
+import {
+  leagueByCode, membersOf, shapeLeague, assertLeagueRoom, defaultTeamName,
+} from '~~/server/utils/league';
 import { MAX_MANAGERS, cleanTeamName } from '~~/shared/league';
 
 /**
@@ -47,12 +49,8 @@ export default defineEventHandler(async (event) => {
   // The same cap as hosting: a league you join is as many evenings as one you host.
   await assertLeagueRoom(db, profileId);
 
-  const { data: profile } = await db
-    .from('profiles').select('handle, display_name').eq('id', profileId).maybeSingle();
-
-  const teamName = cleanTeamName(body?.teamName)
-    ?? cleanTeamName(profile?.display_name || profile?.handle)
-    ?? 'Manager';
+  // Typed, else the profile's own team name, display name, then handle.
+  const teamName = cleanTeamName(body?.teamName) ?? await defaultTeamName(db, profileId);
 
   const { error } = await db.from('league_members').insert({
     league_id: league.id,

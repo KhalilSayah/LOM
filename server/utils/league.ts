@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  normaliseLeagueCode, seasonSchedule, seasonShape, MAX_MANAGERS, MIN_MANAGERS, MAX_LIVE_LEAGUES,
+  normaliseLeagueCode, seasonSchedule, seasonShape, cleanTeamName, MAX_MANAGERS, MIN_MANAGERS, MAX_LIVE_LEAGUES,
   type DraftSide,
 } from '~~/shared/league';
 import { ROLES } from '~~/shared/roster';
@@ -356,6 +356,33 @@ export async function assertLeagueRoom(db: SupabaseClient, profileId: string) {
       statusMessage: `You are in ${live} leagues that are still running. Finish or leave one first.`,
     });
   }
+}
+
+/**
+ * The seat name a manager gets when they did not type one.
+ *
+ * Their profile's own team name first (`profiles.team_name`, added by another
+ * migration that may not have been run yet), then their display name, then their
+ * handle. Read defensively: if the column does not exist the select fails, and the
+ * fallback asks again without it rather than failing a join over a nicety.
+ */
+export async function defaultTeamName(db: SupabaseClient, profileId: string): Promise<string> {
+  let profile: any = null;
+  const withTeam = await db
+    .from('profiles').select('handle, display_name, team_name').eq('id', profileId).maybeSingle();
+
+  if (withTeam.error) {
+    const plain = await db
+      .from('profiles').select('handle, display_name').eq('id', profileId).maybeSingle();
+    profile = plain.data;
+  } else {
+    profile = withTeam.data;
+  }
+
+  return cleanTeamName(profile?.team_name)
+    ?? cleanTeamName(profile?.display_name)
+    ?? cleanTeamName(profile?.handle)
+    ?? 'Manager';
 }
 
 // --- reading a fixture's sides -----------------------------------------------

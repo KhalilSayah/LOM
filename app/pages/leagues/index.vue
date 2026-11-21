@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { normaliseLeagueCode, MAX_MANAGERS } from '~~/shared/league';
+import {
+  normaliseLeagueCode, MAX_MANAGERS, TEAM_NAME_MAX, seasonShape, kickOffText, zoneCity,
+} from '~~/shared/league';
 
 /**
  * Leagues: the ones you are in, and the two ways into a new one.
@@ -10,6 +12,8 @@ import { normaliseLeagueCode, MAX_MANAGERS } from '~~/shared/league';
  *
  * A league that is still forming is the one waiting on a human, so those sort to the
  * top and say what they are waiting for: more managers, or the owner's thumb.
+ * Above them, though, come the leagues with a fixture of mine on the way, soonest
+ * first — the list is where somebody checks what they play next.
  */
 
 const data = ref<any>(null);
@@ -39,7 +43,11 @@ function retry() {
 
 const hosting = ref(false);
 const busy = ref(false);
-const form = ref({ name: '', timezone: 'Europe/Paris', matchHour: '20:30', seasonLengthDays: 14 });
+const form = ref({ name: '', timezone: 'Europe/Paris', matchHour: '20:30', teamName: '' });
+
+/** What a full league of six plays; the real length follows whoever joins. */
+const fullShape = seasonShape(MAX_MANAGERS);
+const smallShape = seasonShape(2);
 const hostError = ref('');
 
 onMounted(() => {
@@ -57,7 +65,10 @@ async function host() {
   hostError.value = '';
   busy.value = true;
   try {
-    const res = await $fetch<any>('/api/league/create', { method: 'POST', body: form.value });
+    const res = await $fetch<any>('/api/league/create', {
+      method: 'POST',
+      body: { ...form.value, teamName: form.value.teamName.trim() || undefined },
+    });
     await navigateTo(`/leagues/${res.league.id}`);
   } catch (e: any) {
     hostError.value = message(e, 'Could not create that league.');
@@ -97,17 +108,11 @@ async function join() {
 
 const leagues = computed<any[]>(() => data.value?.leagues ?? []);
 
-const kickOff = (iso: string | null) => {
-  if (!iso) return '';
-  const at = new Date(iso);
-  const today = new Date();
-  const sameDay = at.toDateString() === today.toDateString();
-  const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  if (sameDay) return `tonight ${time}`;
-  const tomorrow = new Date(today.getTime() + 86400000);
-  if (at.toDateString() === tomorrow.toDateString()) return `tomorrow ${time}`;
-  return `${at.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} ${time}`;
-};
+/**
+ * One way of writing a kick-off (shared/league.ts): "Today 20:30" on a 24-hour clock in
+ * the viewer's own zone, with the league's clock beside it when the two differ.
+ */
+const kickOff = (iso: string | null, leagueTz: string) => kickOffText(iso, { leagueTz });
 
 useHead({ title: 'Leagues — LOM' });
 </script>
@@ -145,12 +150,17 @@ useHead({ title: 'Leagues — LOM' });
                 </span>
 
                 <span class="league__meta tnum">
-                  {{ l.memberCount }} of {{ l.maxMembers }} managers · {{ l.matchHour }} {{ l.timezone }}
+                  {{ l.memberCount }} of {{ l.maxMembers }} managers · {{ l.matchHour }} {{ zoneCity(l.timezone) }} time
                 </span>
 
                 <span v-if="l.next" class="league__next">
                   Day {{ l.next.dayIndex }} · vs <strong>{{ l.next.opponent }}</strong>
-                  <span class="faint"> · {{ kickOff(l.next.scheduledAt) }}</span>
+                  <span class="faint tnum">
+                    · <template v-if="l.next.started && !l.next.duelId">kicked off {{ kickOff(l.next.scheduledAt, l.timezone).text }}</template>
+                    <template v-else>{{ kickOff(l.next.scheduledAt, l.timezone).text }}</template>
+                    <template v-if="kickOff(l.next.scheduledAt, l.timezone).league"> ({{ kickOff(l.next.scheduledAt, l.timezone).league }})</template>
+                  </span>
+                  <span v-if="l.next.playable" class="tag tag--live league__live">{{ l.next.duelId ? 'In the room' : 'Lobby open' }}</span>
                 </span>
                 <span v-else-if="l.status === 'FORMING'" class="league__next faint">
                   {{ l.memberCount < 2
@@ -177,7 +187,7 @@ useHead({ title: 'Leagues — LOM' });
 
         <template v-if="!hosting">
           <p class="muted blurb">
-            Two to {{ MAX_MANAGERS }} managers, one match an evening, a fortnight of it.
+            Two to {{ MAX_MANAGERS }} managers, one match an evening, about a fortnight of it.
             You pick the hour; everyone gets a fixture list the moment you start the season.
           </p>
           <button class="btn btn--block" type="button" @click="hosting = true">New league</button>
@@ -195,8 +205,8 @@ useHead({ title: 'Leagues — LOM' });
               <input id="lhour" v-model="form.matchHour" type="time" required>
             </div>
             <div class="field">
-              <label for="ldays">Season days</label>
-              <input id="ldays" v-model.number="form.seasonLengthDays" type="number" min="2" max="60">
+              <label for="lteam">Your team name</label>
+              <input id="lteam" v-model="form.teamName" :maxlength="TEAM_NAME_MAX" placeholder="Your name" autocomplete="off">
             </div>
           </div>
 
@@ -207,6 +217,16 @@ useHead({ title: 'Leagues — LOM' });
 
           <p class="faint hint">
             The match hour is wall-clock time in that zone, so it survives the clocks changing.
+            You can change it until the season starts.
+          </p>
+
+          <!-- Season length is not a setting: it is what "everyone twice" takes. -->
+          <p class="faint hint">
+            The season length follows the number of managers, so everyone plays everyone
+            twice, once from each side: {{ fullShape.matchDays }} match evenings and
+            {{ fullShape.playoffDays }} playoff days for {{ MAX_MANAGERS }}
+            (about {{ fullShape.totalDays }} days), {{ smallShape.matchDays }} head-to-heads
+            and a final for two.
           </p>
 
           <p v-if="hostError" class="notice notice--bad form__error" role="alert">{{ hostError }}</p>
@@ -266,6 +286,7 @@ useHead({ title: 'Leagues — LOM' });
 .league__meta { font-size: 12.5px; color: var(--ink-3); }
 .league__next { font-size: 13.5px; color: var(--ink-2); }
 .league__next strong { color: var(--ink-1); }
+.league__live { margin-left: 6px; vertical-align: 1px; }
 .league__go { position: absolute; right: 4px; top: 50%; width: 20px; height: 20px; margin-top: -10px; color: var(--ink-3); }
 @media (hover: hover) and (pointer: fine) {
   .league:hover { background: var(--bg-2); }

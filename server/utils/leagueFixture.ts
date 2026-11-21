@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { snapshotLineup, autoPick, autoBan, type DuelCard, type Lineup } from './duel';
 import { botLineup } from './duelBot';
@@ -79,7 +78,10 @@ export const STAND_IN_OVR = 55;
  * know which one wins. The seed is written to the duel row once and the replay reads
  * it from there, so nothing needs to be able to recompute it.
  */
-const freshSeed = () => `fixture-${randomBytes(16).toString('hex')}`;
+const freshSeed = () => {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  return `fixture-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+};
 
 /** A manager's five as it stands, with any empty slot filled by a stand-in. */
 async function fieldLineup(

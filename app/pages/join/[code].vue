@@ -10,7 +10,12 @@
  *
  * Already a member, following your own link back: it says so and shows the way in,
  * rather than an error about a thing you have already done.
+ *
+ * The team name is asked for here, because it is the name the rest of the league will
+ * read in the table for a fortnight — it defaults to your display name and can be
+ * changed later from the league screen.
  */
+import { TEAM_NAME_MAX } from '~~/shared/league';
 
 const route = useRoute();
 const code = computed(() => String(route.params.code || ''));
@@ -19,6 +24,9 @@ const data = ref<any>(null);
 const loading = ref(true);
 const error = ref('');
 const joining = ref(false);
+/** Kept apart from the load error: a failed join reloads the preview, and the reload must not wipe why. */
+const joinError = ref('');
+const teamName = ref('');
 
 const message = (e: any, fallback: string) =>
   e?.statusMessage || e?.data?.statusMessage || e?.data?.message || fallback;
@@ -40,18 +48,30 @@ watch(code, load, { immediate: true });
 async function join() {
   if (joining.value) return;
   joining.value = true;
+  joinError.value = '';
   try {
-    const res = await $fetch<any>('/api/league/join', { method: 'POST', body: { code: code.value } });
+    const res = await $fetch<any>('/api/league/join', {
+      method: 'POST',
+      body: { code: code.value, teamName: teamName.value.trim() || undefined },
+    });
     await navigateTo(`/leagues/${res.league.id}`);
   } catch (e: any) {
-    error.value = message(e, 'Could not join that league.');
+    const why = message(e, 'Could not join that league.');
+    // Re-read, because the usual reason is that the league changed under us (full,
+    // started) — and the preview should say so. Then say why the tap failed.
     await load();
+    joinError.value = why;
   } finally {
     joining.value = false;
   }
 }
 
 const league = computed<any>(() => data.value?.league ?? null);
+const me = computed<any>(() => data.value?.me ?? null);
+
+/** A new account: nothing opened yet, so "bring your collection" would be no help. */
+const brandNew = computed(() => Boolean(me.value) && me.value.cards === 0);
+const rosterShort = computed(() => Boolean(me.value) && me.value.cards > 0 && me.value.rosterFilled < me.value.rosterSlots);
 
 useHead(() => ({
   title: league.value ? `Join ${league.value.name} — LOM` : 'Invite — LOM',
@@ -78,7 +98,7 @@ useHead(() => ({
       <p class="muted invite__meta">
         {{ league.memberCount }} of {{ league.maxMembers }} managers ·
         matches at {{ league.matchHour }} {{ league.timezone }} ·
-        {{ league.seasonLengthDays }}-day season
+        about {{ league.seasonLengthDays }} days, {{ league.matchDays }} match evenings
       </p>
 
       <ul class="who">
@@ -104,15 +124,37 @@ useHead(() => ({
         </p>
       </template>
 
-      <template v-else>
-        <button class="btn btn--lg btn--block" type="button" data-sound="success" :disabled="joining" @click="join">
+      <form v-else class="join" @submit.prevent="join">
+        <div class="field join__field">
+          <label for="jteam">Your team name in this league</label>
+          <input
+            id="jteam" v-model="teamName" :maxlength="TEAM_NAME_MAX" autocomplete="off"
+            placeholder="Leave blank to use your name"
+          >
+        </div>
+
+        <p v-if="joinError" class="notice notice--bad join__error" role="alert">{{ joinError }}</p>
+
+        <button class="btn btn--lg btn--block" type="submit" data-sound="success" :disabled="joining">
           {{ joining ? 'Joining' : 'Join this league' }}
         </button>
-        <p class="faint hint">
+
+        <p v-if="brandNew" class="notice join__first">
+          You have no cards yet. Open your welcome pack in the <NuxtLink to="/shop">shop</NuxtLink>,
+          then <NuxtLink to="/roster">set your five</NuxtLink> before the host starts the season.
+          An empty slot is filled by a weak stand-in, so do this first.
+        </p>
+        <p v-else-if="rosterShort" class="notice join__first">
+          Your five is {{ me.rosterFilled }}/{{ me.rosterSlots }}.
+          <NuxtLink to="/roster">Fill it</NuxtLink> before the season starts. An empty slot is
+          played by a weak stand-in.
+          <template v-if="me.packsWaiting"> You have {{ me.packsWaiting }} unopened {{ me.packsWaiting === 1 ? 'pack' : 'packs' }} in the <NuxtLink to="/shop">shop</NuxtLink>.</template>
+        </p>
+        <p v-else class="faint hint">
           You bring the collection you already have. Nothing is taken from it, and you can
           leave while the league is still forming.
         </p>
-      </template>
+      </form>
     </section>
   </main>
 </template>
@@ -139,4 +181,7 @@ useHead(() => ({
 .who__av { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-3); font-size: 11px; font-weight: 760; text-transform: uppercase; }
 .who__row .tag { margin-left: auto; }
 .hint { font-size: 12.5px; margin: 12px 0 0; }
+.join { display: grid; gap: 12px; text-align: left; }
+.join__field input { min-height: 44px; }
+.join__error, .join__first { margin: 0; font-size: 13px; }
 </style>
