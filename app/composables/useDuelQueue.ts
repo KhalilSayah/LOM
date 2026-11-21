@@ -143,12 +143,21 @@ export function useDuelQueue() {
       });
   }
 
-  /** Take the agent. The search is not cancelled first — the request itself ends it. */
-  async function playBot() {
+  /**
+   * Take the agent. The search is not cancelled first — the request itself ends it.
+   *
+   * With a difficulty it is practice, started straight from the Battle screen rather than
+   * offered after an empty search. Without one it is the queue's stand-in, at NORMAL.
+   */
+  async function playBot(difficulty?: string) {
     if (busy.value) return;
     busy.value = true;
+    error.value = '';
     try {
-      const res = await $fetch<any>('/api/duel/queue/bot', { method: 'POST' });
+      const res = await $fetch<any>('/api/duel/queue/bot', {
+        method: 'POST',
+        body: difficulty ? { difficulty } : {},
+      });
       if (res.duelId) return enter(res.duelId);
     } catch (e: any) {
       error.value = e?.data?.statusMessage || e?.message || 'Could not start that match.';
@@ -165,6 +174,31 @@ export function useDuelQueue() {
     } catch { /* The row is swept in 90 seconds regardless. */ }
   }
 
+  /**
+   * Leave the queue without waiting for an answer, for a page that is going away.
+   *
+   * A search is a claim on being here now. Leaving /duels mid-search — another tab, the back
+   * button, closing the app — used to leave the row behind, still pairable for up to ninety
+   * seconds; whoever was paired with it then sat in a lobby with nobody on the other side
+   * until the agent took over. sendBeacon is the one request a browser promises to send
+   * while a page is being torn down, and it carries the session cookie like any other.
+   */
+  function leaveQuietly() {
+    if (!searching.value) return;
+    stop();
+    searching.value = false;
+    if (import.meta.client && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      try {
+        if (navigator.sendBeacon('/api/duel/queue/leave')) return;
+      } catch { /* fall through to fetch */ }
+    }
+    $fetch('/api/duel/queue/leave', { method: 'POST', keepalive: true } as any).catch(() => {});
+  }
+
+  function onPageHide() {
+    leaveQuietly();
+  }
+
   function stop() {
     clearInterval(heartbeat);
     clearInterval(ticker);
@@ -176,17 +210,44 @@ export function useDuelQueue() {
     }
   }
 
-  /** Pick up a search or a room left behind by a reload. */
+  /**
+   * A live room this manager is in, as found on arrival. Shown as a Rejoin card, not
+   * followed: see restore().
+   */
+  const liveRoomId = ref<string | null>(null);
+
+  /**
+   * Pick up a search left behind by a reload, and notice a room.
+   *
+   * This used to navigate straight into any live room it found. That made the Battle screen
+   * unreachable for the length of a match: no way to decline a challenge, look at history or
+   * see the record while a draft was running somewhere — open /duels and you were in the
+   * room again before it had drawn. A room is now offered, plainly, and the person decides.
+   * A pairing that arrives *while searching* still goes straight in, because that is what
+   * pressing Battle asked for.
+   */
   async function restore() {
     try {
       const res = await $fetch<any>('/api/duel/queue/status');
-      if (res.duelId) return enter(res.duelId);
+      liveRoomId.value = res.duelId ?? null;
       waiting.value = res.waiting ?? 0;
-      if (res.searching && res.since) beginSearch(new Date(res.since).getTime());
+      if (!res.duelId && res.searching && res.since) beginSearch(new Date(res.since).getTime());
     } catch { /* Signed out, or offline. The button still works. */ }
   }
 
-  onBeforeUnmount(stop);
+  if (import.meta.client) {
+    onMounted(() => window.addEventListener('pagehide', onPageHide));
+  }
 
-  return { searching, waiting, elapsed, botOffered, error, busy, search, cancel, playBot, restore };
+  onBeforeUnmount(() => {
+    if (import.meta.client) window.removeEventListener('pagehide', onPageHide);
+    // Navigating away mid-search ends the search; a ghost row helps nobody.
+    if (searching.value) leaveQuietly();
+    stop();
+  });
+
+  return {
+    searching, waiting, elapsed, botOffered, error, busy, liveRoomId,
+    search, cancel, playBot, restore,
+  };
 }

@@ -13,15 +13,33 @@
  * of text rather than a second button — it is the rarer intention now.
  */
 
-const { searching, waiting, elapsed, botOffered, error: queueError, busy, search, cancel, playBot, restore } =
-  useDuelQueue();
+import { DIFFICULTIES, DIFFICULTY_LABEL, asDifficulty, type Difficulty } from '~~/shared/duelRoom';
 
+const {
+  searching, waiting, elapsed, botOffered, error: queueError, busy, liveRoomId,
+  search, cancel, playBot, restore,
+} = useDuelQueue();
+
+const route = useRoute();
 const data = ref<any>(null);
 const loading = ref(true);
 const listError = ref('');
+const notice = ref('');
 const responding = ref<string | null>(null);
+const challenging = ref<string | null>(null);
 
 const error = computed(() => queueError.value || listError.value);
+
+/**
+ * Practice against the agent, straight from here. Easy, Normal or Hard changes how carefully
+ * it drafts and how strong a five it brings (server/utils/duel.ts AGENT_PROFILES). Nothing
+ * played in practice counts anywhere.
+ */
+const difficulty = ref<Difficulty>('NORMAL');
+function practice() {
+  playBot(difficulty.value);
+}
+const difficultyLabel = (d: string | null) => DIFFICULTY_LABEL[asDifficulty(d)];
 
 /**
  * Which lanes are still empty. The queue refuses an incomplete five anyway; asking first
@@ -38,15 +56,43 @@ async function loadRoster() {
   }
 }
 
-/** Wins and losses over what is listed, and the current run. */
-const record = computed(() => {
-  const done = (data.value?.finished ?? []).filter((d: any) => d.won !== null);
-  const wins = done.filter((d: any) => d.won).length;
-  let streak = 0;
-  const first = done[0]?.won;
-  for (const d of done) { if (d.won === first) streak++; else break; }
-  return { wins, losses: done.length - wins, streak, streakWon: Boolean(first) };
+/**
+ * The record, worked out on the server over far more games than this screen lists.
+ *
+ * Battles — the queue, people against people — first, with the streak. Friendlies, practice
+ * and league games are shown apart and smaller: there is no ladder, and a record that mixes
+ * "beat the agent on Easy" into "beat a person" says nothing about either.
+ */
+const record = computed(() => data.value?.record ?? null);
+const battles = computed(() => record.value?.battles ?? { wins: 0, losses: 0, streak: 0, streakWon: false, played: 0 });
+const otherRecords = computed(() => {
+  const r = record.value;
+  if (!r) return [];
+  return [
+    { label: 'Friendlies', ...r.friendlies },
+    { label: 'Practice', ...r.practice },
+    { label: 'League', ...r.league },
+  ].filter((x) => x.played > 0);
 });
+const opponents = computed<any[]>(() => data.value?.opponents ?? []);
+
+/** One tap to play somebody again. If they had already challenged you, it starts. */
+async function challenge(opponentId: string, name: string) {
+  if (challenging.value) return;
+  challenging.value = opponentId;
+  notice.value = '';
+  listError.value = '';
+  try {
+    const res = await $fetch<any>('/api/duel/challenge', { method: 'POST', body: { opponentId } });
+    if (res?.accepted && res.duelId) return navigateTo(`/duel/${res.duelId}`);
+    notice.value = `Challenge sent to ${name}. It starts when they accept, and expires after a day.`;
+    await load();
+  } catch (e: any) {
+    listError.value = e?.data?.statusMessage || e?.message || 'Could not send that challenge.';
+  } finally {
+    challenging.value = null;
+  }
+}
 
 const SOURCE_NAME: Record<string, string> = { LEAGUE: 'League', CHALLENGE: 'Friendly', QUEUE: 'Battle', BOT: 'Practice' };
 const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
@@ -60,8 +106,16 @@ function ago(iso: string | null) {
   return days === 1 ? 'yesterday' : `${days} days ago`;
 }
 
-/** A room you are already in. Being put back into it beats starting another. */
-const liveRoom = computed(() => data.value?.live?.[0] ?? null);
+/**
+ * A room you are already in. Being put back into it beats starting another — but it is
+ * offered, not forced: this screen used to navigate into it on sight, which made history,
+ * challenges and the record unreachable for the length of a match.
+ */
+const liveRoom = computed(() => {
+  const listed = data.value?.live?.[0];
+  if (listed) return listed;
+  return liveRoomId.value ? { id: liveRoomId.value, opponent: 'your opponent', phase: 'DRAFT' } : null;
+});
 
 async function load() {
   try {
@@ -94,7 +148,18 @@ const seconds = computed(() => Math.floor(elapsed.value));
 /** The search spinner's four dots, so it reads as activity rather than a frozen screen. */
 const pulse = computed(() => Math.floor(elapsed.value * 2) % 4);
 
-onMounted(() => { restore(); load(); loadRoster(); });
+onMounted(async () => {
+  await Promise.all([restore(), load(), loadRoster()]);
+  /**
+   * "Queue again" from a result screen lands here with ?battle=1 and goes straight back into
+   * the search — unless there is a room to finish, or the five is not ready, in which case
+   * the screen says so instead.
+   */
+  if (route.query.battle === '1' && !liveRoom.value && !missing.value.length && !searching.value) {
+    navigateTo('/duels', { replace: true });
+    search();
+  }
+});
 
 watch(searching, (on, was) => { if (on && !was) playSound('searchStart'); });
 watch(botOffered, (on) => { if (on) playSound('toggle'); });
@@ -118,10 +183,10 @@ useHead({ title: 'Battle — LOM' });
       <template v-if="!searching && liveRoom">
         <p class="arena__lede">
           You are mid-match against <b>{{ liveRoom.opponent }}</b>.
-          {{ liveRoom.status === 'WATCHING' ? 'The game is playing out.' : 'The draft is waiting for you.' }}
+          {{ liveRoom.phase === 'WATCH' ? 'The game is playing out.' : 'The draft is waiting for you: when your clock runs out, the agent plays your turn.' }}
         </p>
         <NuxtLink class="btn btn--lg arena__go" :to="`/duel/${liveRoom.id}`">Rejoin</NuxtLink>
-        <p class="arena__sub">One room at a time. Finish this one to start another.</p>
+        <p class="arena__sub">One room at a time. Finish this one to start another; challenges and history are below.</p>
       </template>
 
       <template v-else-if="!searching && missing.length">
@@ -144,6 +209,20 @@ useHead({ title: 'Battle — LOM' });
           <template v-if="waiting"><b class="tnum">{{ waiting }}</b> searching right now</template>
           <template v-else>Ban, pick and play, start to finish. About ten minutes.</template>
         </p>
+
+        <!-- Practice: the agent, now, at the difficulty you pick. Never counts. -->
+        <div class="practice">
+          <p class="practice__t">Practice vs the agent <span class="faint">· never counts anywhere</span></p>
+          <div class="practice__row">
+            <div class="seg practice__seg" role="group" aria-label="Agent difficulty">
+              <button
+                v-for="d in DIFFICULTIES" :key="d" type="button"
+                :aria-pressed="difficulty === d" @click="difficulty = d"
+              >{{ DIFFICULTY_LABEL[d] }}</button>
+            </div>
+            <button class="btn btn--ghost practice__go" type="button" :disabled="busy" @click="practice">Practice</button>
+          </div>
+        </div>
       </template>
 
       <template v-else>
@@ -170,9 +249,26 @@ useHead({ title: 'Battle — LOM' });
       </template>
     </section>
 
+    <p v-if="notice" class="notice" role="status">{{ notice }}</p>
+
     <div v-if="loading" class="skeleton battle__skeleton" />
 
     <template v-else-if="data">
+      <!-- The record. Battles first; everything else apart. -->
+      <section v-if="battles.played || otherRecords.length" class="record" aria-label="Your record">
+        <div class="record__main">
+          <p class="label">Battles</p>
+          <p class="record__wl tnum">
+            <b>{{ battles.wins }}</b>W <b>{{ battles.losses }}</b>L
+          </p>
+          <p v-if="battles.streak > 1" class="record__streak">{{ battles.streak }} {{ battles.streakWon ? 'wins' : 'losses' }} in a row</p>
+          <p v-else-if="!battles.played" class="record__streak faint">No queue games yet</p>
+        </div>
+        <ul v-if="otherRecords.length" class="record__rest">
+          <li v-for="r in otherRecords" :key="r.label"><span>{{ r.label }}</span> <b class="tnum">{{ r.wins }}–{{ r.losses }}</b></li>
+        </ul>
+      </section>
+
       <!-- Being put back into a live room beats everything else on this page. -->
       <section v-if="data.live?.length > 1" class="block">
         <h2 class="sect">You are in a room</h2>
@@ -182,7 +278,7 @@ useHead({ title: 'Battle — LOM' });
             <p class="row__t">
               vs {{ d.opponent }}
               <span class="row__s">
-                <template v-if="d.status === 'WATCHING'">Watching the match</template>
+                <template v-if="d.phase === 'WATCH'">Watching the match</template>
                 <template v-else>{{ d.side === 'BLUE' ? 'Blue' : 'Red' }} side · step {{ Math.min(d.turn + 1, 20) }} of 20</template>
               </span>
             </p>
@@ -196,7 +292,7 @@ useHead({ title: 'Battle — LOM' });
         <ul class="rows">
           <li v-for="d in data.incoming" :key="d.id" class="row">
             <span class="row__mark" aria-hidden="true">{{ (d.opponent || '?').slice(0, 2) }}</span>
-            <p class="row__t">{{ d.opponent }} challenged you<span class="row__s">A friendly: it does not count anywhere</span></p>
+            <p class="row__t">{{ d.opponent }} challenged you<span class="row__s">A friendly: it does not count anywhere · {{ ago(d.createdAt) }}, expires after a day</span></p>
             <span class="row__acts">
               <button
                 class="btn btn--quiet btn--sm" type="button"
@@ -225,25 +321,44 @@ useHead({ title: 'Battle — LOM' });
         </ul>
       </section>
 
+      <!-- People you have played, with the head-to-head, one tap from a rematch. -->
+      <section v-if="opponents.length" class="block">
+        <h2 class="sect">Recent opponents</h2>
+        <ul class="rows">
+          <li v-for="o in opponents" :key="o.id" class="row">
+            <span class="row__mark" aria-hidden="true">{{ (o.name || '?').slice(0, 2) }}</span>
+            <p class="row__t">
+              {{ o.name }}
+              <span class="row__s">Head to head <b class="tnum">{{ o.wins }}–{{ o.losses }}</b> · last {{ ago(o.lastPlayedAt) }}</span>
+            </p>
+            <button
+              class="btn btn--ghost btn--sm" type="button"
+              :disabled="challenging === o.id" @click="challenge(o.id, o.name)"
+            >{{ challenging === o.id ? 'Sending' : 'Challenge' }}</button>
+          </li>
+        </ul>
+      </section>
+
       <section v-if="data.finished.length" class="block">
-        <h2 class="sect played__head">
-          Played
-          <span v-if="record.wins + record.losses" class="played__rec tnum">
-            {{ record.wins }}W {{ record.losses }}L<template v-if="record.streak > 1"> · {{ record.streak }} {{ record.streakWon ? 'wins' : 'losses' }} in a row</template>
-          </span>
-        </h2>
+        <h2 class="sect">Played</h2>
         <ul class="rows">
           <li v-for="d in data.finished" :key="d.id" class="row">
             <span class="tag played__tag" :class="d.won ? 'tag--new' : d.won === false ? 'tag--red' : ''">{{ d.won ? 'Won' : d.won === false ? 'Lost' : 'Over' }}</span>
             <p class="row__t">
-              vs {{ d.opponent }}
+              vs {{ d.opponent }}<template v-if="d.isBot && d.difficulty"> ({{ difficultyLabel(d.difficulty) }})</template>
               <span class="row__s">
                 <template v-if="d.score"><b class="tnum">{{ d.score.mine }}–{{ d.score.theirs }}</b> · </template>
                 <template v-if="d.gameLength"><span class="tnum">{{ mmss(d.gameLength) }}</span> · </template>
-                {{ SOURCE_NAME[d.source] || 'Friendly' }}<template v-if="d.completedAt || d.createdAt"> · {{ ago(d.completedAt || d.createdAt) }}</template>
+                {{ SOURCE_NAME[d.source] || 'Friendly' }}<template v-if="d.h2h"> · H2H <span class="tnum">{{ d.h2h.wins }}–{{ d.h2h.losses }}</span></template><template v-if="d.completedAt || d.createdAt"> · {{ ago(d.completedAt || d.createdAt) }}</template>
               </span>
             </p>
-            <NuxtLink class="btn btn--quiet btn--sm" :to="`/duel/${d.id}`">Watch</NuxtLink>
+            <span class="row__acts">
+              <button
+                v-if="d.opponentId" class="btn btn--quiet btn--sm" type="button"
+                :disabled="challenging === d.opponentId" @click="challenge(d.opponentId, d.opponent)"
+              >Challenge</button>
+              <NuxtLink class="btn btn--quiet btn--sm" :to="`/duel/${d.id}`">Watch</NuxtLink>
+            </span>
           </li>
         </ul>
       </section>
@@ -261,8 +376,25 @@ useHead({ title: 'Battle — LOM' });
 
 <style scoped>
 .battle__skeleton { height: 160px; margin-top: 20px; }
-.played__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.played__rec { font-size: 12.5px; letter-spacing: 0.02em; text-transform: none; color: var(--ink-2); font-weight: 700; }
+
+/* Practice: under the one teal button, quieter than it. */
+.practice { display: grid; gap: 8px; width: min(100%, 360px); margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-1); }
+.practice__t { margin: 0; font-size: 13px; font-weight: 650; color: var(--ink-2); }
+.practice__t span { font-weight: 500; }
+.practice__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.practice__seg button { min-height: 44px; }
+.practice__go { min-height: 44px; }
+
+/* The record: Battles big, the rest small and apart. */
+.record { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 20px; margin-top: 20px; padding: 14px 16px; border: 1px solid var(--line-1); border-radius: var(--radius); background: var(--bg-1); }
+.record__main { display: grid; gap: 2px; }
+.record__main .label { margin: 0; }
+.record__wl { margin: 0; font-stretch: 75%; font-size: 34px; font-weight: 800; line-height: 1; color: var(--ink-2); }
+.record__wl b { color: var(--ink-1); }
+.record__streak { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-2); }
+.record__rest { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-3); }
+.record__rest b { color: var(--ink-2); }
+
 .played__tag { min-width: 52px; justify-content: center; }
 .row__s b { color: var(--ink-1); font-weight: 800; }
 

@@ -118,6 +118,8 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
 
     <slot />
 
+    <ClientOnly><DuelToast /></ClientOnly>
+
     <!-- A gift arrived. Said once, politely, wherever the manager happens to be. -->
     <Transition name="gift">
       <aside v-if="toast && !isFocus" class="gifttoast" role="status" aria-live="polite">
