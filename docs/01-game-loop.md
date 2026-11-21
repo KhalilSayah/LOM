@@ -187,13 +187,25 @@ When the grand final is decided:
    numbers are the last row of section 5.
 3. **Collections are kept in full.** Nothing is wiped. Card levels persist. Built by doing
    nothing, which is the point: no code anywhere touches a collection at a season boundary.
-4. A new season can be started by the league owner. New fixtures, standings cleared. **Not
-   built.** `leagues.season` exists and defaults to 1 — it is the column that will increment,
-   and it is already what the payout lock is keyed on, so season 2 of a league can pay. What
-   is missing is what happens to season 1's fixture rows, which collide with a new schedule on
-   `day_index` long before anything else.
-5. A **Season Pack** is granted to every manager: guaranteed Epic-or-better player card. **Not
-   built**, and it belongs with 4 rather than here.
+4. A new season can be started by the league owner. New fixtures, standings cleared.
+   **Built** — the owner gets a *Start season N* button on a finished league. "Standings
+   cleared" is read as *a different question*, not as a deletion: a fixture belongs to a
+   season (`league_fixtures.season`), so season 1's calendar, results, replays, standings and
+   payouts are all still there to read, and the table is empty because it is asking about
+   season 2. The catalogue is re-pinned, because a season played months later should be
+   played on the cards that exist by then ([03 section 9](03-data-pipeline.md)).
+5. A **Season Pack** is granted to every manager: guaranteed Epic-or-better player card.
+   **Built** — one card with an Epic floor, granted when the grand final is decided rather
+   than when the next season starts, so a league that never plays again still hands them out.
+   Flat for everyone who finished, not scaled by placing: the placings in section 5 already
+   pay by position, and a reward only the champion gets is a reward that makes a sixth-place
+   manager close the app. It is a pack type nobody can buy — `is_active = false`, which the
+   shop and the buy route filter on and the gift route does not.
+
+The honours board of point 1 is `league_seasons`: one row per season a league has finished,
+with its champion and how long it was. `leagues.champion_member_id` holds the champion of the
+*current* season only — null while one is being played, cleared when the next starts — so the
+board is what outlives it.
 
 The anti-runaway control is that daily packs are identical for everyone and the sim compresses
 rating differences ([04 section 9](04-simulation-engine.md)). If, after two seasons of

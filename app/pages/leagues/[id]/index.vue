@@ -285,6 +285,35 @@ const champion = computed(() => {
 /** What I was actually paid for the season, once the ledger has paid it. */
 const myHonour = computed(() => honours.value.find((h) => h.isMe) ?? null);
 
+/** Every season this league has finished, newest first. */
+const pastSeasons = computed<any[]>(() => data.value?.pastSeasons ?? []);
+
+/**
+ * Starting the next season (docs/01 section 7 point 4).
+ *
+ * Behind a confirmation, because it commits five other people to another fortnight of
+ * evenings on the evening the last one ended — and because the obvious fear on reading the
+ * button is that it wipes something, so the confirmation is where that gets answered.
+ */
+const confirmNextSeason = ref(false);
+const starting = ref(false);
+
+async function startNextSeason() {
+  if (starting.value) return;
+  starting.value = true;
+  error.value = '';
+  try {
+    const out = await $fetch<any>(`/api/league/${id.value}/season`, { method: 'POST' });
+    note.value = `Season ${out.season} starts ${out.startsOn} — ${out.matchDays} match days.`;
+    confirmNextSeason.value = false;
+    await load();
+  } catch (e: any) {
+    error.value = message(e, 'Could not start the next season.');
+  } finally {
+    starting.value = false;
+  }
+}
+
 /**
  * The owner's repair button. The bracket draws itself when the last regular fixture goes
  * FINAL; this is only here for the evening that call fails, so it is quiet and last.
@@ -328,8 +357,14 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
       <h1 class="name">{{ league.name }}</h1>
       <p class="muted sub">
         <template v-if="forming">Forming</template>
-        <template v-else-if="league.status === 'ACTIVE'">Season on since {{ league.startsOn }}</template>
-        <template v-else>Finished</template>
+        <template v-else-if="league.status === 'ACTIVE'">
+          <template v-if="league.season > 1">Season {{ league.season }} since</template>
+          <template v-else>Season on since</template>
+          {{ league.startsOn }}
+        </template>
+        <template v-else>
+          Season {{ league.season }} finished
+        </template>
         · {{ league.matchHour }} {{ league.timezone }}
       </p>
 
@@ -368,6 +403,34 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         <p class="faint hint season-over__hint">
           Collections are kept in full. Card levels persist.
         </p>
+
+        <!--
+          docs/01 section 7 point 4. Deliberately not called a reset: season
+          {{ league.season }} keeps its calendar, its results and its replays, and the next
+          one begins beside it.
+        -->
+        <template v-if="data.canStartNextSeason">
+          <button
+            v-if="!confirmNextSeason" class="btn btn--block season-over__next" type="button"
+            @click="confirmNextSeason = true"
+          >
+            Start season {{ data.nextSeason }}
+          </button>
+          <template v-else>
+            <p class="muted blurb season-over__ask">
+              A new calendar for everyone still in the league, starting tonight or tomorrow.
+              Season {{ league.season }} stays where it is — nothing is wiped.
+            </p>
+            <div class="season-over__acts">
+              <button class="btn" type="button" :disabled="starting" @click="startNextSeason">
+                {{ starting ? 'Working…' : `Yes, start season ${data.nextSeason}` }}
+              </button>
+              <button class="btn btn--ghost" type="button" @click="confirmNextSeason = false">
+                Not yet
+              </button>
+            </div>
+          </template>
+        </template>
       </section>
 
       <!-- Tonight. The only thing most people open this screen for. -->
@@ -674,6 +737,30 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         </ul>
       </section>
 
+      <!--
+        Past seasons. Only once there is more than this one to show, so a league in its
+        first season is not given an empty trophy cabinet to look at.
+      -->
+      <section v-if="pastSeasons.length > 1 || (pastSeasons.length && league.status !== 'FINISHED')" class="block">
+        <p class="eyebrow">Honours</p>
+        <ul class="list seasons">
+          <li
+            v-for="row in pastSeasons" :key="row.season"
+            class="season-row" :class="{ 'is-current': row.current }"
+          >
+            <span class="season-row__n tnum">Season {{ row.season }}</span>
+            <span class="season-row__who">
+              <template v-if="row.championTeamName">
+                {{ row.championTeamName }}
+                <span v-if="row.iWon" class="faint">· you</span>
+              </template>
+              <span v-else class="faint">No champion recorded</span>
+            </span>
+            <span class="faint season-row__when">{{ row.matchDays ? `${row.matchDays} match days` : '' }}</span>
+          </li>
+        </ul>
+      </section>
+
       <!-- Leaving. Last, quiet, and only while nothing depends on it. -->
       <section v-if="forming" class="block leave">
         <button
@@ -873,6 +960,26 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
 .tie__act { margin-top: 10px; }
 
 .draw { display: grid; justify-items: start; gap: 6px; }
+
+.season-over__next { margin-top: 18px; }
+.season-over__ask { margin-top: 16px; text-align: left; }
+.season-over__acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
+/* Honours: one line per season, the current one marked rather than coloured. */
+.seasons { border-top: 1px solid var(--line-1); }
+.season-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line-1);
+}
+.season-row.is-current { background: var(--bg-3); }
+.season-row__n { font-stretch: 112%; font-size: 11px; font-weight: 760; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+.season-row.is-current .season-row__n { color: var(--gold-1); }
+.season-row__who { font-size: 14.5px; font-weight: 620; min-width: 0; overflow-wrap: anywhere; }
+.season-row__when { font-size: 12px; }
 
 .leave { display: grid; justify-items: start; gap: 8px; margin-top: 28px; }
 .leave__acts { display: flex; gap: 8px; }

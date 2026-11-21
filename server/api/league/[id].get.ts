@@ -8,6 +8,7 @@ import { fixtureWindow } from '~~/shared/league';
 import { standings } from '~~/shared/standings';
 import { loadBracket, isPlayoffStage } from '~~/server/utils/leaguePlayoffs';
 import { seasonPayouts } from '~~/server/utils/seasonRewards';
+import { honoursOf } from '~~/server/utils/leagueSeason';
 import { seasonPlacingCredits } from '~~/shared/rewards';
 import { ROLES } from '~~/shared/roster';
 
@@ -44,6 +45,10 @@ export default defineEventHandler(async (event) => {
         .select(`id, day_index, stage, bracket_key, blue_member_id, red_member_id, scheduled_at,
                  status, duel_id, winner_member_id, winner_side, game_length, blue_kills, red_kills`)
         .eq('league_id', league.id)
+        // This season's calendar. Earlier seasons are still there — nothing is deleted
+        // at a reset (migration 0014) — but the table, the bracket and "tonight" are all
+        // questions about the season being played.
+        .eq('season', league.season ?? 1)
         .order('day_index', { ascending: true }),
       /**
        * Friendlies in flight with the people in this league, so the button on each
@@ -299,6 +304,17 @@ export default defineEventHandler(async (event) => {
     ? await seasonPayouts(db, league.id, league.season ?? 1)
     : new Map();
 
+  /**
+   * Every season this league has finished, most recent first (migration 0014).
+   *
+   * Read always, not only once the current season is over: a league on season 2 should be
+   * able to see who won season 1 on an ordinary Tuesday, which is the whole reason the
+   * record outlives `leagues.champion_member_id`.
+   */
+  const pastSeasons = (league.season ?? 1) > 1 || league.status === 'FINISHED'
+    ? await honoursOf(db, league.id)
+    : [];
+
   const playoffs = bracket
     ? {
         /** Member ids, best seed first. Seed n is `seeds[n - 1]`. */
@@ -379,6 +395,22 @@ export default defineEventHandler(async (event) => {
     last: minePlayed[0] ?? null,
     playoffs,
     honours,
+    /**
+     * The honours board. One entry per finished season, newest first — including the one
+     * that has just finished, so a FINISHED league shows its own trophy here too.
+     */
+    pastSeasons: pastSeasons.map((row) => ({
+      season: row.season,
+      startsOn: row.starts_on,
+      finishedAt: row.finished_at,
+      days: row.days,
+      matchDays: row.match_days,
+      championMemberId: row.champion_member_id,
+      championTeamName: row.champion_member_id ? name(row.champion_member_id) : null,
+      iWon: Boolean(row.champion_member_id) && row.champion_member_id === me.id,
+      /** True for the season currently on this screen. */
+      current: row.season === (league.season ?? 1),
+    })),
     /** What the champion's 1500 is, so the screen never hard-codes a number. */
     championCredits: seasonPlacingCredits(1),
     canLaunch: league.owner_id === profileId
@@ -398,6 +430,14 @@ export default defineEventHandler(async (event) => {
      * state against itself — `playoffs.matches[].blue` is what the bracket says should be
      * there, so comparing it to itself would hide exactly the failure this button repairs.
      */
+    /**
+     * Whether the owner can start another season (docs/01 section 7 point 4). A finished
+     * league with enough managers still in it; the route re-checks both.
+     */
+    canStartNextSeason: league.owner_id === profileId
+      && league.status === 'FINISHED'
+      && members.length >= 2,
+    nextSeason: (league.season ?? 1) + 1,
     canDrawPlayoffs: league.owner_id === profileId
       && league.status === 'ACTIVE'
       && !preview

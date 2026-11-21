@@ -35,7 +35,8 @@ npm run dev              # http://localhost:3000
    sponsor book — without them matches pay nothing and the Sponsors tab loads nothing.
    `0013_playoffs.sql` gives a season an end: the two playoff stages, a champion on the
    league, and the ledger the placings are paid through. Without it the last regular fixture
-   of a season is the last thing that happens.
+   of a season is the last thing that happens. `0014_season_reset.sql` lets a league be
+   played again — a season column on the fixtures, the honours board, and the Season pack.
 3. **Authentication → Providers → Email**: on, and turn **Confirm email off**. Signing up
    then signs you straight in. The built-in SMTP is capped at a few messages an hour, so a
    confirmation step on a friends-only league buys nothing and gives `email rate limit
@@ -158,6 +159,13 @@ final is paid as the runner-up — which is what it is. One `season_rewards` row
 per season, claimed before a single Credit moves, so a season that settles twice pays once.
 Collections are kept in full; nothing is wiped and card levels persist.
 
+And then the owner gets a **Start season 2** button. Nothing is reset by it, whatever the
+word suggests: a fixture belongs to a season, so season 1 keeps its calendar, its results,
+its replays, its standings and its payouts, and season 2 begins beside it. The table looks
+empty because it is asking a different question. Past champions go on an honours board that
+outlives any one season, and everybody who saw a season out is handed a **Season pack** — one
+card, Epic at worst — when the final is decided, whether or not anyone starts another.
+
 Two things are deliberately not there yet. **No forfeits** — a fixture nobody opens stays
 scheduled, and its button keeps working tomorrow, because a league of friends misses evenings
 and a missed evening is a worse game than a forfeit nobody chose; real absence handling is
@@ -166,10 +174,6 @@ and a missed evening is a worse game than a forfeit nobody chose; real absence h
 manager brings the one collection they have — noted in
 `supabase/migrations/0009_leagues.sql`, which is also where the schema for the per-league
 version is already laid out.
-
-Starting a *second* season in the same league is also unbuilt. `leagues.season` exists, and
-the payout lock is already keyed on it so season 2 can pay; what is missing is what happens
-to season 1's fixtures ([docs/01 section 7](docs/01-game-loop.md)).
 
 ### How a match pays
 

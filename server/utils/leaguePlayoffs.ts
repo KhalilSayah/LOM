@@ -31,6 +31,7 @@ import {
 import { LEAGUE_SELECT, matchHourParts, membersOf, type LeagueRow, type MemberRow } from './league';
 import { addDays, zonedToUtc } from './packDay';
 import { settleSeason } from './seasonRewards';
+import { recordSeasonEnd } from './leagueSeason';
 
 /**
  * Where the playoff days land, counted from the last day of the regular season.
@@ -153,7 +154,13 @@ export async function ensurePlayoffs(
 
   const members = await membersOf(db, leagueId);
   const { data } = await db
-    .from('league_fixtures').select(FIXTURE_SELECT).eq('league_id', leagueId);
+    .from('league_fixtures')
+    .select(FIXTURE_SELECT)
+    .eq('league_id', leagueId)
+    // This season only. A league on its second season has its first one's fixtures
+    // sitting in the same table, all FINAL, and seeding a bracket off them would read
+    // last season's table (migration 0014).
+    .eq('season', league.season ?? 1);
 
   const fixtures = (data || []) as any[];
 
@@ -232,6 +239,7 @@ export async function ensurePlayoffs(
 
     rows.push({
       league_id: leagueId,
+      season: league.season ?? 1,
       day_index: dayIndex,
       stage: m.stage,
       bracket_key: m.key,
@@ -245,6 +253,7 @@ export async function ensurePlayoffs(
   if (hasSemis && restDay > semiDay) {
     rows.push({
       league_id: leagueId,
+      season: league.season ?? 1,
       day_index: restDay,
       stage: 'REST',
       blue_member_id: null,
@@ -331,7 +340,13 @@ export async function advancePlayoffs(
 
   const members = await membersOf(db, leagueId);
   const { data } = await db
-    .from('league_fixtures').select(FIXTURE_SELECT).eq('league_id', leagueId);
+    .from('league_fixtures')
+    .select(FIXTURE_SELECT)
+    .eq('league_id', leagueId)
+    // This season only. A league on its second season has its first one's fixtures
+    // sitting in the same table, all FINAL, and seeding a bracket off them would read
+    // last season's table (migration 0014).
+    .eq('season', league.season ?? 1);
 
   const fixtures = (data || []) as any[];
   const loaded = loadBracket(leagueId, members, fixtures);
@@ -392,6 +407,15 @@ export async function advancePlayoffs(
     .eq('status', 'ACTIVE');
 
   await settleSeason(db, league, members, seasonPlacings(bracket, state));
+
+  /**
+   * The honours entry and everybody's Season Pack (docs/01 section 7 points 1 and 5).
+   *
+   * After the payout rather than before it, on the same reasoning the payout uses for
+   * coming after the status flip: the money is the part a manager will notice missing, so
+   * it goes first and the trophy cabinet follows. Both are idempotent, and neither throws.
+   */
+  await recordSeasonEnd(db, league, members, state.championMemberId, fixtures);
 
   return { finished: true, championMemberId: state.championMemberId };
 }

@@ -97,7 +97,12 @@ export default defineEventHandler(async (event) => {
   const { error } = await db.from('league_fixtures').insert(fixtures);
 
   if (error) {
-    await db.from('league_fixtures').delete().eq('league_id', league.id);
+    // Scoped to the season being launched. A launch only ever happens out of FORMING, so
+    // there is nothing else there today — but an unscoped delete in a compensation path is
+    // the kind of line that becomes a data loss the first time the surrounding code grows
+    // a second season (migration 0014).
+    await db.from('league_fixtures')
+      .delete().eq('league_id', league.id).eq('season', league.season ?? 1);
     await db.from('leagues')
       .update({ status: 'FORMING', starts_on: null, started_at: null })
       .eq('id', league.id);

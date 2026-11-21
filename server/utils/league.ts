@@ -19,7 +19,7 @@ import { localNow, addDays, zonedToUtc } from './packDay';
 
 export const LEAGUE_SELECT = `
   id, name, owner_id, invite_code, timezone, match_hour, season_length_days,
-  status, starts_on, created_at, started_at, catalogue_version_id,
+  status, starts_on, created_at, started_at, finished_at, catalogue_version_id,
   season, champion_member_id
 `;
 
@@ -35,6 +35,7 @@ export interface LeagueRow {
   starts_on: string | null;
   created_at: string;
   started_at: string | null;
+  finished_at: string | null;
   catalogue_version_id: string | null;
   /** Which season of this league is being played. 1 until a reset exists (docs/01 section 7). */
   season: number;
@@ -144,6 +145,8 @@ export function firstMatchDate(league: LeagueRow, now = new Date()): string {
 
 export interface FixtureInsert {
   league_id: string;
+  /** Which season of the league these fixtures are for (migration 0014). */
+  season: number;
   day_index: number;
   stage: 'REGULAR' | 'GHOST' | 'REST';
   blue_member_id: string | null;
@@ -157,6 +160,11 @@ export interface FixtureInsert {
  * Pure apart from `now`, so the lobby can show the owner the calendar they are about
  * to commit six people to before they press the button, and get exactly the rows the
  * launch will write.
+ *
+ * Every row carries `league.season`, so starting a second season writes a second
+ * calendar beside the first rather than colliding with it on day 1 (migration 0014).
+ * Pass a league with the season you are generating *for* — `startNextSeason` hands in
+ * the incremented one, because the rows have to exist before the column does.
  */
 export function buildFixtures(
   league: LeagueRow,
@@ -165,6 +173,7 @@ export function buildFixtures(
 ): FixtureInsert[] {
   const days = seasonSchedule(members.map((m) => m.id), league.season_length_days);
   const startsOn = firstMatchDate(league, now);
+  const season = league.season ?? 1;
   const { hour, minute } = matchHourParts(league.match_hour);
 
   const rows: FixtureInsert[] = [];
@@ -177,6 +186,7 @@ export function buildFixtures(
     if (day.rest) {
       rows.push({
         league_id: league.id,
+        season,
         day_index: day.dayIndex,
         stage: 'REST',
         blue_member_id: null,
@@ -190,6 +200,7 @@ export function buildFixtures(
     for (const pairing of day.pairings) {
       rows.push({
         league_id: league.id,
+        season,
         day_index: day.dayIndex,
         stage: pairing.red ? 'REGULAR' : 'GHOST',
         blue_member_id: pairing.blue,
