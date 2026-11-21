@@ -337,8 +337,7 @@ useHead({ title: 'Home — LOM' });
 
     <div class="home__grid">
       <div class="home__main">
-        <!-- first-run checklist slot: keep it directly above the daily pack hero -->
-
+        <FirstRunChecklist />
         <div v-if="loading" class="skeleton home__skeleton" />
 
         <!-- no cards loaded yet -->

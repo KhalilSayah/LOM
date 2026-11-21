@@ -723,3 +723,52 @@ input[type='search']::-webkit-search-cancel-button { filter: grayscale(1) bright
   .skeleton { animation: none; }
   .btn, .card-grid__item { transition: none; }
 }
+
+/* ===========================================================================
+   Accounts, shell and polish (first-run / accounts area)
+   Appended rather than edited in place so the merge with other areas stays clean.
+   =========================================================================== */
+
+/* The page gradient sat on body with background-attachment: fixed, which makes mobile
+   browsers repaint the whole page on every scroll frame. A fixed layer behind everything
+   is composited once instead. */
+body { background: var(--bg-1); overscroll-behavior-y: auto; }
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(180deg, #0a0f1a 0, var(--bg-1) 420px, var(--bg-0) 100%);
+}
+/* Pull-to-refresh is back everywhere except the full-screen moments (draft, live match,
+   reveal), where a stray downward swipe must not reload the room. */
+html:has(.shell.is-focus), body:has(.shell.is-focus) { overscroll-behavior-y: none; }
+
+/* Placeholders readable against the field (ink-4 was about 2.6:1). */
+.field input::placeholder, .input::placeholder { color: var(--ink-3); }
+
+/* A focus ring a keyboard user can actually see: the border turns teal on any focus, and
+   keyboard focus adds a ring outside it. */
+.field input:focus-visible, .input:focus-visible {
+  outline: 2px solid var(--teal-2);
+  outline-offset: 2px;
+}
+.field input[aria-invalid='true'] { border-color: rgba(240, 80, 95, 0.6); }
+
+/* Touch targets: the visual pill and avatar keep their size; their hit areas reach 44px. */
+.appbar .credits, .appbar .avatar { position: relative; }
+.appbar .credits::after { content: ''; position: absolute; inset: -5px -2px; }
+.appbar .avatar::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; }
+
+/* The "Reduce motion" switch in Settings (see the head script in nuxt.config.ts). */
+html[data-motion='reduce'] *,
+html[data-motion='reduce'] *::before,
+html[data-motion='reduce'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0ms !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
