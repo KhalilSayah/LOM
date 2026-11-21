@@ -12,7 +12,7 @@
  * two people watching the same match is exactly the thing a movable clock breaks.
  *
  * Default speed is 60×, per docs/09: the whole game in about half a minute with the ticker
- * still readable. Skip to result is always visible, because forcing somebody to watch is how
+ * still readable, easing down to 8× for a few seconds around each big moment. Skip to result is always visible, because forcing somebody to watch is how
  * you teach them to skip forever.
  */
 
@@ -25,12 +25,22 @@ const transport = ref<any>(null);
 const result = computed(() => data.value?.result ?? null);
 const length = computed(() => matchEnd(result.value));
 
+/**
+ * The result, once it has been seen, stays. Showing it only while the clock sat at the end
+ * meant that jumping to a key moment from the result list hid the list you had just used.
+ */
+const resultShown = ref(false);
+watch([clock, length], ([t, end]) => {
+  if (end && t >= end) resultShown.value = true;
+});
+
 async function load(seed?: string) {
   loading.value = true;
   transport.value?.pause();
   try {
     data.value = await $fetch<any>('/api/sim/run', { query: seed ? { seed } : {} });
     clock.value = 0;
+    resultShown.value = false;
     error.value = '';
   } catch (e: any) {
     error.value = e?.statusMessage || e?.data?.statusMessage || 'Could not run a match.';
@@ -41,6 +51,7 @@ async function load(seed?: string) {
 
 /** A key moment in the result was picked: go there and play from it. */
 function seek(t: number) {
+  resultShown.value = true;
   clock.value = t;
   nextTick(() => transport.value?.play());
 }
@@ -81,7 +92,7 @@ useHead({ title: 'Replay — LOM' });
         :clock="clock"
         :blue-name="data.blueName"
         :red-name="data.redName"
-        :show-result="clock >= length"
+        :show-result="resultShown || clock >= length"
         seekable
         @seek="seek"
       >
