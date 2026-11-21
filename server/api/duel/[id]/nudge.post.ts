@@ -49,6 +49,9 @@ export default defineEventHandler(async (event) => {
     turn: duel.turn,
     status: duel.status,
     deadlineAt: duel.deadline_at,
+    // A staked bonus pool changes the clock without changing the turn; the screen needs it
+    // to keep showing "bonus time" rather than a deadline that seems to have moved by itself.
+    bonus: duel.bonus,
     botActsAt: botActsAt(duel, duel.turn),
     watchStartAt: duel.watch_start_at ?? null,
     locked: actions.length,

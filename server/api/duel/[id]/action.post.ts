@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
   const profileId = await ensureProfile(db, manager);
 
   const id = getRouterParam(event, 'id');
-  const body = await readBody<{ championKey?: string; championName?: string; slot?: string | null }>(event);
+  const body = await readBody<{ championKey?: string; championName?: string; slot?: string | null; turn?: number }>(event);
 
   const { data: duel } = await db.from('duels').select('*').eq('id', id).maybeSingle();
   if (!duel) throw createError({ statusCode: 404, statusMessage: 'No such duel.' });
@@ -45,6 +45,26 @@ export default defineEventHandler(async (event) => {
 
   const step = stepAt(duel.turn);
   if (!step) throw createError({ statusCode: 409, statusMessage: 'This draft is over.' });
+
+  /**
+   * Which step this action was meant for.
+   *
+   * Without it the server judged an action against whatever step the draft had reached by
+   * the time the request landed. A ban sent in the last second of step 4 that arrived after
+   * the clock had locked step 4 and opened step 5 — also this side's, also a ban — was
+   * quietly spent on step 5: the player lost their next ban to a click aimed at the last one.
+   * The client says which step it was looking at, and a stale one is refused by name.
+   */
+  if (typeof body?.turn === 'number' && body.turn !== duel.turn) {
+    const missed = stepAt(body.turn);
+    throw createError({
+      statusCode: 409,
+      statusMessage: body.turn < duel.turn
+        ? `Too late: the clock locked that ${missed?.kind === 'PICK' ? 'pick' : 'ban'} before yours arrived.`
+        : 'Your screen was ahead of the draft. Showing where it is now.',
+      data: { stale: true, turn: duel.turn },
+    });
+  }
 
   const pool = await draftPool(db, duel.catalogue_version_id);
   const championKey = String(body?.championKey ?? '').trim();
@@ -75,7 +95,11 @@ export default defineEventHandler(async (event) => {
     // The unique indexes caught a race the read could not: the agent or another tab got
     // there first. Reload and show them where the draft actually is.
     if (e?.code === '23505') {
-      throw createError({ statusCode: 409, statusMessage: 'That action was already taken. Reloading.' });
+      throw createError({
+        statusCode: 409,
+        statusMessage: 'The clock locked that step a moment before you did. Showing where the draft is now.',
+        data: { stale: true },
+      });
     }
     throw createError({ statusCode: 500, statusMessage: e?.message || 'Could not lock that action.' });
   }

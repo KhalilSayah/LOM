@@ -1,7 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ACTION_SECONDS, BONUS_SECONDS } from '~~/shared/draft';
-import { LOBBY_SECONDS, WATCH_SPEED, phaseOf } from '~~/shared/duelRoom';
-import { snapshotLineup, lineupComplete, type Lineup } from './duel';
+import {
+  LOBBY_SECONDS, WATCH_SPEED, phaseOf, timingOfRow, type Difficulty,
+} from '~~/shared/duelRoom';
+import { snapshotLineup, lineupComplete, newDuelSeed, type Lineup } from './duel';
 import { botLineup } from './duelBot';
 
 /**
@@ -66,27 +68,63 @@ export async function entryFor(db: SupabaseClient, profileId: string): Promise<E
  * leave whenever you like.
  */
 export async function liveDuelFor(db: SupabaseClient, profileId: string): Promise<string | null> {
+  const rooms = await liveDuelsFor(db, profileId);
+  return rooms[0]?.id ?? null;
+}
+
+/**
+ * Every room this manager is still needed in, oldest first.
+ *
+ * Normally zero or one. More than one is a race — a challenge accepted at the instant the
+ * queue paired, a double-pressed practice button — and the oldest is the one that stands,
+ * because it is the one the other person has had longest to arrive in.
+ *
+ * The match's end is matchEnd(result), not `result.gameLength`: the last events land up to a
+ * minute of match time after it, and a room that stopped counting as live before its nexus
+ * fell let somebody start a second game while their first was still on screen.
+ */
+export async function liveDuelsFor(
+  db: SupabaseClient,
+  profileId: string,
+): Promise<Array<{ id: string; created_at: string; source: string | null; bot_side: string | null }>> {
   const { data } = await db
     .from('duels')
-    .select('id, status, starts_at, watch_start_at, watch_speed, result, updated_at')
+    .select('id, status, source, bot_side, starts_at, watch_start_at, watch_speed, result, created_at')
     .in('status', ['DRAFTING', 'WATCHING'])
     .or(`challenger_id.eq.${profileId},opponent_id.eq.${profileId}`)
-    .order('updated_at', { ascending: false })
-    .limit(4);
+    .order('created_at', { ascending: true })
+    .limit(6);
 
   const now = Date.now();
-  for (const duel of data || []) {
-    const phase = phaseOf({
-      status: duel.status,
-      startsAt: duel.starts_at ?? null,
-      watchStartAt: duel.watch_start_at ?? null,
-      watchSpeed: duel.watch_speed ?? WATCH_SPEED,
-      gameLength: (duel.result as any)?.gameLength ?? null,
-    }, now);
+  return (data || []).filter((duel: any) => {
+    const phase = phaseOf(timingOfRow(duel), now);
+    return phase === 'LOBBY' || phase === 'DRAFT' || phase === 'WATCH';
+  }) as any;
+}
 
-    if (phase === 'LOBBY' || phase === 'DRAFT' || phase === 'WATCH') return duel.id;
+/** Refuse, with a sentence a person can act on, if either manager is already in a room. */
+export async function assertNotInRoom(
+  db: SupabaseClient,
+  profileId: string,
+  otherId: string | null,
+): Promise<void> {
+  const [mine, theirs] = await Promise.all([
+    liveDuelFor(db, profileId),
+    otherId ? liveDuelFor(db, otherId) : Promise.resolve(null),
+  ]);
+  if (mine) {
+    throw createError({
+      statusCode: 409,
+      statusMessage: 'You are already in a match. Finish it before starting another.',
+      data: { duelId: mine },
+    });
   }
-  return null;
+  if (theirs) {
+    throw createError({
+      statusCode: 409,
+      statusMessage: 'They are in a match right now. Try again when it is over.',
+    });
+  }
 }
 
 /**
@@ -133,24 +171,36 @@ export async function clearSettledEntry(db: SupabaseClient, profileId: string): 
  * client that was mid-reconnect.
  */
 export async function sweepQueue(db: SupabaseClient) {
-  const stale = new Date(Date.now() - 90 * 1000).toISOString();
+  const stale = new Date(Date.now() - QUEUE_STALE_SECONDS * 1000).toISOString();
   const settled = new Date(Date.now() - 120 * 1000).toISOString();
 
+  /**
+   * Staleness is `last_seen_at`, not `joined_at` (migration 0015).
+   *
+   * The heartbeat used to refresh nothing the sweep read: duel_matchmake leaves joined_at
+   * alone on purpose, so queue order is first-come — and the sweep measured age from that
+   * same column. Ninety seconds into any search the searcher was deleted as a ghost while
+   * still sitting there, and lost their place. joined_at keeps the order; last_seen_at says
+   * whether anybody is still behind the row.
+   */
   await Promise.all([
-    db.from('duel_queue').delete().is('duel_id', null).lt('joined_at', stale),
+    db.from('duel_queue').delete().is('duel_id', null).lt('last_seen_at', stale),
     db.from('duel_queue').delete().not('matched_at', 'is', null).lt('matched_at', settled),
   ]);
 }
 
+/** How long a searching row survives without a heartbeat. The client beats every 15 s. */
+export const QUEUE_STALE_SECONDS = 90;
+
 /** How many other managers are searching right now. */
 export async function waitingCount(db: SupabaseClient, exclude: string): Promise<number> {
-  const since = new Date(Date.now() - 90 * 1000).toISOString();
+  const since = new Date(Date.now() - QUEUE_STALE_SECONDS * 1000).toISOString();
   const { count } = await db
     .from('duel_queue')
     .select('profile_id', { count: 'exact', head: true })
     .is('duel_id', null)
     .neq('profile_id', exclude)
-    .gte('joined_at', since);
+    .gte('last_seen_at', since);
   return count ?? 0;
 }
 
@@ -212,16 +262,18 @@ export async function createBotDuel(
   db: SupabaseClient,
   profileId: string,
   entry: Entry,
+  /** Practice difficulty. Null for the agent the queue offers, which always plays NORMAL. */
+  difficulty: Difficulty | null = null,
 ): Promise<string> {
-  const seed = `duel-${crypto.randomUUID()}`;
-  const theirs = await botLineup(db, entry.catalogueVersionId, entry.lineup, seed);
+  const seed = newDuelSeed();
+  const theirs = await botLineup(db, entry.catalogueVersionId, entry.lineup, seed, difficulty ?? undefined);
 
   // Drawn, not awarded, exactly as a queue match draws them. The agent gets no edge from
   // last pick and the player gets none from first.
   const playerIsBlue = Math.random() < 0.5;
   const startsAt = new Date(Date.now() + LOBBY_SECONDS * 1000);
 
-  const { data, error } = await db.from('duels').insert({
+  const row: Record<string, any> = {
     challenger_id: profileId,
     opponent_id: null,
     status: 'DRAFTING',
@@ -239,10 +291,39 @@ export async function createBotDuel(
     deadline_at: new Date(startsAt.getTime() + ACTION_SECONDS * 1000).toISOString(),
     watch_speed: WATCH_SPEED,
     accepted_at: new Date().toISOString(),
-  }).select('id').single();
+  };
+  // Only written when chosen, so a database without migration 0015 still makes bot duels.
+  if (difficulty) row.difficulty = difficulty;
 
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message });
+  const { data, error } = await db.from('duels').insert(row).select('id').single();
+
+  if (error) {
+    /**
+     * 23505 is duels_one_bot_draft_per_player (migration 0015): this manager already has a
+     * practice draft open — a double press, or two tabs. The room that won is the answer.
+     */
+    if (error.code === '23505') {
+      const existing = await liveDuelFor(db, profileId);
+      if (existing) return existing;
+    }
+    throw createError({ statusCode: 500, statusMessage: error.message });
+  }
 
   await db.from('duel_queue').delete().eq('profile_id', profileId);
+
+  /**
+   * Check after, not only before.
+   *
+   * bot.post.ts looks for a live room first, but between that read and this insert a queue
+   * pairing or an accepted challenge can open one — and then this manager is in two rooms,
+   * one of which drafts itself while they play the other. The index above stops two practice
+   * drafts; this stops the mixed case. Whichever room is older stands, and a bot room has
+   * nobody else in it, so deleting the newer one costs nobody anything.
+   */
+  const rooms = await liveDuelsFor(db, profileId);
+  if (rooms.length > 1 && rooms[0]!.id !== data.id) {
+    await db.from('duels').delete().eq('id', data.id).eq('status', 'DRAFTING').eq('turn', 0);
+    return rooms[0]!.id;
+  }
   return data.id;
 }

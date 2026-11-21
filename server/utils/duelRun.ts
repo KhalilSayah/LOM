@@ -1,20 +1,20 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  DRAFT_LENGTH, SLOTS, ACTION_SECONDS, stepAt,
+  DRAFT_LENGTH, SLOTS, ACTION_SECONDS, stepAt, illegalBecause,
   type LockedAction, type Side, type Slot,
 } from '~~/shared/draft';
 import { chemistryFor } from '~~/shared/roster';
 import {
-  WATCH_LEAD_SECONDS, botThinkSeconds, watchSettled, type RoomTiming,
+  WATCH_LEAD_SECONDS, botThinkSeconds, watchSettled, timingOfRow, type RoomTiming,
 } from '~~/shared/duelRoom';
 import { championRoles, roleForFit } from './championRoles';
 import {
-  snapshotLineup, ratingFor, autoPick, autoBan, deadlineFor, expiredBy,
-  type Champion, type DuelCard, type Lineup,
+  ratingFor, autoPick, autoBan, deadlineFor, expiredBy, agentProfile, slotFor,
+  AGENT_PROFILES,
+  type Champion, type Lineup,
 } from './duel';
 import { recordFixtureResult } from './leagueFixture';
 import { payMatchRewards } from './rewards';
-import { effRating } from '~~/packages/core/src/index.js';
 import { simulate } from '~~/packages/sim/src/index.js';
 
 /**
@@ -123,8 +123,10 @@ async function lock(
    * bumped every time for the same reason: it guarantees the row changes even when nothing
    * else in it did, so the push always fires.
    *
-   * `hover` is not cleared here any more, because it is not written any more: a hover is a
-   * broadcast between the two clients and never touches the database (migration 0007).
+   * `hover` is not cleared here. What the opponent sees is a broadcast between the two
+   * clients (migration 0007); the column now only holds the player's own selection so the
+   * clock can honour it (/api/duel/[id]/hover), and every reader checks its `turn`, so a
+   * stale one is ignored rather than needing to be wiped.
    */
   const { error: advanceError } = await db.from('duels').update({
     turn: nextTurn,
@@ -169,14 +171,32 @@ async function lock(
   duel.deadline_at = nextDeadline;
 }
 
-/** The duel row as shared/duelRoom.ts wants to read it. */
-export const timingOf = (duel: any): RoomTiming => ({
-  status: duel.status,
-  startsAt: duel.starts_at ?? null,
-  watchStartAt: duel.watch_start_at ?? null,
-  watchSpeed: duel.watch_speed ?? 60,
-  gameLength: duel.result?.gameLength ?? null,
-});
+/**
+ * The duel row as shared/duelRoom.ts wants to read it.
+ *
+ * The match length in it is matchEnd(result) — the last event, not `gameLength` — so the
+ * room is not settled, and nobody is told the match is over, before the nexus has fallen.
+ */
+export const timingOf = (duel: any): RoomTiming => timingOfRow(duel);
+
+/**
+ * Close a room whose shared watch has run out, if it has.
+ *
+ * catchUp does this for a room somebody is in. A room both players walked away from during
+ * the watch is never caught up, so it sat WATCHING for hours — offering "Rejoin" on the
+ * Battle screen and missing from history. Anything that lists duels calls this on the
+ * WATCHING ones it finds, which settles them the moment anyone looks.
+ */
+export async function settleIfWatched(db: SupabaseClient, duel: any): Promise<boolean> {
+  if (duel.status !== 'WATCHING' || !watchSettled(timingOf(duel), Date.now())) return false;
+  await db.from('duels').update({
+    status: 'COMPLETE',
+    completed_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', duel.id).eq('status', 'WATCHING');
+  duel.status = 'COMPLETE';
+  return true;
+}
 
 /**
  * When the agent will move, on a side it is playing on purpose.
@@ -219,14 +239,7 @@ export async function catchUp(
    * player who lies leaves one that finished before it was watched.
    */
   if (duel.status === 'WATCHING') {
-    if (watchSettled(timingOf(duel), Date.now())) {
-      await db.from('duels').update({
-        status: 'COMPLETE',
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq('id', duel.id).eq('status', 'WATCHING');
-      duel.status = 'COMPLETE';
-    }
+    await settleIfWatched(db, duel);
     return actions;
   }
 
@@ -340,9 +353,24 @@ export async function catchUp(
 
     const { roles, pool } = await inputs();
 
-    const chosen = step.kind === 'PICK'
-      ? autoPick(mine, theirs, actions, step.side, pool, roles, rand)
-      : { ...autoBan(theirs, actions, step.side === 'BLUE' ? 'RED' : 'BLUE', pool, roles, rand), slot: null };
+    /**
+     * The player's own choice, if they had one in hand when the clock ran out.
+     *
+     * Somebody who tapped Ahri, was about to lock her and watched the timer beat them used
+     * to get whatever the agent fancied instead — usually something else entirely, which
+     * reads as the game overruling them. Their selection is on the row (`hover`, written by
+     * /api/duel/[id]/hover for exactly this), so if it is for this step and still legal it
+     * is what locks. Only for a person's side: the agent playing on purpose has no hand.
+     */
+    const held = botMoment === null ? heldChoice(duel, step, actions, pool, roles) : null;
+
+    // The agent playing a side on purpose plays at the duel's difficulty; standing in for a
+    // person who walked away, it always plays NORMAL — it is covering for them, not testing them.
+    const profile = botMoment !== null ? agentProfile(duel.difficulty) : AGENT_PROFILES.NORMAL;
+
+    const chosen = held ?? (step.kind === 'PICK'
+      ? autoPick(mine, theirs, actions, step.side, pool, roles, rand, profile)
+      : { ...autoBan(theirs, actions, step.side === 'BLUE' ? 'RED' : 'BLUE', pool, roles, rand, profile), slot: null });
 
     /**
      * Losing this race is normal, not an error.
@@ -368,7 +396,8 @@ export async function catchUp(
         championKey: chosen.championKey,
         championName: chosen.championName,
         slot: (chosen as any).slot ?? null,
-        auto: true,
+        // A held choice is the player's pick, locked by the clock rather than chosen by the agent.
+        auto: !held,
       }, bonus);
     } catch (e: any) {
       if (e?.code !== '23505') throw e;
@@ -386,6 +415,43 @@ export async function catchUp(
     await finish(db, duel, actions);
   }
   return actions;
+}
+
+/**
+ * What the player on the clock had selected, if it is for this step and still legal.
+ *
+ * A pick with no slot chosen goes to the open slot whose card rates highest on it (slotFor),
+ * not to the first open one.
+ */
+function heldChoice(
+  duel: any,
+  step: { idx: number; side: Side; kind: 'BAN' | 'PICK' },
+  actions: LockedAction[],
+  pool: Champion[],
+  roles: Map<string, any>,
+): { championKey: string; championName: string; slot: Slot | null } | null {
+  const h = duel.hover;
+  if (!h || h.turn !== step.idx || h.side !== step.side || h.kind !== step.kind || !h.championKey) return null;
+  const champion = pool.find((c) => c.key === h.championKey);
+  if (!champion) return null;
+
+  const legal = (slot: Slot | null) => !illegalBecause({
+    turn: step.idx,
+    actions,
+    side: step.side,
+    kind: step.kind,
+    championKey: champion.key,
+    slot,
+    pool: new Set([champion.key]),
+  });
+
+  if (step.kind === 'BAN') return legal(null) ? { championKey: champion.key, championName: champion.name, slot: null } : null;
+
+  const lineup = (step.side === 'BLUE' ? duel.blue_lineup : duel.red_lineup) as Lineup;
+  let slot: Slot | null = (SLOTS as string[]).includes(h.slot) ? (h.slot as Slot) : null;
+  if (!slot || !legal(slot)) slot = slotFor(lineup, actions, step.side, champion.key, roles);
+  if (!slot || !legal(slot)) return null;
+  return { championKey: champion.key, championName: champion.name, slot };
 }
 
 /** Lock a human action, after the caller has checked it is legal. */
@@ -440,6 +506,14 @@ async function finish(db: SupabaseClient, duel: any, actions: LockedAction[]) {
     );
 
     return {
+      /**
+       * TODO(integrator): roster strategy preset. The sim already reads `team.strategy`
+       * (packages/sim/src/state.js, default 'STANDARD'). When the roster screen stores a
+       * preset, snapshot it with the lineup where lineups are frozen (snapshotLineup in
+       * server/utils/duel.ts, called at accept / pairing / bot creation) and pass it here as
+       * `strategy: lineup.strategy` — read from the frozen lineup, never from the live
+       * roster, so a change made mid-draft cannot reach the match.
+       */
       players: SLOTS.map((slot) => {
         const card = lineup[slot];
         const pick = picks.get(slot);
