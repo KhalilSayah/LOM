@@ -1,6 +1,7 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { configuredWindow } from '~~/server/utils/packDay';
+import { PITY } from '~~/server/utils/roll';
 
 /**
  * What the manager can buy, what it costs, and what it can produce.
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
   const profileId = await ensureProfile(db, manager);
   const window = configuredWindow(useRuntimeConfig());
 
-  const [{ data: packs }, { data: profile }, { data: todays }] = await Promise.all([
+  const [{ data: packs }, { data: profile }, { data: todays }, { data: pity }] = await Promise.all([
     db.from('pack_types')
       .select('key, name, blurb, price, slots, one_per_role, weights, floor_band, max_band, daily_limit, sort')
       .eq('is_active', true)
@@ -25,6 +26,10 @@ export default defineEventHandler(async (event) => {
       .select('pack_type')
       .eq('profile_id', profileId)
       .eq('pack_day', window.packDay),
+    db.from('pity_counters')
+      .select('since_legendary, since_icon')
+      .eq('profile_id', profileId)
+      .maybeSingle(),
   ]);
 
   const openedToday = new Map<string, number>();
@@ -34,8 +39,17 @@ export default defineEventHandler(async (event) => {
 
   const credits = profile?.credits ?? 0;
 
+  const since = { legendary: pity?.since_legendary ?? 0, icon: pity?.since_icon ?? 0 };
+
   return {
     credits,
+    // The same counters Home shows. They override any pack's own odds, ceiling included.
+    pity: {
+      legendaryIn: Math.max(0, PITY.legendary - since.legendary),
+      iconIn: Math.max(0, PITY.icon - since.icon),
+      legendaryEvery: PITY.legendary,
+      iconEvery: PITY.icon,
+    },
     packs: (packs || [])
       // The free daily pack has its own screen and its own once-a-day lock; it is not for sale.
       .filter((p) => p.key !== 'DAILY')

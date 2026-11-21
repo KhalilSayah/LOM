@@ -131,3 +131,43 @@ export function configuredWindow(config: { packHour?: string | number; packTz?: 
   const tz = String(config.packTz || 'Europe/Paris');
   return packWindow(now, Number.isFinite(hour) ? hour : 17, tz);
 }
+
+// --- banking and weeks -----------------------------------------------------------
+
+/**
+ * How many daily packs can wait for a manager (docs/02 section 5.1).
+ *
+ * A pack belongs to a pack day — the 17:00-to-17:00 window above, not a midnight-to-midnight
+ * one — and an unopened one stays openable for the two pack days after its own. So a manager
+ * who is away for the weekend comes back to three packs, and one away for a fortnight still
+ * comes back to three, not fourteen.
+ */
+export const BANK_MAX = 3;
+
+/** The pack day an instant falls in, by the same rule as `packWindow`. */
+export function packDayOf(at: Date, hour = 17, timeZone = 'Europe/Paris'): string {
+  return packWindow(at, hour, timeZone).packDay;
+}
+
+/**
+ * The pack days whose pack can still be opened today, oldest first.
+ *
+ * Never earlier than the day the account was made: a new manager gets today's pack, not a
+ * backlog from before they existed.
+ */
+export function bankableDays(today: string, firstDay: string | null): string[] {
+  const days: string[] = [];
+  for (let back = BANK_MAX - 1; back >= 0; back--) {
+    const day = addDays(today, -back);
+    if (!firstDay || day >= firstDay) days.push(day);
+  }
+  return days;
+}
+
+/** Monday of the week a pack day falls in. Weeks run Monday to Sunday, in pack days. */
+export function weekStartOf(packDay: string): string {
+  const [y, m, d] = packDay.split('-').map(Number);
+  const at = new Date(Date.UTC(y!, (m ?? 1) - 1, d ?? 1));
+  const back = (at.getUTCDay() + 6) % 7;
+  return addDays(packDay, -back);
+}
