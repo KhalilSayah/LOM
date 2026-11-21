@@ -349,10 +349,10 @@ export default defineEventHandler(async (event) => {
          */
         playable: Boolean(mineSide) && !final && !preview && !pending && window.open,
         /**
-         * Only the two managers can open a fixture's replay: the duel room is theirs
-         * (server/api/duel/[id].get.ts). The calendar links it for them and only them.
+         * The two managers can always reopen their room. Once a fixture is decided any
+         * member of the league can watch it (server/api/duel/[id].get.ts lets them in).
          */
-        canWatch: Boolean(mineSide) && Boolean(f.duel_id),
+        canWatch: Boolean(f.duel_id) && (Boolean(mineSide) || final),
         opensAt: window.opensAt ? new Date(window.opensAt).toISOString() : null,
         autoPlayAt: window.autoPlayAt ? new Date(window.autoPlayAt).toISOString() : null,
         secondsUntilOpen: window.secondsUntil,

@@ -337,8 +337,44 @@ const hoverOn = (side: string, slot: Slot) =>
 const lineupOf = (side: string) =>
   (side === 'BLUE' ? state.value?.blueLineup : state.value?.redLineup) || {};
 
-const nameOf = (side: string) =>
-  side === mySide.value ? 'You' : state.value?.opponent || 'Opponent';
+const nameOf = (side: string) => {
+  if (side === mySide.value) return 'You';
+  // A league fixture has seat names; someone watching it has no "you" in it at all.
+  const seat = (state.value as any)?.teamNames?.[side];
+  if (!mySide.value && seat) return seat;
+  return state.value?.opponent || 'Opponent';
+};
+const spectating = computed(() => Boolean((state.value as any)?.spectating));
+
+/** The lobby clock reads like a clock once it is longer than a few seconds (a league lobby is 15 minutes). */
+const lobbyText = computed(() => {
+  const t = Math.max(0, Math.ceil(lobbyLeft.value));
+  if (t < 60) return String(t);
+  const m = Math.floor(t / 60);
+  return m + ':' + String(t % 60).padStart(2, '0');
+});
+
+/** League fixtures: "start as soon as we are both here". The draft otherwise waits for kick-off. */
+const fixture = computed(() => (state.value as any)?.fixture || null);
+const iAmReady = computed(() => {
+  const f = fixture.value;
+  if (!f || !mySide.value) return false;
+  return mySide.value === 'BLUE' ? f.blueReady : f.redReady;
+});
+const readyBusy = ref(false);
+async function toggleReady() {
+  const f = fixture.value;
+  if (!f || readyBusy.value) return;
+  readyBusy.value = true;
+  try {
+    await $fetch(`/api/league/${f.leagueId}/fixture/${f.id}/ready`, { method: 'POST', body: { ready: !iAmReady.value } });
+    f[mySide.value === 'BLUE' ? 'blueReady' : 'redReady'] = !iAmReady.value;
+  } catch (e: any) {
+    actionError.value = e?.data?.statusMessage || e?.statusMessage || 'Could not reach the league.';
+  } finally {
+    readyBusy.value = false;
+  }
+}
 
 /** The composition panel, per side: mine with the modifier, theirs as tags only. */
 const compOf = (side: string) =>
@@ -563,18 +599,24 @@ useHead(() => ({
         <p class="lobby__side">
           {{ mySide === 'BLUE' ? 'You have first ban and first pick.' : 'You have the last pick.' }}
         </p>
-        <p class="lobby__count num">{{ Math.ceil(lobbyLeft) }}</p>
+        <p class="lobby__count num">{{ lobbyText }}</p>
+        <button
+          v-if="fixture && lobbyLeft > 20"
+          class="btn" :class="{ 'btn--ghost': iAmReady }" type="button"
+          :disabled="readyBusy" @click="toggleReady"
+        >{{ iAmReady ? 'Ready: waiting for them' : 'Ready, start when they are' }}</button>
         <p class="lobby__note faint">
           <template v-if="state?.isBot && state?.source === 'BOT' && state?.difficulty">Practice against the agent on {{ DIFFICULTY_LABEL[asDifficulty(state.difficulty)] }}. It does not count anywhere.</template>
           <template v-else-if="state?.isBot">Nobody was searching, so the agent takes the other side.</template>
           <template v-else>{{ opponentHere ? 'They are here.' : 'Waiting for them to load…' }}</template>
-          Bans open in a moment; nobody's clock is running yet.
+          <template v-if="lobbyLeft > 60">Bans open at kick-off, or as soon as you are both ready.</template>
+          <template v-else>Bans open in a moment; nobody's clock is running yet.</template>
         </p>
       </section>
 
       <!-- ===== The shared watch, and then the result ============================ -->
       <template v-else-if="(phase === 'WATCH' || phase === 'RESULT') && state?.result">
-        <p v-if="phase === 'WATCH'" class="notice notice--live">
+        <p v-if="phase === 'WATCH' && !spectating" class="notice notice--live">
           You are both watching this live: same clock, same second.
         </p>
         <MatchWatch
@@ -632,7 +674,10 @@ useHead(() => ({
           </p>
         </section>
 
-        <div v-if="phase === 'RESULT'" class="again">
+        <div v-if="phase === 'RESULT' && spectating" class="again">
+          <NuxtLink class="btn btn--lg" to="/leagues">Back to the league</NuxtLink>
+        </div>
+        <div v-else-if="phase === 'RESULT'" class="again">
           <button
             v-if="rematchLabel" class="btn btn--lg" type="button"
             :disabled="rematchBusy" @click="rematch"

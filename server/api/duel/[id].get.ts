@@ -46,7 +46,48 @@ export default defineEventHandler(async (event) => {
     .maybeSingle();
 
   if (!duel) throw createError({ statusCode: 404, statusMessage: 'No such duel.' });
-  if (duel.challenger_id !== profileId && duel.opponent_id !== profileId) {
+  const isParticipant = duel.challenger_id === profileId || duel.opponent_id === profileId;
+
+  /**
+   * A league fixture belongs to the league, not only to the two managers in it. Its team
+   * names come from the seats, and once the match has been played any member of that league
+   * may watch it — a table you cannot click through to the games is a table of rumours.
+   * A draft in progress stays private to the two managers.
+   */
+  let fixture: { id: string; leagueId: string; blueReady: boolean; redReady: boolean } | null = null;
+  let teamNames: { BLUE: string; RED: string } | null = null;
+  let spectating = false;
+  if (duel.source === 'LEAGUE') {
+    let fx: any = null;
+    const withReady = await db.from('league_fixtures')
+      .select('id, league_id, blue_member_id, red_member_id, blue_ready_at, red_ready_at')
+      .eq('duel_id', duel.id).maybeSingle();
+    if (withReady.error) {
+      // Migration 0016 not run yet: the ready columns do not exist.
+      const plain = await db.from('league_fixtures')
+        .select('id, league_id, blue_member_id, red_member_id')
+        .eq('duel_id', duel.id).maybeSingle();
+      fx = plain.data;
+    } else {
+      fx = withReady.data;
+    }
+    if (fx) {
+      const seatIds = [fx.blue_member_id, fx.red_member_id].filter(Boolean);
+      const [{ data: seats }, { data: mine }] = await Promise.all([
+        seatIds.length
+          ? db.from('league_members').select('id, team_name').in('id', seatIds)
+          : Promise.resolve({ data: [] as any[] }),
+        db.from('league_members').select('id').eq('league_id', fx.league_id).eq('profile_id', profileId).maybeSingle(),
+      ]);
+      const seatName = (memberId: string | null) =>
+        (seats || []).find((m: any) => m.id === memberId)?.team_name ?? 'The agent';
+      teamNames = { BLUE: seatName(fx.blue_member_id), RED: seatName(fx.red_member_id) };
+      fixture = { id: fx.id, leagueId: fx.league_id, blueReady: Boolean(fx.blue_ready_at), redReady: Boolean(fx.red_ready_at) };
+      spectating = !isParticipant && Boolean(mine) && (duel.status === 'WATCHING' || duel.status === 'COMPLETE');
+    }
+  }
+
+  if (!isParticipant && !spectating) {
     throw createError({ statusCode: 403, statusMessage: 'That duel is not yours.' });
   }
 
@@ -100,6 +141,9 @@ export default defineEventHandler(async (event) => {
     status: duel.status,
     source: duel.source ?? 'CHALLENGE',
     side,
+    spectating,
+    teamNames,
+    fixture,
     opponent: duel.bot_side
       ? 'The agent'
       : other?.display_name || other?.handle || 'Unknown manager',
