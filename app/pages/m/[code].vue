@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { formatShareCode } from '~~/shared/shareCode';
+import { applyFilters, filterOptions, filtersToQuery, readFilters, sortCards, SORTS } from '@lom/card-engine';
 
 /**
  * Another manager's collection, reached by their share code.
@@ -10,30 +11,32 @@ import { formatShareCode } from '~~/shared/shareCode';
  * route keeps that difference visible — /collection is yours and talks to Postgres
  * directly, /m/:code is someone else's and never does.
  *
- * Tiles are not links. A card detail page reads the signed-in manager's collection,
- * so tapping through would land on "you do not have this card", which is true and
- * useless. Cards here are interactive instead: a tap flips one, which is the thing
- * you came to do.
+ * The cards they starred lead the page: that is them choosing what to show you. A tile
+ * opens the card read-only (/card/<key>?from=<code>), where you can pin it and compare it
+ * against one of yours. Search, sort and filters work as they do on your own Cards and
+ * live in the URL, so the back button from a card lands on the same list.
  */
 
 const route = useRoute();
+const router = useRouter();
 const code = computed(() => String(route.params.code || ''));
+const { isPinned, toggle: togglePin } = useCompare();
+const NuxtLinkTile = resolveComponent('NuxtLink');
 
-const ROLES = ['TOP', 'JNG', 'MID', 'BOT', 'SUP'];
-const BANDS = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON'];
+const STEP = 48;
 
-const data = ref<any>(null);
-const loading = ref(true);
+/** Kept for the session per code, so coming back from one of their cards is instant. */
+const cache = useState<Record<string, any>>('m:cache', () => ({}));
+const data = ref<any>(cache.value[code.value] ?? null);
+const loading = ref(!data.value);
 const error = ref('');
 
-const role = ref<string | null>(null);
-const band = ref<string | null>(null);
-const search = ref('');
-
 async function load() {
-  loading.value = true;
+  if (!data.value) loading.value = true;
   try {
-    data.value = await $fetch<any>('/api/discovery/collection', { query: { code: code.value } });
+    const res = await $fetch<any>('/api/discovery/collection', { query: { code: code.value } });
+    data.value = res;
+    cache.value = { ...cache.value, [code.value]: res };
     error.value = '';
   } catch (e: any) {
     error.value = e?.statusMessage || e?.data?.statusMessage || 'Could not open that collection.';
@@ -42,39 +45,71 @@ async function load() {
   }
 }
 
-watch(code, load, { immediate: true });
+watch(code, (c) => {
+  data.value = cache.value[c] ?? null;
+  load();
+}, { immediate: true });
 
 const cards = computed<any[]>(() => data.value?.cards ?? []);
 
-const byBand = computed(() => {
-  const counts: Record<string, number> = {};
-  for (const c of cards.value) counts[c.card.rarity] = (counts[c.card.rarity] || 0) + 1;
-  return counts;
+const filters = computed(() => {
+  const f = readFilters(route.query);
+  return { ...f, view: 'cards' };
+});
+const setFilters = (next: Record<string, any>) => router.replace({ query: filtersToQuery({ ...next, view: 'cards' }) });
+
+const searchCache = new WeakMap<object, string>();
+const filtered = computed(() => sortCards(applyFilters(cards.value, filters.value, searchCache), filters.value.sort));
+const options = computed(() => filterOptions(cards.value.map((c) => c.card)));
+
+const bands = computed(() => {
+  const out: Record<string, { owned: number; total: number | null }> = {};
+  for (const b of ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON']) out[b] = { owned: 0, total: null };
+  for (const c of cards.value) { const n = out[c.card.rarity]; if (n) n.owned += 1; }
+  return out;
 });
 
-const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  return cards.value
-    .filter((c) => !role.value || c.card.role === role.value)
-    .filter((c) => !band.value || c.card.rarity === band.value)
-    .filter((c) => {
-      if (!q) return true;
-      const hay = `${c.card.playerName} ${c.card.team} ${c.card.season} `
-        + c.card.championPool.map((p: any) => p.champion).join(' ');
-      return hay.toLowerCase().includes(q);
-    })
-    .sort((a, b) => b.card.ovr - a.card.ovr);
+/** Their starred cards, as full entries from the list so they render as cards. */
+const showcase = computed(() => {
+  const ids: string[] = (data.value?.collection?.showcase || []).map((s: any) => s.id);
+  const byId = new Map(cards.value.map((c) => [c.id, c]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
 });
 
-const BAND_LABEL: Record<string, string> = { COMMON: 'Common', RARE: 'Rare', EPIC: 'Epic', LEGENDARY: 'Legendary', ICON: 'Icon' };
-// Rarest first, as on your own Cards screen.
-const BANDS_DESC = [...BANDS].reverse();
+// --- incremental rendering --------------------------------------------------
+
+const shown = ref(STEP);
+const visible = computed(() => filtered.value.slice(0, shown.value));
+watch(() => JSON.stringify(filters.value), () => { shown.value = STEP; });
+
+const sentinel = ref<HTMLElement | null>(null);
+let io: IntersectionObserver | null = null;
+onMounted(() => {
+  io = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting)) shown.value += STEP;
+  }, { rootMargin: '600px 0px' });
+  if (sentinel.value) io.observe(sentinel.value);
+});
+watch(sentinel, (el, old) => {
+  if (old) io?.unobserve(old);
+  if (el) io?.observe(el);
+});
+onBeforeUnmount(() => io?.disconnect());
+
+// --- compare ----------------------------------------------------------------
+
+const picking = ref(false);
+const pinId = (item: any) => `${code.value}:${item.id}`;
+function pick(item: any) {
+  togglePin({ id: pinId(item), owner: data.value?.manager?.displayName ?? null, level: item.level, card: item.card });
+}
+const cardLink = (item: any) => `/card/${item.card.cardKey}?from=${code.value}`;
 
 function clearFilters() {
-  role.value = null;
-  band.value = null;
-  search.value = '';
+  setFilters({ ...filters.value, q: '', role: null, rarity: null, league: null, year: null, team: null, fav: null });
 }
+
+const sortNote = computed(() => SORTS.find((s) => s.id === filters.value.sort)?.note || '');
 
 useHead(() => ({
   title: data.value
@@ -90,7 +125,9 @@ useHead(() => ({
       <span v-if="data" class="topbar__meta tnum">{{ formatShareCode(data.manager.shareCode) }}</span>
     </header>
 
-    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">
+      {{ error }} <button class="linkish" type="button" @click="load">Retry</button>
+    </p>
 
     <div v-if="loading" class="skeleton head-skeleton" />
 
@@ -104,7 +141,7 @@ useHead(() => ({
         <span class="num who__n">{{ data.collection.total }}</span>
         <span class="who__unit">{{ data.collection.total === 1 ? 'card' : 'cards' }}</span>
       </p>
-      <p v-if="data.collection.best" class="muted who__best">
+      <p v-if="!showcase.length && data.collection.best" class="muted who__best">
         Best: {{ data.collection.best.playerName }}
         <template v-if="data.collection.best.season">{{ data.collection.best.season }}</template>
         · <span class="tnum">{{ data.collection.best.ovr }}</span> OVR
@@ -113,68 +150,82 @@ useHead(() => ({
 
     <h1 v-else class="sr-only">A manager's cards</h1>
 
+    <section v-if="showcase.length" class="block showcase" aria-labelledby="showcase-h">
+      <h2 id="showcase-h" class="sect">{{ data.isSelf ? 'Your showcase' : 'Showcase' }}<span class="faint">starred by {{ data.isSelf ? 'you' : data.manager.displayName }}</span></h2>
+      <div class="showcase__cards">
+        <NuxtLink v-for="item in showcase" :key="item.id" class="showcase__card" :to="cardLink(item)">
+          <LomCard :card="item.card" compact :interactive="false" />
+        </NuxtLink>
+      </div>
+    </section>
+
     <section v-if="loading || data" class="block">
       <h2 class="sect">Cards</h2>
 
-      <div class="cards__layout">
-        <aside v-if="cards.length" class="filters">
-          <input
-            v-model="search" class="input filters__search" type="search"
-            placeholder="Player, team or champion" aria-label="Search these cards"
-          >
-          <div class="seg filters__roles" role="group" aria-label="Role">
-            <button type="button" :aria-pressed="role === null" @click="role = null">All</button>
-            <button
-              v-for="r in ROLES" :key="r" type="button"
-              :aria-pressed="role === r" @click="role = role === r ? null : r"
-            >{{ r }}</button>
-          </div>
-          <div class="filters__bands" role="group" aria-label="Rarity">
-            <button
-              v-for="b in BANDS_DESC" :key="b" class="chip" type="button"
-              :aria-pressed="band === b" :disabled="!byBand[b]"
-              @click="band = band === b ? null : b"
-            >
-              <i class="gem" :class="`gem--${b.toLowerCase()}`" aria-hidden="true" />
-              {{ BAND_LABEL[b] }}<span class="chip__n">{{ byBand[b] || 0 }}</span>
-            </button>
-          </div>
-        </aside>
+      <CardFilters
+        v-if="cards.length"
+        :model-value="filters"
+        :options="options"
+        :bands="bands"
+        :result-count="filtered.length"
+        @update:model-value="setFilters"
+      >
+        <template #actions>
+          <button class="chip" type="button" :aria-pressed="picking" data-sound="toggle" @click="picking = !picking">
+            {{ picking ? 'Picking to compare' : 'Compare' }}
+          </button>
+        </template>
+      </CardFilters>
+      <p v-if="picking" class="faint pick-hint">Tap a card of theirs to pin it, then pin one of yours from your Cards or a card page.</p>
 
-        <div class="cards__main">
-          <p v-if="cards.length" class="cards__count faint">
-            {{ filtered.length }} shown · highest rating first
-          </p>
+      <p v-if="cards.length" class="cards__count faint">
+        {{ filtered.length }} shown · {{ sortNote }}
+      </p>
 
-          <div v-if="loading" class="card-grid">
-            <div v-for="i in 6" :key="i" class="skeleton grid-skeleton" />
-          </div>
+      <div v-if="loading" class="card-grid">
+        <div v-for="i in 6" :key="i" class="skeleton grid-skeleton" />
+      </div>
 
-          <div v-else-if="data && !cards.length" class="empty">
-            <h2>Nothing here yet</h2>
-            <p>{{ data.manager.displayName }} has not opened a pack.</p>
-          </div>
+      <div v-else-if="data && !cards.length" class="empty">
+        <h2>Nothing here yet</h2>
+        <p>{{ data.manager.displayName }} has not opened a pack.</p>
+      </div>
 
-          <div v-else-if="data && !filtered.length" class="empty">
-            <h2>No match</h2>
-            <p>None of these cards fit those filters.</p>
-            <button class="btn btn--ghost" type="button" @click="clearFilters">Clear filters</button>
-          </div>
+      <div v-else-if="data && !filtered.length" class="empty">
+        <h2>No match</h2>
+        <p>None of these cards fit that search and those filters.</p>
+        <button class="btn btn--ghost" type="button" @click="clearFilters">Clear filters</button>
+      </div>
 
-          <div v-else-if="data" class="card-grid">
-            <div v-for="item in filtered" :key="item.id" class="card-grid__item">
-              <LomCard :card="item.card" compact />
-              <span v-if="item.level > 1" class="card-grid__badge">Lv {{ item.level }}</span>
-              <span v-if="item.copies > 1" class="card-grid__dupes">×{{ item.copies }}</span>
-            </div>
-          </div>
-        </div>
+      <div v-else-if="data" class="card-grid">
+        <component
+          :is="picking ? 'button' : NuxtLinkTile"
+          v-for="item in visible" :key="item.id"
+          class="card-grid__item tile"
+          :class="{ 'is-pinned': isPinned(pinId(item)) }"
+          v-bind="picking
+            ? { type: 'button', 'aria-pressed': isPinned(pinId(item)), onClick: () => pick(item) }
+            : { to: cardLink(item) }"
+        >
+          <span class="card-grid__tags">
+            <span v-if="picking && isPinned(pinId(item))" class="card-grid__badge card-grid__badge--new">Pinned</span>
+            <span v-else-if="item.level > 1" class="card-grid__badge">Lv {{ item.level }}</span>
+            <span v-if="item.copies > 1" class="card-grid__dupes" :title="`Pulled ${item.copies} times`">×{{ item.copies }}</span>
+          </span>
+          <LomCard :card="item.card" compact :interactive="false" />
+        </component>
+      </div>
+
+      <div v-if="!loading && shown < filtered.length" ref="sentinel" class="more">
+        <button class="btn btn--quiet" type="button" @click="shown += STEP">Show more</button>
       </div>
     </section>
 
     <p v-if="data && !data.isSelf" class="faint foot">
       Found by code, so they stay on your list. <NuxtLink to="/discovery">See everyone you have found</NuxtLink>.
     </p>
+
+    <CompareTray />
   </main>
 </template>
 
@@ -193,26 +244,21 @@ useHead(() => ({
 .who__best { font-size: 13.5px; margin: 6px 0 0; }
 
 .block { margin-top: 28px; }
-.sect { margin: 0 0 12px; font-stretch: 92%; font-weight: 720; font-size: 17px; }
+.sect { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 0 0 12px; font-stretch: 92%; font-weight: 720; font-size: 17px; }
+.sect .faint { font-stretch: 100%; font-weight: 500; font-size: 12.5px; }
 
-.filters { display: grid; gap: 10px; margin-bottom: 16px; }
-.filters__search { min-height: 44px; font-size: 16px; }
-.filters__roles button { font-size: 11px; }
-.filters__bands { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px; }
-.filters__bands::-webkit-scrollbar { display: none; }
+.showcase__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-width: 520px; }
+.showcase__card { display: block; min-width: 0; }
+
+.pick-hint { margin: -4px 0 12px; font-size: 12.5px; }
 .cards__count { margin: 0 0 12px; font-size: 12.5px; }
 .grid-skeleton { aspect-ratio: 63 / 88; }
+.card-grid__badge--new { --tag: var(--gold-2); color: var(--gold-ink) !important; }
+.tile { content-visibility: auto; contain-intrinsic-size: auto 200px; }
+button.tile { appearance: none; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tile.is-pinned :deep(.lom-card) { outline: 2px solid var(--gold-2); outline-offset: 3px; }
+.more { display: flex; justify-content: center; padding: 24px 0; }
+.linkish { appearance: none; padding: 0; border: 0; background: none; color: var(--ink-1); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
 
 .foot { font-size: 12.5px; margin: 24px 0 0; text-align: center; }
-
-@media (min-width: 1024px) {
-  .cards__layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 36px; align-items: start; }
-  .cards__layout:not(:has(.filters)) { grid-template-columns: minmax(0, 1fr); }
-  .filters { position: sticky; top: calc(var(--appbar-h) + 16px); }
-  .filters__roles { flex-direction: column; }
-  .filters__roles button { justify-content: flex-start; padding: 0 12px; }
-  .filters__bands { flex-direction: column; margin: 0; padding: 0; overflow: visible; }
-  .filters__bands .chip { justify-content: flex-start; }
-  .filters__bands .chip__n { margin-left: auto; }
-}
 </style>

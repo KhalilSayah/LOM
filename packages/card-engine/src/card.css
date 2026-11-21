@@ -886,3 +886,29 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
+
+/* ===========================================================================
+   Lite: a grid tile
+   createCard({ lite: true }), and every compact card that is not interactive.
+   The markup already leaves out the back face and the foil, sparkle and glare
+   layers; this drops what is left that costs a frame. No 3D context to
+   composite, and the ground shadow is a plain box-shadow instead of a 1.6em
+   blur filter, which on a 300-card grid was the most expensive thing on the
+   screen. The card still reads as a card: same art, same plate, same edge.
+   =========================================================================== */
+
+.lom-card--lite,
+.lom-card--lite .lom-card__inner,
+.lom-card--lite .lom-card__face {
+  transform-style: flat;
+  transition: none;
+}
+.lom-card--lite { transform: none; cursor: inherit; }
+.lom-card--lite::after { display: none; }
+.lom-card--lite .lom-card__plate {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0.6em 1.2em rgba(0, 0, 0, 0.45);
+}
+.lom-card--lite .lom-card__face--front::after { transform: none; }
+.lom-card--lite .lom-art--portrait .lom-art__photo { filter: brightness(0.42) saturate(0.78); }

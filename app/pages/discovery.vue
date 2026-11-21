@@ -65,17 +65,52 @@ async function find() {
   }
 }
 
-async function forget(code: string) {
+/**
+ * Forgetting, with an undo.
+ *
+ * The manager leaves the list at once, and the forget itself is only sent when the undo
+ * window closes — or when you leave the screen, or forget somebody else. Undo puts them
+ * back where they were and nothing was ever written, so a mis-tap costs nothing.
+ */
+const UNDO_MS = 6000;
+const pending = ref<{ entry: any; index: number } | null>(null);
+let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function commitForget() {
+  const p = pending.value;
+  clearTimeout(pendingTimer);
+  pending.value = null;
+  if (!p) return;
+  const code = p.entry.manager.shareCode;
   try {
     await $fetch('/api/discovery/forget', { method: 'POST', body: { code } });
     if (justFound.value === code) justFound.value = null;
-    await load();
   } catch (e: any) {
     loadError.value = message(e, 'Could not drop that manager.');
+    await load();
   }
 }
 
+function forget(code: string) {
+  if (!state.value?.found) return;
+  if (pending.value) commitForget();
+  const index = state.value.found.findIndex((f: any) => f.manager.shareCode === code);
+  if (index < 0) return;
+  const [entry] = state.value.found.splice(index, 1);
+  pending.value = { entry, index };
+  pendingTimer = setTimeout(commitForget, UNDO_MS);
+}
+
+function undoForget() {
+  const p = pending.value;
+  clearTimeout(pendingTimer);
+  pending.value = null;
+  if (!p || !state.value?.found) return;
+  state.value.found.splice(Math.min(p.index, state.value.found.length), 0, p.entry);
+}
+
 onMounted(load);
+onBeforeUnmount(() => { if (pending.value) commitForget(); });
 
 useHead({ title: 'Discovery — LOM' });
 
@@ -112,6 +147,8 @@ async function challenge(target: { id: string; displayName?: string; handle?: st
         {{ state.found.length }} {{ state.found.length === 1 ? 'manager' : 'managers' }}
       </span>
     </header>
+
+    <p class="intro muted">Swap codes with a friend to browse each other's cards, and challenge them to a duel.</p>
 
     <ShareCode :code="state?.me?.shareCode ?? null" :handle="state?.me?.handle ?? null" />
 
@@ -183,7 +220,14 @@ async function challenge(target: { id: string; displayName?: string; handle?: st
           </li>
         </ul>
 
-        <p v-if="entry.collection.best" class="muted mgr__best">
+        <ul v-if="entry.collection.showcase?.length" class="mgr__show" aria-label="Their showcase">
+          <li v-for="s in entry.collection.showcase" :key="s.id">
+            <i class="gem" :class="`gem--${String(s.rarity).toLowerCase()}`" aria-hidden="true" />
+            <span>{{ s.playerName }} <template v-if="s.season">{{ s.season }}</template></span>
+            <b class="tnum">{{ s.ovr }}</b>
+          </li>
+        </ul>
+        <p v-else-if="entry.collection.best" class="muted mgr__best">
           Best: {{ entry.collection.best.playerName }}
           <template v-if="entry.collection.best.season">{{ entry.collection.best.season }}</template>
           · {{ entry.collection.best.ovr }} OVR
@@ -207,10 +251,16 @@ async function challenge(target: { id: string; displayName?: string; handle?: st
         </div>
       </li>
     </ul>
+
+    <div v-if="pending" class="undo" role="status" aria-live="polite">
+      <span>Forgot {{ pending.entry.manager.displayName }}.</span>
+      <button class="btn btn--quiet" type="button" data-sound="back" @click="undoForget">Undo</button>
+    </div>
   </main>
 </template>
 
 <style scoped>
+.intro { margin: -6px 0 12px; font-size: 13.5px; line-height: 1.5; }
 .find { margin-top: 12px; }
 .find__form { display: flex; gap: 8px; margin-top: 10px; }
 .find__input {
@@ -246,15 +296,15 @@ async function challenge(target: { id: string; displayName?: string; handle?: st
   appearance: none;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 2px;
   background: transparent;
   color: var(--ink-3);
   font-size: 22px;
   line-height: 1;
-  margin: -6px -6px 0 0;
+  margin: -10px -10px 0 0;
   cursor: pointer;
 }
 .mgr__forget:hover { color: var(--red-2); background: var(--bg-3); }
@@ -268,6 +318,22 @@ async function challenge(target: { id: string; displayName?: string; handle?: st
 .mgr__bands li.is-zero { opacity: 0.35; }
 
 .mgr__best { font-size: 13.5px; margin: 10px 0 0; }
+.mgr__show { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
+.mgr__show li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 13.5px; }
+.mgr__show li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-1); font-weight: 620; }
+.mgr__show b { font-stretch: 80%; font-weight: 800; }
+.mgr__show .gem { width: 12px; height: 12px; }
+
+.undo {
+  position: fixed; z-index: 40; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 10px);
+  width: min(calc(100% - 20px), 520px);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 8px 8px 14px; font-size: 13.5px;
+  background: var(--bg-3); border: 1px solid var(--line-2); border-radius: var(--radius);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+@media (min-width: 1024px) { .undo { bottom: 20px; } }
 
 .mgr__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
 .mgr__code { margin-right: auto; font-size: 13px; letter-spacing: 0.1em; }
