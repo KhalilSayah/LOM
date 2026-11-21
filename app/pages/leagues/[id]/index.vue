@@ -220,13 +220,54 @@ const isToday = (iso: string | null) =>
 
 const next = computed<any>(() => data.value?.next ?? null);
 
+/**
+ * The lobby countdown. Ticks only while there is a fixture waiting on its lobby, and the
+ * moment it opens the page re-reads once, so the Play button appears without a refresh.
+ */
+const nowMs = ref(Date.now());
+let lobbyTimer: ReturnType<typeof setInterval> | undefined;
+let reopened = false;
+const lobbyIn = computed(() => {
+  const at = next.value?.opensAt ? new Date(next.value.opensAt).getTime() : null;
+  if (!at || next.value?.playable) return null;
+  return Math.max(0, Math.round((at - nowMs.value) / 1000));
+});
+const lobbyText = computed(() => {
+  const t = lobbyIn.value;
+  if (t === null) return '';
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = t % 60;
+  return h ? `${h} h ${String(m).padStart(2, '0')} min` : `${m}:${String(sec).padStart(2, '0')}`;
+});
+watch(lobbyIn, async (t) => {
+  if (t === 0 && !reopened) {
+    reopened = true;
+    await load();
+    reopened = false;
+  }
+});
+onMounted(() => { lobbyTimer = setInterval(() => { nowMs.value = Date.now(); }, 1000); });
+onBeforeUnmount(() => clearInterval(lobbyTimer));
+
+const myRow = computed(() => table.value.find((r) => r.isMe) ?? null);
+const ordinal = (n: number) => {
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return n + 'th';
+  return n + (n % 10 < 4 ? ['th', 'st', 'nd', 'rd'][n % 10] : 'th');
+};
+
+/** Who won it, once the season is over. */
+const champion = computed(() =>
+  (league.value?.status === 'FINISHED' ? table.value.find((r) => r.position === 1) ?? null : null));
+
 useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League — LOM' }));
 </script>
 
 <template>
   <main class="page">
     <header class="topbar">
-      <NuxtLink class="btn btn--quiet" to="/leagues">Leagues</NuxtLink>
+      <NuxtLink class="backlink" to="/leagues"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>Leagues</NuxtLink>
       <span v-if="league" class="topbar__meta">
         {{ league.memberCount }}/{{ league.maxMembers }} · {{ league.matchHour }}
       </span>
@@ -246,6 +287,17 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         · {{ league.matchHour }} {{ league.timezone }}
       </p>
 
+      <!-- The season is over: say who won before anything else. -->
+      <section v-if="champion" class="season-over">
+        <p class="season-over__eyebrow"><span class="gem gem--legendary" aria-hidden="true" />Season over</p>
+        <p class="season-over__name">{{ champion.teamName }}</p>
+        <p class="season-over__line">
+          <template v-if="champion.isMe">You won the league.</template>
+          <template v-else>Top of the table.</template>
+          <span v-if="myRow && !champion.isMe" class="faint">You finished {{ ordinal(myRow.position) }}.</span>
+        </p>
+      </section>
+
       <!-- Tonight. The only thing most people open this screen for. -->
       <section v-if="next" class="panel next">
         <p class="eyebrow">Day {{ next.dayIndex }}</p>
@@ -263,6 +315,9 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         >
           {{ opening ? 'Opening' : next.duelId ? 'Back into the draft' : 'Play this fixture' }}
         </button>
+        <p v-else-if="lobbyIn !== null && lobbyIn > 0" class="next__hint">
+          Lobby opens in <b class="tnum next__count">{{ lobbyText }}</b>
+        </p>
         <p v-else class="faint next__hint">
           The lobby opens 15 minutes before kick-off.
         </p>
@@ -281,7 +336,7 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
             in {{ clock(last.result.gameLength) }}
           </span>
         </p>
-        <NuxtLink v-if="last.duelId" class="btn btn--quiet" :to="`/duel/${last.duelId}`">
+        <NuxtLink v-if="last.duelId" class="btn btn--ghost btn--sm" :to="`/duel/${last.duelId}`">
           Watch it again
         </NuxtLink>
       </section>
@@ -359,19 +414,19 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
             </p>
 
             <div class="manager__acts">
-              <NuxtLink class="btn btn--quiet" :to="`/leagues/${league.id}/m/${m.id}`">
+              <NuxtLink class="btn btn--quiet btn--sm" :to="`/leagues/${league.id}/m/${m.id}`">
                 {{ m.isMe ? 'My squad' : 'Squad' }}
               </NuxtLink>
 
               <template v-if="!m.isMe">
-                <NuxtLink v-if="m.duel && m.duel.status !== 'PENDING'" class="btn" :to="`/duel/${m.duel.id}`">
+                <NuxtLink v-if="m.duel && m.duel.status !== 'PENDING'" class="btn btn--ghost btn--sm" :to="`/duel/${m.duel.id}`">
                   Rejoin
                 </NuxtLink>
                 <span v-else-if="m.duel" class="faint manager__pending">
                   {{ m.duel.iChallenged ? 'Friendly sent' : 'They challenged you' }}
                 </span>
                 <button
-                  v-else class="btn" type="button"
+                  v-else class="btn btn--ghost btn--sm" type="button"
                   :disabled="!m.ready || !iAmReady || challenging === m.profileId"
                   @click="friendly(m)"
                 >
@@ -459,7 +514,7 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
                   <NuxtLink v-if="f.duelId" :to="`/duel/${f.duelId}`">watch</NuxtLink>
                 </span>
                 <button
-                  v-else-if="f.playable" class="btn fixture__play" type="button"
+                  v-else-if="f.playable" class="btn btn--ghost btn--sm fixture__play" type="button"
                   :disabled="opening" @click="play(f.id)"
                 >
                   {{ f.duelId ? 'Rejoin' : 'Play' }}
@@ -486,7 +541,7 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
           </p>
           <div class="leave__acts">
             <button class="btn btn--quiet" type="button" @click="confirmLeave = false">Keep it</button>
-            <button class="btn" type="button" :disabled="leaving" @click="leave">
+            <button class="btn btn--danger" type="button" :disabled="leaving" @click="leave">
               {{ league.iAmOwner ? 'Disband' : 'Leave' }}
             </button>
           </div>
@@ -499,122 +554,134 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
 <style scoped>
 .league-skeleton { height: 34vh; }
 
-.name { font-family: var(--font-display); font-size: 24px; margin: 4px 0 0; }
-.sub { font-size: 13px; margin: 2px 0 14px; }
+.backlink { display: inline-flex; align-items: center; gap: 4px; margin-left: -6px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.backlink svg { width: 20px; height: 20px; }
+.backlink:hover { color: var(--ink-1); }
 
-.next { border-left: 3px solid var(--accent); }
-.next__who { font-size: 17px; margin: 6px 0 0; }
-.next__when { font-size: 13.5px; margin: 3px 0 0; }
-.next__hint { font-size: 12px; margin: 8px 0 0; }
+.name { font-size: clamp(30px, 7vw, 44px); line-height: 0.95; margin: 4px 0 0; }
+.sub { font-size: 13px; margin: 6px 0 20px; }
 
-.invite { margin-top: 12px; text-align: center; }
-.invite__code {
-  font-family: var(--font-display);
-  font-size: 34px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  margin: 8px 0 2px;
+/* Tonight: the focal object, so it gets the brackets. */
+.next {
+  padding: 20px;
+  background: linear-gradient(165deg, #121b2d, #0a0f19 70%);
+  border: 1px solid var(--line-1);
 }
-.invite__link {
+.next::before, .next::after { content: ''; position: absolute; width: 14px; height: 14px; border: 1.5px solid var(--gold-2); pointer-events: none; }
+.next::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.next::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
+.next__who { font-stretch: 80%; font-weight: 820; font-size: 26px; line-height: 1.05; margin: 6px 0 0; }
+.next__who .faint { font-stretch: 100%; font-weight: 500; font-size: 14px; }
+.next__when { font-size: 14px; margin: 6px 0 0; }
+.next__hint { font-size: 12.5px; margin: 12px 0 0; }
+.next__play { margin-top: 16px; }
+
+.last { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.last .eyebrow { flex-basis: 100%; }
+.last__line { font-size: 14.5px; margin: 0; }
+
+.invite { margin-top: 16px; text-align: center; padding: 22px 18px; }
+.invite__code { font-stretch: 85%; font-size: 40px; font-weight: 820; letter-spacing: 0.2em; margin: 8px 0 4px; }
+.invite__link { font-size: 12px; color: var(--ink-3); margin: 0 0 16px; overflow-wrap: anywhere; }
+
+.block { margin-top: 28px; }
+.block > .eyebrow:first-child { font-stretch: 92%; font-weight: 720; font-size: 17px; color: var(--ink-1); margin-bottom: 12px; }
+.blurb { font-size: 13.5px; margin: 6px 0 12px; }
+.hint { font-size: 12px; margin: 10px 0 0; }
+.list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; }
+
+/* The table: one surface, rows split by keylines. Yours carries a marker, not a colour alone. */
+.standings { border-top: 1px solid var(--line-1); }
+.next__count { font-stretch: 80%; font-size: 18px; color: var(--ink-1); }
+.season-over {
+  margin: 4px 0 18px;
+  padding: 22px 18px;
+  text-align: center;
+  border: 1px solid rgba(216, 178, 104, 0.45);
+  border-radius: 6px;
+  background: radial-gradient(120% 140% at 50% 0%, rgba(216, 178, 104, 0.18), transparent 62%), var(--bg-2);
+}
+.season-over__eyebrow {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
-  color: var(--ink-faint);
-  margin: 0 0 12px;
-  overflow-wrap: anywhere;
-}
-
-.block { margin-top: 16px; }
-.blurb { font-size: 13.5px; margin: 6px 0 11px; }
-.blurb a { color: var(--accent); }
-.hint { font-size: 12px; margin: 8px 0 0; }
-.list { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 8px; }
-
-.manager { display: grid; gap: 3px; }
-.manager__top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.manager__name { font-size: 15px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-.manager__cards {
-  flex: none;
-  font-family: var(--font-label);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-weight: 800;
+  font-stretch: 116%;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--ink-dim);
+  color: var(--gold-1);
 }
-.manager__best { font-size: 12.5px; margin: 0; }
-.manager__ready { font-size: 12.5px; color: var(--warn); margin: 2px 0 0; }
-.manager__ready.is-ready { color: var(--ink-faint); }
-.manager__acts { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.manager__pending { font-size: 12.5px; }
-
-.tag {
-  font-family: var(--font-label);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  padding: 1px 6px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--ink-faint);
-}
-.tag--me { border-color: var(--accent); color: var(--accent); }
-
-.days { gap: 6px; }
-.day { padding: 10px 12px; }
-.day.is-today { border-color: var(--accent); }
-.day.is-rest { opacity: 0.7; }
-.day__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.day__n {
-  font-family: var(--font-label);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-.day__when { font-size: 12px; }
-
-.fixtures { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 3px; }
-.fixture {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 4px 8px;
-  align-items: baseline;
-  font-size: 13px;
-  color: var(--ink-dim);
-}
-.fixture__score { font-size: 12.5px; }
-/* The winner is also the only name in full-strength ink with a weight on it: never
-   colour alone (docs/09 section 12). */
-.fixture__side.is-winner { color: var(--ink); font-weight: 700; }
-.fixture__after, .fixture__play { grid-column: 1 / -1; }
-.fixture__after { font-size: 11.5px; }
-.fixture__after a { color: var(--accent); }
-.fixture__play { justify-self: start; margin: 4px 0 2px; }
-
-.next__play { margin-top: 12px; }
-.last__line { font-size: 14.5px; margin: 6px 0 10px; }
-.is-won { color: var(--accent); }
-.is-lost { color: var(--bad); }
-
-.standings { counter-reset: none; }
+.season-over__name { margin: 8px 0 0; font-stretch: 75%; font-weight: 880; font-size: clamp(28px, 7vw, 40px); line-height: 1; text-transform: uppercase; overflow-wrap: anywhere; }
+.season-over__line { margin: 10px 0 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; color: var(--ink-2); }
 .standing {
   display: grid;
-  grid-template-columns: 22px 1fr auto auto;
+  grid-template-columns: 26px minmax(0, 1fr) auto 36px;
   gap: 10px;
   align-items: baseline;
-  padding: 10px 12px;
+  padding: 12px 4px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line-1);
+  border-radius: 0;
 }
-.standing.is-me { border-color: var(--accent); }
-.standing__pos { font-family: var(--font-display); font-size: 15px; color: var(--ink-faint); }
-.standing__who { font-size: 14px; min-width: 0; }
-.standing__why { font-size: 11.5px; }
-.standing__wl { font-size: 13px; color: var(--ink-dim); }
-.standing__pts { font-family: var(--font-display); font-size: 16px; font-weight: 700; }
-/* Never colour alone: a fixture of yours is also the only one in full-strength ink. */
-.fixture.is-mine { color: var(--ink); font-weight: 600; }
-.fixture__side:last-child { text-align: right; }
-.fixture__v { font-family: var(--font-label); font-size: 11px; color: var(--ink-faint); }
+.standing.is-me { background: var(--bg-3); }
+.standing.is-me .standing__pos, .standing.is-me .standing__who { color: var(--gold-1); }
+.standing__pos { font-stretch: 80%; font-weight: 800; font-size: 16px; color: var(--ink-3); text-align: center; }
+.standing:first-child .standing__pos { color: var(--gold-1); }
+.standing__who { font-size: 14.5px; font-weight: 620; min-width: 0; }
+.standing__why { display: block; font-size: 11.5px; font-weight: 500; }
+.standing__wl { font-size: 13px; color: var(--ink-2); }
+.standing__pts { font-stretch: 80%; font-size: 20px; font-weight: 820; text-align: right; }
 
-.leave { display: grid; justify-items: start; gap: 8px; margin-top: 22px; }
+/* Managers: a list of people, not a stack of cards. */
+.manager {
+  display: grid;
+  gap: 3px;
+  padding: 14px 4px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line-1);
+  border-radius: 0;
+}
+.list:has(.manager) { border-top: 1px solid var(--line-1); }
+.manager__top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.manager__name { font-size: 15.5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.manager__cards { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink-3); }
+.manager__best { font-size: 12.5px; margin: 0; }
+.manager__ready { font-size: 12.5px; color: var(--warn-2); margin: 2px 0 0; }
+.manager__ready.is-ready { color: var(--ink-3); }
+.manager__acts { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.manager__pending { font-size: 12.5px; }
+
+/* Schedule */
+.days { display: grid; gap: 8px; }
+.day { padding: 12px 14px; }
+.day.is-today { border-color: rgba(31, 207, 193, 0.45); }
+.day.is-rest { opacity: 0.65; }
+.day__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.day__n { font-stretch: 112%; font-size: 11px; font-weight: 760; letter-spacing: 0.14em; text-transform: uppercase; }
+.day.is-today .day__n { color: var(--teal-1); }
+.day__when { font-size: 12px; }
+
+.fixtures { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.fixture { display: grid; grid-template-columns: 1fr auto 1fr; gap: 4px 10px; align-items: baseline; font-size: 13.5px; color: var(--ink-2); }
+.fixture__score { font-stretch: 80%; font-weight: 800; font-size: 14px; color: var(--ink-1); }
+/* The winner is also the only name in full-strength ink with a weight on it: never colour alone. */
+.fixture__side.is-winner { color: var(--ink-1); font-weight: 700; }
+.fixture__side:last-child { text-align: right; }
+.fixture__v { font-size: 11px; color: var(--ink-3); }
+.fixture.is-mine { color: var(--ink-1); font-weight: 600; }
+.fixture__after, .fixture__play { grid-column: 1 / -1; }
+.fixture__after { font-size: 11.5px; }
+.fixture__play { justify-self: start; margin: 4px 0 2px; }
+
+.leave { display: grid; justify-items: start; gap: 8px; margin-top: 28px; }
 .leave__acts { display: flex; gap: 8px; }
+
+@media (min-width: 1024px) {
+  .next { padding: 28px 32px; }
+  .next__who { font-size: 34px; }
+}
 </style>

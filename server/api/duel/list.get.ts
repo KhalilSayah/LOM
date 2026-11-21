@@ -37,6 +37,16 @@ export default defineEventHandler(async (event) => {
     : { data: [] as any[] };
   const byId = new Map((profiles || []).map((p: any) => [p.id, p]));
 
+  const killsFor = (box: any[], side: string) => {
+    let mine = 0;
+    let theirs = 0;
+    for (const r of box) {
+      if (r.team === side) mine += r.kills;
+      else theirs += r.kills;
+    }
+    return { mine, theirs };
+  };
+
   const shape = (d: any) => {
     const otherId = d.challenger_id === profileId ? d.opponent_id : d.challenger_id;
     const other = byId.get(otherId);

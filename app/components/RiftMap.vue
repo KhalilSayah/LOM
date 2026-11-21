@@ -4,7 +4,13 @@
  * standing drawn over it.
  *
  * Canvas 2D rather than SVG because this redraws every animation frame at up to 60×
- * speed, and ten DOM nodes moving at that rate is how you make a phone warm.
+ * speed, and ten DOM nodes moving at that rate is how you make a phone warm. It only
+ * redraws when something it draws has changed, though: a paused replay, or a duel
+ * waiting on its clock, costs nothing.
+ *
+ * The two sides differ by shape as well as colour — blue champions and towers are
+ * round and square, red ones are diamonds — so nobody has to tell the teams apart by
+ * hue alone.
  *
  * Rift coordinates run 0..14870 with y pointing up and blue in the bottom-left
  * corner, which is the orientation every League player already has in their head.
@@ -81,12 +87,43 @@ function prepareBackdrop(w: number, h: number) {
 }
 let frame = 0;
 
+/**
+ * Side colours, taken from the design tokens (--blue, --red) when the page has them.
+ * The constants are the same values, for a canvas that draws before the stylesheet
+ * is readable.
+ */
 const COLOURS = {
-  BLUE: '#4fc3f7',
-  RED: '#ff6b66',
-  BLUE_DIM: 'rgba(79, 195, 247, 0.3)',
-  RED_DIM: 'rgba(255, 107, 102, 0.3)',
+  BLUE: '#4a90ff',
+  RED: '#f0505f',
+  GROUND: '#04070d',
+  FLASH: '#d8b064',
 };
+
+function readTokens() {
+  try {
+    const css = getComputedStyle(document.documentElement);
+    const read = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+    COLOURS.BLUE = read('--blue', COLOURS.BLUE);
+    COLOURS.RED = read('--red', COLOURS.RED);
+    COLOURS.GROUND = read('--bg-0', COLOURS.GROUND);
+    COLOURS.FLASH = read('--gold-2', COLOURS.FLASH);
+  } catch { /* keep the constants */ }
+}
+
+/** Blue's shape is round, red's is a diamond. `r` is the radius of a circle of equal weight. */
+function sideShape(ctx: CanvasRenderingContext2D, team: string, x: number, y: number, r: number) {
+  ctx.beginPath();
+  if (team === 'RED') {
+    const d = r * 1.25;
+    ctx.moveTo(x, y - d);
+    ctx.lineTo(x + d, y);
+    ctx.lineTo(x, y + d);
+    ctx.lineTo(x - d, y);
+    ctx.closePath();
+  } else {
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+  }
+}
 
 /**
  * Turret positions per lane, outer to inhibitor turret, then the inhibitor.
@@ -148,7 +185,7 @@ function draw() {
   // map whatever shape the art is.
   const unit = Math.min(w, h);
 
-  ctx.fillStyle = '#060a10';
+  ctx.fillStyle = COLOURS.GROUND;
   ctx.fillRect(0, 0, w, h);
 
   const map = prepareBackdrop(w, h);
@@ -171,8 +208,20 @@ function draw() {
         ctx.fillStyle = alive ? colour : 'rgba(8, 12, 20, 0.6)';
         ctx.strokeStyle = alive ? 'rgba(5, 8, 14, 0.8)' : 'rgba(255,255,255,0.12)';
         ctx.lineWidth = 1;
-        ctx.fillRect(at.x - r, at.y - r, r * 2, r * 2);
-        ctx.strokeRect(at.x - r, at.y - r, r * 2, r * 2);
+        // Blue towers are squares, red ones the same square turned into a diamond.
+        ctx.beginPath();
+        if (team === 'RED') {
+          const d = r * 1.3;
+          ctx.moveTo(at.x, at.y - d);
+          ctx.lineTo(at.x + d, at.y);
+          ctx.lineTo(at.x, at.y + d);
+          ctx.lineTo(at.x - d, at.y);
+          ctx.closePath();
+        } else {
+          ctx.rect(at.x - r, at.y - r, r * 2, r * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
       });
 
       const inhib = p(points[3].x, points[3].y);
@@ -197,9 +246,11 @@ function draw() {
     const at = p(props.flash.x, props.flash.y);
     ctx.beginPath();
     ctx.arc(at.x, at.y, unit * 0.045, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(240, 194, 95, 0.8)';
+    ctx.strokeStyle = COLOURS.FLASH;
+    ctx.globalAlpha = 0.85;
     ctx.lineWidth = 2;
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   // Champions last, so nothing draws over them.
@@ -207,28 +258,38 @@ function draw() {
     const at = p(player.pos.x, player.pos.y);
     const r = unit * 0.019;
 
-    ctx.beginPath();
-    ctx.arc(at.x, at.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = player.alive
-      ? (player.team === 'BLUE' ? COLOURS.BLUE : COLOURS.RED)
-      : (player.team === 'BLUE' ? COLOURS.BLUE_DIM : COLOURS.RED_DIM);
+    // Dead champions keep their shape at a third of the strength, rather than a
+    // second, paler colour per side.
+    sideShape(ctx, player.team, at.x, at.y, r);
+    ctx.globalAlpha = player.alive ? 1 : 0.3;
+    ctx.fillStyle = player.team === 'BLUE' ? COLOURS.BLUE : COLOURS.RED;
     ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = player.alive ? 'rgba(5, 8, 14, 0.9)' : 'rgba(5, 8, 14, 0.4)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
     ctx.fillStyle = player.alive ? '#05080e' : 'rgba(233,238,250,0.45)';
-    ctx.font = `700 ${Math.round(unit * 0.022)}px system-ui, sans-serif`;
+    ctx.font = `800 ${Math.round(unit * 0.022)}px 'Mona Sans', system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(player.slot[0], at.x, at.y + 0.5);
   }
 }
 
-function loop() {
-  draw();
-  frame = requestAnimationFrame(loop);
+/**
+ * One draw on the next frame, however many things changed before it. Nothing keeps a
+ * loop running: when the positions stop moving, so does the canvas.
+ */
+function schedule() {
+  if (frame || typeof window === 'undefined') return;
+  frame = requestAnimationFrame(() => {
+    frame = 0;
+    draw();
+  });
 }
+
+watch(() => [props.positions, props.structures, props.flash], schedule);
 
 /**
  * Whatever is in public/map, under any of the names a downloaded render arrives
@@ -236,7 +297,7 @@ function loop() {
  * a file copy and not a file copy plus a rename plus working out why the canvas went
  * black.
  */
-const ART_SOURCES = ['/map/rift.png', '/map/rift.jpg', '/map/rift.jpeg', '/map/rift.webp'];
+const ART_SOURCES = ['/map/rift.jpg', '/map/rift.png', '/map/rift.jpeg', '/map/rift.webp'];
 
 function loadArt(index = 0) {
   if (index >= ART_SOURCES.length) return;
@@ -248,28 +309,42 @@ function loadArt(index = 0) {
     // The canvas takes the art's own aspect ratio rather than forcing it square,
     // because stretching a terrain render to a square is instantly visible.
     aspect.value = image.naturalWidth / image.naturalHeight;
-    draw();
+    schedule();
   };
   image.onerror = () => loadArt(index + 1);
 }
 
-onMounted(() => {
-  loadArt();
+let resizer: ResizeObserver | null = null;
 
-  loop();
-  window.addEventListener('resize', draw);
+onMounted(() => {
+  readTokens();
+  loadArt();
+  schedule();
+  // The slot letters are set in Mona Sans; once it has loaded, draw them again in it.
+  document.fonts?.ready.then(schedule).catch(() => {});
+
+  // The element changes size when the window does and when the art's aspect ratio
+  // lands, and both need a redraw even though no prop moved.
+  if (typeof ResizeObserver !== 'undefined' && canvas.value) {
+    resizer = new ResizeObserver(schedule);
+    resizer.observe(canvas.value);
+  } else {
+    window.addEventListener('resize', schedule);
+  }
 });
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(frame);
-  window.removeEventListener('resize', draw);
+  frame = 0;
+  resizer?.disconnect();
+  window.removeEventListener('resize', schedule);
 });
 </script>
 
 <template>
   <canvas
     ref="canvas" class="rift" :style="{ aspectRatio: String(aspect) }"
-    role="img" aria-label="Summoner's Rift, live positions"
+    role="img" aria-label="Summoner's Rift, live positions. Blue side round, red side diamonds."
   />
 </template>
 
@@ -277,8 +352,8 @@ onBeforeUnmount(() => {
 .rift {
   display: block;
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-1);
   border-radius: var(--radius);
-  background: #060a10;
+  background: var(--bg-0);
 }
 </style>

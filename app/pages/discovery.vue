@@ -199,6 +199,7 @@ async function challenge(target: { id: string; displayName?: string; handle?: st
             class="btn btn--quiet"
             type="button"
             :disabled="challenging === entry.manager.id"
+            data-sound="searchStart"
             @click="challenge(entry.manager)"
           >
             {{ challenging === entry.manager.id ? 'Sending' : 'Duel' }}
@@ -217,66 +218,57 @@ async function challenge(target: { id: string; displayName?: string; handle?: st
   min-width: 0;
   min-height: 48px;
   padding: 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--sunken);
-  color: var(--ink);
-  font-family: var(--font-display);
-  font-size: 17px;
-  font-weight: 600;
+  border: 1px solid var(--line-2);
+  border-radius: 2px;
+  background: var(--bg-0);
+  color: var(--ink-1);
+  font-family: inherit;
+  font-stretch: 85%;
+  font-size: 18px;
+  font-weight: 760;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
-.find__input:focus { border-color: var(--accent); outline: none; }
-.find__input::placeholder { color: var(--ink-faint); }
+.find__input:focus { border-color: var(--teal-2); outline: none; }
+.find__input::placeholder { color: var(--ink-4); }
 .find__msg { margin: 10px 0 0; }
 .find__hint { font-size: 12.5px; line-height: 1.5; margin: 10px 0 0; }
 
-.found { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
-.found__skeleton { height: 182px; border-radius: var(--radius); }
-
-.mgr.is-new { border-color: var(--accent); }
+/* People, as a list rather than a stack of boxes. */
+.found { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--line-1); }
+.found__skeleton { height: 150px; margin-top: 8px; }
+.mgr { padding: 16px 4px; background: none; border: 0; border-bottom: 1px solid var(--line-1); border-radius: 0; }
+.mgr.is-new { background: var(--bg-3); }
 .mgr__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.mgr__name { font-family: var(--font-display); font-size: 19px; font-weight: 700; margin: 0; }
+.mgr__name { font-stretch: 85%; font-size: 20px; font-weight: 800; margin: 0; }
 .mgr__handle { font-size: 13px; margin: 1px 0 0; }
 .mgr__forget {
   appearance: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
   border: 0;
+  border-radius: 2px;
   background: transparent;
-  color: var(--ink-faint);
+  color: var(--ink-3);
   font-size: 22px;
   line-height: 1;
-  padding: 4px 8px;
-  margin: -4px -8px 0 0;
+  margin: -6px -6px 0 0;
   cursor: pointer;
 }
-.mgr__forget:hover { color: var(--bad); }
+.mgr__forget:hover { color: var(--red-2); background: var(--bg-3); }
 
-.mgr__total { display: flex; align-items: baseline; gap: 7px; margin: 12px 0 0; }
-.mgr__n { font-family: var(--font-display); font-size: 27px; font-weight: 700; }
-.mgr__unit {
-  font-family: var(--font-label);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-}
+.mgr__total { display: flex; align-items: baseline; gap: 7px; margin: 10px 0 0; }
+.mgr__n { font-stretch: 75%; font-size: 30px; font-weight: 840; }
+.mgr__unit { font-size: 13px; font-weight: 600; color: var(--ink-3); }
 
-.mgr__bands { list-style: none; display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 0; padding: 0; }
-.mgr__bands li { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; }
+.mgr__bands { list-style: none; display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 0; padding: 0; }
+.mgr__bands li { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 650; }
 .mgr__bands li.is-zero { opacity: 0.35; }
 
 .mgr__best { font-size: 13.5px; margin: 10px 0 0; }
 
-.mgr__foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-.mgr__code { font-size: 13px; letter-spacing: 0.1em; }
+.mgr__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.mgr__code { margin-right: auto; font-size: 13px; letter-spacing: 0.1em; }
 </style>

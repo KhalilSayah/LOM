@@ -105,6 +105,7 @@ async function choose(role: string, entry: any | null) {
     }
   }
   data.value.roster[role] = entry;
+  playSound(entry ? 'slotIn' : 'back');
 
   saving.value = true;
   try {
@@ -122,355 +123,329 @@ async function choose(role: string, entry: any | null) {
   }
 }
 
-useHead({ title: 'Roster — LOM' });
+/**
+ * The strongest card you own for every lane. Chemistry is left to the person: it trades
+ * rating for links, and that trade is the interesting decision on this screen, so the
+ * shortcut only does the obvious part.
+ */
+const bestFive = computed<Record<string, any>>(() => {
+  const out: Record<string, any> = {};
+  for (const role of ROLES) {
+    out[role] = owned.value
+      .filter((c) => c.card.role === role)
+      .sort((a, b) => b.card.ovr - a.card.ovr || (b.level ?? 1) - (a.level ?? 1))[0] ?? null;
+  }
+  return out;
+});
+
+/** Slots the shortcut would change. Empty when the five already is the best five. */
+const autofillChanges = computed(() =>
+  ROLES.filter((r) => bestFive.value[r] && held(r)?.id !== bestFive.value[r].id));
+
+async function autofill() {
+  if (saving.value || !autofillChanges.value.length) return;
+  const changes = [...autofillChanges.value];
+  for (const role of changes) data.value.roster[role] = bestFive.value[role];
+  playSound('slotIn');
+
+  saving.value = true;
+  try {
+    for (const role of changes) {
+      await $fetch('/api/roster/slot', {
+        method: 'POST',
+        body: { role, collectionCardId: bestFive.value[role].id },
+      });
+    }
+    error.value = '';
+    if (chemistry.value.average > 0) playSound('chemistry');
+  } catch (e: any) {
+    error.value = message(e, 'Some of that did not save.');
+  } finally {
+    saving.value = false;
+    await load();
+  }
+}
+
+/**
+ * Where each role stands on the board: its lane on the Rift, blue base bottom-left.
+ * Top up the left edge, jungle between the lanes, mid on the diagonal, bot and support
+ * along the bottom. A formation a League player reads without a legend.
+ */
+const LANE_AT: Record<string, { x: number; y: number }> = {
+  TOP: { x: 19, y: 22 },
+  JNG: { x: 22, y: 62 },
+  MID: { x: 50, y: 44 },
+  BOT: { x: 81, y: 79 },
+  SUP: { x: 59, y: 81 },
+};
+
+/** Lines between cards that earn chemistry from the same reason — the core made visible. */
+const links = computed(() => {
+  const out: Array<{ a: string; b: string }> = [];
+  for (let i = 0; i < ROLES.length; i++) {
+    for (let j = i + 1; j < ROLES.length; j++) {
+      const a = ROLES[i] as string;
+      const b = ROLES[j] as string;
+      const ra = chemistry.value.byRole[a]?.reasons ?? [];
+      const rb = chemistry.value.byRole[b]?.reasons ?? [];
+      if (slots.value[a] && slots.value[b] && ra.some((r: string) => rb.includes(r))) out.push({ a, b });
+    }
+  }
+  return out;
+});
+
+/** A chemistry bonus earned by a swap is worth hearing. */
+watch(() => chemistry.value.average, (now, before) => {
+  if (!loading.value && before !== undefined && now > before) setTimeout(() => playSound('chemistry'), 140);
+});
+
+useHead({ title: 'Team — LOM' });
 </script>
 
+
 <template>
-  <main class="page">
+  <main class="page page--full team">
     <header class="topbar">
-      <h1>Roster</h1>
-      <span class="topbar__meta tnum">{{ filledCount }} / 5</span>
+      <h1>Team</h1>
+      <span class="topbar__meta tnum">{{ filledCount }} of 5 set</span>
+      <button
+        v-if="data && autofillChanges.length"
+        class="btn btn--ghost btn--sm team__auto" type="button" data-sound="none"
+        :disabled="saving" @click="autofill"
+      >
+        {{ filledCount < 5 ? 'Fill with my best' : 'Use my best five' }}
+      </button>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
-    <div v-if="loading" class="skeleton sheet-skeleton" />
+    <div v-if="loading" class="skeleton team__skeleton" />
 
     <template v-else-if="data">
-      <section class="panel totals">
-        <div class="totals__cell">
-          <p class="eyebrow">Rating</p>
-          <p class="totals__n tnum">{{ rating || '—' }}</p>
-        </div>
-        <div class="totals__cell">
-          <p class="eyebrow">Chemistry</p>
-          <p class="totals__n tnum" :class="{ 'is-on': chemistry.average > 0 }">
-            {{ chemistry.average ? `+${chemistry.average}` : '—' }}
-          </p>
-        </div>
-        <div class="totals__cell">
-          <p class="eyebrow">Pool</p>
-          <p class="totals__n tnum">{{ coverage.champions || '—' }}</p>
-        </div>
-      </section>
+      <div class="team__grid">
+        <section class="team__board">
+          <dl class="totals">
+            <div><dt>Rating</dt><dd class="num">{{ rating || '—' }}</dd></div>
+            <div><dt>Chemistry</dt><dd class="num" :class="{ 'is-on': chemistry.average > 0 }">{{ chemistry.average ? `+${chemistry.average}` : '—' }}</dd></div>
+            <div><dt>Pool</dt><dd class="num">{{ coverage.champions || '—' }}</dd></div>
+          </dl>
 
-      <!-- the five, all visible at once -->
-      <ul class="board">
-        <li v-for="role in ROLES" :key="role">
-          <button
-            class="tile"
-            :class="{ 'is-selected': selectedRole === role, 'is-empty': !slots[role] }"
-            type="button"
-            :aria-pressed="selectedRole === role"
-            @click="select(role)"
-          >
-            <span class="tile__role">{{ role }}</span>
+          <!-- the five, placed where they play -->
+          <div class="rift">
+            <img class="rift__map" src="/map/rift.jpg" alt="" aria-hidden="true">
+            <svg class="rift__links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <line
+                v-for="l in links" :key="`${l.a}-${l.b}`"
+                :x1="LANE_AT[l.a]!.x" :y1="LANE_AT[l.a]!.y" :x2="LANE_AT[l.b]!.x" :y2="LANE_AT[l.b]!.y"
+              />
+            </svg>
 
-            <span v-if="slots[role]" class="tile__art">
-              <LomCard :card="slots[role]" compact :interactive="false" />
-            </span>
-            <span v-else class="tile__hole" aria-hidden="true">+</span>
-
-            <span class="tile__foot tnum" :class="slots[role] ? `is-${slots[role].rarity.toLowerCase()}` : ''">
-              {{ slots[role] ? slots[role].ovr : '··' }}
-            </span>
-
-            <span v-if="chemistry.byRole[role].bonus" class="tile__chem tnum">
-              +{{ chemistry.byRole[role].bonus }}
-            </span>
-          </button>
-        </li>
-      </ul>
-
-      <!-- the slot in focus, full size -->
-      <section class="preview">
-        <template v-if="previewCard">
-          <div class="preview__card">
-            <LomCard :card="previewCard" />
-          </div>
-          <div class="preview__side">
-            <p class="eyebrow">{{ selectedRole }}</p>
-            <h2 class="preview__name">
-              {{ previewCard.playerName }}
-              <span v-if="previewCard.season" class="preview__season">{{ previewCard.season }}</span>
-            </h2>
-            <p class="muted preview__meta">
-              {{ previewCard.team || 'Unknown team' }} · {{ depth(previewCard) }} champion{{ depth(previewCard) === 1 ? '' : 's' }} deep
-              <template v-if="previewHeld?.level > 1"> · level {{ previewHeld.level }}</template>
-            </p>
-            <p v-if="chemistry.byRole[selectedRole].bonus" class="preview__chem">
-              +{{ chemistry.byRole[selectedRole].bonus }} chemistry ·
-              {{ chemistry.byRole[selectedRole].reasons.join(' · ') }}
-            </p>
-            <button class="btn btn--ghost preview__clear" type="button" :disabled="saving" @click="choose(selectedRole, null)">
-              Take out of the lineup
-            </button>
-          </div>
-        </template>
-        <p v-else class="muted preview__empty">
-          No {{ selectedRole }} picked. Choose one below.
-        </p>
-      </section>
-
-      <!-- everything you own for that slot -->
-      <section class="bench">
-        <div class="bench__head">
-          <p class="eyebrow">Your {{ selectedRole }} cards <span class="faint">({{ bench.length }})</span></p>
-          <input
-            v-model="search"
-            class="bench__search"
-            type="search"
-            :placeholder="`Search ${selectedRole.toLowerCase()}s`"
-          >
-        </div>
-
-        <ul v-if="bench.length" class="bench__grid">
-          <li v-for="entry in bench" :key="entry.id">
             <button
-              class="pick"
-              :class="{ 'is-in': slotOf(entry.id) === selectedRole, 'is-elsewhere': slotOf(entry.id) && slotOf(entry.id) !== selectedRole }"
+              v-for="role in ROLES" :key="role"
+              class="slot"
+              :class="{ 'is-selected': selectedRole === role, 'is-empty': !slots[role] }"
+              :style="{ left: `${LANE_AT[role]!.x}%`, top: `${LANE_AT[role]!.y}%` }"
               type="button"
-              :disabled="saving"
-              @click="choose(selectedRole, entry)"
+              :aria-pressed="selectedRole === role"
+              :aria-label="`${role}: ${slots[role] ? `${slots[role].playerName} ${slots[role].season}` : 'empty'}`"
+              @click="select(role)"
             >
-              <LomCard :card="entry.card" compact :interactive="false" />
-              <span class="pick__tag">
-                <span class="tnum">{{ entry.card.ovr }}</span>
-                <span v-if="slotOf(entry.id) === selectedRole">in</span>
-                <span v-else-if="slotOf(entry.id)">{{ slotOf(entry.id) }}</span>
+              <LomCard v-if="slots[role]" :card="slots[role]" compact :interactive="false" />
+              <span v-else class="slot__hole" aria-hidden="true">+</span>
+              <span class="slot__tags">
+                <span class="tag slot__role" :class="{ 'is-sel': selectedRole === role }">{{ role }}</span>
+                <span v-if="chemistry.byRole[role]!.bonus" class="slot__chem tnum">+{{ chemistry.byRole[role]!.bonus }}</span>
               </span>
             </button>
-          </li>
-        </ul>
+          </div>
 
-        <p v-else class="muted bench__none">
-          <template v-if="search">Nothing matches “{{ search }}”.</template>
-          <template v-else>
-            You own no {{ selectedRole }} cards yet. Open a pack, or buy a
-            <NuxtLink to="/shop">Signing pack</NuxtLink> — five cards, one for every lane.
-          </template>
-        </p>
-      </section>
-
-      <section class="panel read">
-        <p class="eyebrow">What this roster covers</p>
-        <p class="read__line">
-          <template v-if="coverage.champions">
-            {{ coverage.champions }} champion{{ coverage.champions === 1 ? '' : 's' }} at mastery
-            {{ DEPTH_MASTERY }} or better.
-            <template v-if="coverage.weakest">
-              Thinnest: {{ coverage.weakest.role }} with {{ coverage.weakest.champions }}.
+          <p class="read">
+            <template v-if="coverage.champions">
+              {{ coverage.champions }} champion{{ coverage.champions === 1 ? '' : 's' }} at mastery {{ DEPTH_MASTERY }}+ across the five.
+              <template v-if="coverage.weakest">Thinnest: {{ coverage.weakest.role }}, with {{ coverage.weakest.champions }}.</template>
             </template>
-          </template>
-          <template v-else>
-            Fill a slot and the combined champion pool shows up here.
-          </template>
-        </p>
-
-        <template v-if="chemistry.cores.length || chemistry.teamWide.length">
-          <p class="eyebrow read__eyebrow">Chemistry</p>
-          <ul class="read__chem">
-            <li v-for="core in chemistry.cores" :key="core.label">
-              <strong>{{ core.label }}</strong> ×{{ core.size }} — +{{ core.bonus }} each
-            </li>
-            <li v-for="line in chemistry.teamWide" :key="line">
-              <strong>{{ line }}</strong> — +1 each
-            </li>
+            <template v-else>Fill a slot and the combined champion pool shows up here.</template>
+          </p>
+          <ul v-if="chemistry.cores.length || chemistry.teamWide.length" class="chem">
+            <li v-for="core in chemistry.cores" :key="core.label"><b>{{ core.label }}</b> ×{{ core.size }}<span>+{{ core.bonus }} each</span></li>
+            <li v-for="line in chemistry.teamWide" :key="line"><b>{{ line }}</b><span>+1 each</span></li>
           </ul>
-        </template>
-        <p v-else-if="filledCount > 1" class="muted read__line">
-          No chemistry yet. Two cards from the same real team and season are worth +1.5 each,
-          three or more +2.5, and a full five sharing a region or a year +1 on top.
-        </p>
-      </section>
+          <p v-else-if="filledCount > 1" class="read faint">
+            No chemistry yet. Two cards from the same real team and season are +1.5 each, three or more +2.5,
+            and a full five sharing a region or a year +1 on top.
+          </p>
+        </section>
 
-      <div class="foot">
-        <NuxtLink class="btn btn--ghost" to="/replay">Watch these five play a match</NuxtLink>
-        <p class="faint foot__note">
-          A sandbox: nothing is at stake and no result is kept. Fixtures, strategy and
-          the draft are what a roster feeds once matches land.
-        </p>
+        <section class="team__side">
+          <!-- the slot in focus -->
+          <div class="focus">
+            <template v-if="previewCard">
+              <div class="focus__card"><LomCard :card="previewCard" /></div>
+              <div class="focus__text">
+                <p class="label">{{ selectedRole }}</p>
+                <h2 class="focus__name">
+                  {{ previewCard.playerName }} <span v-if="previewCard.season" class="focus__year">{{ previewCard.season }}</span>
+                </h2>
+                <p class="muted focus__meta">
+                  {{ previewCard.team || 'Unknown team' }} · {{ depth(previewCard) }} champion{{ depth(previewCard) === 1 ? '' : 's' }} deep
+                  <template v-if="previewHeld?.level > 1"> · level {{ previewHeld.level }}</template>
+                </p>
+                <p v-if="chemistry.byRole[selectedRole]!.bonus" class="focus__chem">
+                  +{{ chemistry.byRole[selectedRole]!.bonus }} chemistry · {{ chemistry.byRole[selectedRole]!.reasons.join(' · ') }}
+                </p>
+                <button class="btn btn--quiet" type="button" :disabled="saving" @click="choose(selectedRole, null)">
+                  Take out
+                </button>
+              </div>
+            </template>
+            <p v-else class="muted focus__empty">No {{ selectedRole }} in the five. Choose one below.</p>
+          </div>
+
+          <!-- everything you own for that slot -->
+          <div class="bench">
+            <div class="bench__head">
+              <h2>Your {{ selectedRole }} cards <span class="faint tnum">{{ bench.length }}</span></h2>
+              <input v-model="search" class="input bench__search" type="search" :placeholder="`Search your ${selectedRole} cards`" :aria-label="`Search your ${selectedRole} cards`">
+            </div>
+
+            <ul v-if="bench.length" class="bench__grid">
+              <li v-for="entry in bench" :key="entry.id">
+                <button
+                  class="pick"
+                  :class="{ 'is-in': slotOf(entry.id) === selectedRole, 'is-elsewhere': slotOf(entry.id) && slotOf(entry.id) !== selectedRole }"
+                  type="button"
+                  :disabled="saving"
+                  @click="choose(selectedRole, entry)"
+                >
+                  <LomCard :card="entry.card" compact :interactive="false" />
+                  <span class="pick__tag">
+                    <template v-if="slotOf(entry.id) === selectedRole">In the five</template>
+                    <template v-else-if="slotOf(entry.id)">At {{ slotOf(entry.id) }}</template>
+                  </span>
+                </button>
+              </li>
+            </ul>
+
+            <p v-else class="muted bench__none">
+              <template v-if="search">Nothing matches “{{ search }}”.</template>
+              <template v-else>
+                You own no {{ selectedRole }} cards yet. Open a pack, or buy a
+                <NuxtLink to="/shop">Signing pack</NuxtLink>: five cards, one for every lane.
+              </template>
+            </p>
+          </div>
+
+          <div class="foot">
+            <NuxtLink class="btn btn--ghost" to="/replay">Watch these five play</NuxtLink>
+            <p class="faint">A sandbox match: nothing is at stake and no result is kept.</p>
+          </div>
+        </section>
       </div>
     </template>
   </main>
 </template>
 
 <style scoped>
-.sheet-skeleton { height: 60vh; }
+.team__skeleton { height: 520px; }
+.team .topbar__meta { margin-left: auto; }
+.team__auto { flex: none; }
+.team__grid { display: grid; gap: 28px; }
 
-.totals { display: flex; justify-content: space-between; gap: 10px; }
-.totals__cell { text-align: center; flex: 1; }
-.totals__n { font-size: 22px; font-weight: 700; }
-.totals__n.is-on { color: var(--good, #7df0dc); }
+.totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 0 14px; border-top: 1px solid var(--line-1); border-bottom: 1px solid var(--line-1); }
+.totals div { padding: 12px 0 12px 14px; border-left: 1px solid var(--line-1); }
+.totals div:first-child { border-left: 0; padding-left: 0; }
+.totals dt { font-size: 12px; color: var(--ink-3); }
+.totals dd { margin: 4px 0 0; font-size: 28px; }
+.totals dd.is-on { color: var(--gold-1); }
 
-/* --- the board ----------------------------------------------------------- */
-
-.board {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
-  list-style: none;
-  padding: 0;
-  margin: 14px 0 0;
-}
-
-.tile {
+/* --- the Rift --------------------------------------------------------------- */
+.rift {
   position: relative;
-  width: 100%;
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-  padding: 6px 4px 5px;
-  border-radius: 10px;
-  border: 1px solid var(--line, #2b3448);
-  background: var(--surface-1, #141a26);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #060a11;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.rift__map { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.3; filter: saturate(0.45) brightness(0.8); }
+.rift::after { content: ''; position: absolute; inset: 0; background: radial-gradient(75% 75% at 50% 50%, transparent 40%, rgba(5, 8, 13, 0.85)); pointer-events: none; }
+.rift__links { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; }
+.rift__links line { stroke: var(--gold-2); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: 0.75; vector-effect: non-scaling-stroke; }
+
+.slot {
+  position: absolute;
+  z-index: 2;
+  width: 19.5%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
   cursor: pointer;
-  transition: border-color 0.15s, transform 0.15s, background 0.15s;
+  translate: -50% -50%;
+  transition: transform 160ms var(--ease-out);
 }
-.tile:hover { border-color: var(--line-bright, #49566b); }
-.tile.is-selected {
-  border-color: var(--accent, #67d3f2);
-  background: var(--surface-2, #1b2230);
-  transform: translateY(-2px);
-}
-.tile.is-empty { border-style: dashed; }
-
-.tile__role {
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-dim, #8fa3c0);
-}
-/* The card engine sizes itself: width 100% of its host, aspect-ratio 63/88, with the art
-   deliberately overflowing the frame and cropped. Constrain the host and nothing else —
-   forcing width on the inner img fights card.css and flattens the artwork. */
-.tile__art { display: block; width: 100%; }
-
-.tile__hole {
+.slot :deep(.lom-card) { transition: box-shadow 160ms ease; }
+.slot.is-selected :deep(.lom-card) { box-shadow: 0 0 0 2px var(--gold-2), 0 10px 24px rgba(0, 0, 0, 0.6); }
+.slot__hole {
   display: grid;
   place-items: center;
-  width: 100%;
-  aspect-ratio: 5 / 7;
-  font-size: 20px;
-  color: var(--ink-dim, #8fa3c0);
-  opacity: 0.5;
+  aspect-ratio: 63 / 88;
+  border: 1px dashed var(--line-3);
+  border-radius: 4%;
+  background: rgba(4, 7, 13, 0.7);
+  font-size: 24px;
+  color: var(--ink-3);
 }
-
-.tile__foot { font-size: 12px; font-weight: 700; }
-.tile__foot.is-common { color: #8fa3c0; }
-.tile__foot.is-rare { color: #67d3f2; }
-.tile__foot.is-epic { color: #c08cff; }
-.tile__foot.is-legendary { color: #f5cf6a; }
-.tile__foot.is-icon { color: #7df0dc; }
-
-.tile__chem {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--good, #7df0dc);
+.slot.is-selected .slot__hole { border-color: var(--gold-2); color: var(--gold-1); }
+/* Role and chemistry sit in a strip above the card, never on its name or year. */
+.slot__tags { position: absolute; left: -12px; right: -12px; bottom: calc(100% + 5px); z-index: 3; display: flex; justify-content: center; align-items: center; gap: 3px; }
+.slot__role.is-sel { --tag: var(--gold-2); color: var(--gold-ink); }
+.slot__chem {
+  padding: 1px 5px;
+  border: 1px solid rgba(216, 176, 100, 0.5);
+  border-radius: 2px;
+  background: var(--bg-0);
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--gold-1);
 }
+@media (hover: hover) and (pointer: fine) { .slot:hover { transform: translateY(-3px); } }
 
-/* --- preview ------------------------------------------------------------- */
+.read { margin: 14px 0 0; font-size: 13.5px; color: var(--ink-2); }
+.chem { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.chem li { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; color: var(--ink-2); }
+.chem b { color: var(--ink-1); font-weight: 680; }
+.chem span { margin-left: auto; color: var(--gold-1); font-weight: 700; font-variant-numeric: tabular-nums; }
 
-.preview {
-  display: grid;
-  gap: 12px;
-  margin-top: 14px;
-  padding: 12px;
-  border-radius: 12px;
-  background: var(--surface-1, #141a26);
-  border: 1px solid var(--line, #2b3448);
-}
-.preview__card { max-width: 240px; margin: 0 auto; width: 100%; }
-.preview__side { display: grid; gap: 4px; align-content: start; }
-.preview__name { font-size: 19px; }
-.preview__season { color: var(--ink-dim, #8fa3c0); font-weight: 400; }
-.preview__meta { font-size: 13px; }
-.preview__chem { font-size: 13px; color: var(--good, #7df0dc); }
-.preview__clear { margin-top: 8px; justify-self: start; }
-.preview__empty { text-align: center; padding: 20px 0; }
+/* --- focus + bench ---------------------------------------------------------- */
+.focus { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 18px; align-items: center; padding-bottom: 22px; border-bottom: 1px solid var(--line-1); }
+.focus__name { margin: 4px 0 0; font-size: 26px; line-height: 1; }
+.focus__year { color: var(--gold-1); }
+.focus__meta { margin: 6px 0 0; font-size: 13px; }
+.focus__chem { margin: 6px 0 12px; font-size: 13px; color: var(--gold-1); }
+.focus__text .btn { margin-top: 12px; }
+.focus__empty { grid-column: 1 / -1; margin: 0; padding: 22px 0 0; }
 
-@media (min-width: 620px) {
-  .preview { grid-template-columns: 240px 1fr; align-items: start; }
-  .preview__card { margin: 0; }
-}
-
-/* --- bench --------------------------------------------------------------- */
-
-.bench { margin-top: 16px; }
-.bench__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-.bench__search {
-  flex: 0 1 180px;
-  min-width: 0;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--line, #2b3448);
-  background: var(--surface-1, #141a26);
-  color: var(--ink, #e4ebf6);
-  font: inherit;
-  font-size: 13px;
-}
-
-.bench__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-  gap: 8px;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.pick {
-  position: relative;
-  width: 100%;
-  padding: 0;
-  border: 2px solid transparent;
-  border-radius: 10px;
-  background: none;
-  cursor: pointer;
-  transition: transform 0.12s, border-color 0.12s;
-}
-.pick:hover { transform: translateY(-2px); }
-.pick:disabled { cursor: progress; opacity: 0.7; }
-.pick.is-in { border-color: var(--accent, #67d3f2); }
+.bench { margin-top: 22px; }
+.bench__head { display: grid; gap: 10px; margin-bottom: 14px; }
+.bench__head h2 { font-stretch: 92%; font-weight: 720; font-size: 17px; }
+.bench__search { min-height: 44px; font-size: 15px; }
+.bench__grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 22px 10px; }
+.pick { position: relative; display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
+.pick.is-in :deep(.lom-card) { box-shadow: 0 0 0 2px var(--gold-2); }
 .pick.is-elsewhere { opacity: 0.55; }
-.pick :deep(.lom-card-host) { display: block; width: 100%; }
+.pick__tag { display: block; min-height: 16px; margin-top: 6px; font-size: 11.5px; font-weight: 650; color: var(--ink-3); text-align: center; }
+.pick.is-in .pick__tag { color: var(--gold-1); }
+.bench__none { font-size: 14px; }
 
-.pick__tag {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  gap: 4px;
-  padding: 2px 0 3px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink, #e4ebf6);
-  background: linear-gradient(to top, rgba(6, 10, 16, 0.92), rgba(6, 10, 16, 0));
-  border-radius: 0 0 8px 8px;
+.foot { display: grid; gap: 8px; justify-items: start; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-1); }
+.foot p { margin: 0; font-size: 12.5px; }
+
+@media (min-width: 1024px) {
+  .team__grid { grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 40px; align-items: start; }
+  .focus { grid-template-columns: 180px minmax(0, 1fr); }
+  .bench__head { grid-template-columns: minmax(0, 1fr) 240px; align-items: center; }
 }
 
-.bench__none { padding: 16px 0; text-align: center; font-size: 13px; }
-
-/* --- readouts ------------------------------------------------------------ */
-
-.read { margin-top: 16px; }
-.read__line { font-size: 13px; }
-.read__eyebrow { margin-top: 10px; }
-.read__chem { list-style: none; padding: 0; margin: 4px 0 0; font-size: 13px; display: grid; gap: 2px; }
-
-.foot { margin-top: 18px; display: grid; gap: 8px; justify-items: center; text-align: center; }
-.foot__note { font-size: 12px; max-width: 42ch; }
+@media (prefers-reduced-motion: reduce) { .slot, .slot :deep(.lom-card) { transition: none; } }
 </style>

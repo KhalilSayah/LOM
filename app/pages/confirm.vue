@@ -29,8 +29,16 @@ function urlError(): string | null {
   return description ? String(description).replace(/\+/g, ' ') : 'That link could not be used.';
 }
 
+// Where they were going before the sign-up detour — an invite link, usually. safeNext
+// only lets a path on this origin through, and falls back to the pack.
+const next = computed(() => safeNext(route.query.next));
+
+// "Back to sign in" keeps the destination, so a second attempt still lands on it.
+const signInLink = computed(() =>
+  (route.query.next ? { path: '/', query: { next: next.value } } : '/'));
+
 watchEffect(() => {
-  if (user.value) navigateTo('/pack');
+  if (user.value) navigateTo(next.value);
 });
 
 onMounted(() => {
@@ -50,15 +58,18 @@ useHead({ title: 'Confirming — LOM' });
 <template>
   <main class="page confirm">
     <template v-if="failed">
+      <span class="confirm__mark" aria-hidden="true" />
       <h1>Not signed in</h1>
-      <p class="muted">{{ failed }}</p>
-      <NuxtLink class="btn" to="/">Back to sign in</NuxtLink>
+      <p class="muted confirm__line" role="alert">{{ failed }}</p>
+      <NuxtLink class="btn" :to="signInLink">Back to sign in</NuxtLink>
     </template>
 
     <template v-else>
       <span class="confirm__spinner" aria-hidden="true" />
       <h1>Confirming your account</h1>
-      <p class="muted">{{ slow ? 'Still working on it.' : 'One moment.' }}</p>
+      <p class="muted confirm__line" role="status" aria-live="polite">
+        {{ slow ? 'Still working on it.' : 'One moment.' }}
+      </p>
     </template>
   </main>
 </template>
@@ -73,18 +84,29 @@ useHead({ title: 'Confirming — LOM' });
   gap: 14px;
   text-align: center;
 }
-.confirm h1 { font-size: 24px; }
-.confirm p { margin: 0; max-width: 40ch; }
+.confirm h1 { font-size: clamp(26px, 6vw, 34px); }
+.confirm__line { margin: 0; max-width: 40ch; font-size: 14.5px; }
+.confirm .btn { margin-top: 6px; }
+
 .confirm__spinner {
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  border: 2px solid var(--line-strong);
-  border-top-color: var(--accent);
-  animation: spin 0.9s linear infinite;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--gold-2);
+  animation: confirm-spin 0.9s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* The failed state keeps the same slot, as a still gold diamond, so the layout does not jump. */
+.confirm__mark {
+  width: 14px;
+  height: 14px;
+  margin: 10px;
+  background: var(--gold-2);
+  transform: rotate(45deg);
+}
+@keyframes confirm-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .confirm__spinner { animation: none; border-top-color: var(--accent); }
+  /* No spinning: a still ring with its gold quarter still reads as "working". */
+  .confirm__spinner { animation: none; }
 }
 </style>

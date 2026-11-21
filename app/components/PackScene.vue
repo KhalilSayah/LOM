@@ -29,7 +29,7 @@ defineExpose({ open: () => pack?.open() });
 </template>
 
 <style scoped>
-.pack-host :deep(.lom-pack-scene) { min-height: min(72vh, 560px); }
+.pack-host :deep(.lom-pack-scene) { min-height: 100svh; }
 /* The scene ships its own "Open another" button; in the app a pack is once a day. */
 .pack-host :deep([data-act='again']) { display: none; }
 </style>

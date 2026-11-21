@@ -61,7 +61,7 @@ useHead(() => ({
 <template>
   <main class="page">
     <header class="topbar">
-      <NuxtLink class="btn btn--quiet" to="/leagues">Leagues</NuxtLink>
+      <NuxtLink class="backlink" to="/leagues"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>Leagues</NuxtLink>
       <span class="topbar__meta">Invite</span>
     </header>
 
@@ -70,6 +70,8 @@ useHead(() => ({
     <div v-if="loading" class="skeleton invite-skeleton" />
 
     <section v-else-if="league" class="panel invite">
+      <span class="invite__tl" aria-hidden="true" /><span class="invite__br" aria-hidden="true" />
+      <svg class="invite__mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v4.5a5 5 0 0 1-10 0zM7 6H4.5a2.5 2.5 0 0 0 2.6 3.4M17 6h2.5a2.5 2.5 0 0 1-2.6 3.4M12 13.5V17M8.5 20h7l-1-3h-5z" /></svg>
       <p class="eyebrow">{{ data.host }} invited you to</p>
       <h1 class="invite__name">{{ league.name }}</h1>
 
@@ -81,7 +83,7 @@ useHead(() => ({
 
       <ul class="who">
         <li v-for="(m, i) in data.members" :key="i" class="who__row">
-          {{ m.teamName }}<span v-if="m.isOwner" class="faint"> · host</span>
+          <span class="who__av" aria-hidden="true">{{ (m.teamName || '?').slice(0, 2) }}</span>{{ m.teamName }}<span v-if="m.isOwner" class="tag">host</span>
         </li>
       </ul>
 
@@ -103,7 +105,7 @@ useHead(() => ({
       </template>
 
       <template v-else>
-        <button class="btn btn--block" type="button" :disabled="joining" @click="join">
+        <button class="btn btn--lg btn--block" type="button" data-sound="success" :disabled="joining" @click="join">
           {{ joining ? 'Joining' : 'Join this league' }}
         </button>
         <p class="faint hint">
@@ -116,21 +118,25 @@ useHead(() => ({
 </template>
 
 <style scoped>
+.backlink { display: inline-flex; align-items: center; gap: 4px; margin-left: -6px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.backlink svg { width: 20px; height: 20px; }
 .invite-skeleton { height: 30vh; }
-.invite { margin-top: 10vh; text-align: center; }
-.invite__name { font-family: var(--font-display); font-size: 27px; margin: 6px 0 0; }
-.invite__meta { font-size: 13px; margin: 8px 0 14px; }
-
-.who {
-  list-style: none;
-  padding: 10px 0;
-  margin: 0 0 16px;
-  display: grid;
-  gap: 3px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+.invite {
+  max-width: 460px;
+  margin: 6vh auto 0;
+  padding: 32px 22px 26px;
+  text-align: center;
+  background: linear-gradient(165deg, #121b2d, #0a0f19 70%);
 }
-.who__row { font-size: 14px; }
-
-.hint { font-size: 12px; margin: 10px 0 0; }
+.invite__tl, .invite__br { position: absolute; width: 14px; height: 14px; border: 1.5px solid var(--gold-2); pointer-events: none; }
+.invite__tl { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.invite__br { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
+.invite__mark { width: 40px; height: 40px; fill: none; stroke: var(--gold-2); stroke-width: 1.5; stroke-linejoin: round; margin-bottom: 10px; }
+.invite__name { font-size: clamp(32px, 8vw, 44px); line-height: 0.95; margin: 8px 0 0; }
+.invite__meta { font-size: 13px; margin: 10px 0 18px; }
+.who { list-style: none; padding: 6px 0; margin: 0 0 18px; display: grid; gap: 0; text-align: left; border-top: 1px solid var(--line-1); }
+.who__row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; font-size: 14.5px; font-weight: 600; border-bottom: 1px solid var(--line-1); }
+.who__av { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-3); font-size: 11px; font-weight: 760; text-transform: uppercase; }
+.who__row .tag { margin-left: auto; }
+.hint { font-size: 12.5px; margin: 12px 0 0; }
 </style>
