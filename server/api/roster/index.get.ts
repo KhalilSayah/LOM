@@ -2,6 +2,8 @@ import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { CARD_SELECT, toCard } from '~~/shared/cardShape';
 import { ROLES } from '~~/shared/roster';
+import { strategyFor } from '~~/server/utils/strategy';
+import { activeChampionRoles, withFitRoles } from '~~/server/utils/rosterFit';
 
 /**
  * The manager's standing five, and everything they could put in it.
@@ -13,13 +15,17 @@ import { ROLES } from '~~/shared/roster';
  *
  * Empty slots come back as nulls rather than missing keys, so the client can render
  * five slots without knowing which ones exist.
+ *
+ * Each card carries its level and, per pool entry, the champion role a duel would rate it
+ * with, so the screen's match rating is computed from exactly what the match reads. The
+ * manager's strategy preset rides along for the picker.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
   const db = serverSupabaseServiceRole(event);
   await ensureProfile(db, manager);
 
-  const [{ data: slots, error: slotError }, { data: owned, error: ownedError }] = await Promise.all([
+  const [{ data: slots, error: slotError }, { data: owned, error: ownedError }, roles, strategy] = await Promise.all([
     db.from('roster_slots')
       .select('role, collection_card_id, updated_at')
       .eq('profile_id', manager.id),
@@ -27,6 +33,8 @@ export default defineEventHandler(async (event) => {
       .select(`id, level, xp, copies, acquired_at, card_definitions ( ${CARD_SELECT} )`)
       .eq('profile_id', manager.id)
       .order('acquired_at', { ascending: false }),
+    activeChampionRoles(db),
+    strategyFor(db, manager.id),
   ]);
 
   const error = slotError || ownedError;
@@ -38,7 +46,7 @@ export default defineEventHandler(async (event) => {
       id: row.id,
       level: row.level,
       copies: row.copies,
-      card: toCard(row.card_definitions),
+      card: withFitRoles(toCard(row.card_definitions, row.level), roles),
     }));
 
   const byId = new Map(cards.map((c) => [c.id, c]));
@@ -56,5 +64,6 @@ export default defineEventHandler(async (event) => {
   return {
     roster: filled,
     owned: cards,
+    strategy,
   };
 });
