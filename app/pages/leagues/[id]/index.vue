@@ -12,7 +12,14 @@
  * uses: everyone's collection is two taps away, and a friendly is one. A friendly is
  * an ordinary duel (docs/05 section 0) — it settles nothing in the table, which is
  * exactly why it can be played at 2am without anybody's season depending on it.
+ *
+ * What the managers list no longer shows is anybody's collection: docs/01 section 4 keeps
+ * it hidden from opponents. A leaguemate is their record and their form.
  */
+import {
+  kickOffText, dateLabel, dayWord, clockIn, ymdIn, dayGap, zoneCity, zonesDiffer,
+  runtimeZone, TEAM_NAME_MAX,
+} from '~~/shared/league';
 
 const route = useRoute();
 const id = computed(() => String(route.params.id || ''));
@@ -103,7 +110,7 @@ async function launch(force = false) {
       body: { ignoreUnready: force },
     });
     unready.value = [];
-    note.value = `Season on. ${res.matchDays} match days, starting ${res.startsOn}.`;
+    note.value = `Season on. ${res.matchDays} match days, starting ${dateLabel(res.startsOn)}.`;
     await load();
   } catch (e: any) {
     const names = e?.data?.data?.unready as string[] | undefined;
@@ -156,6 +163,30 @@ async function friendly(member: any) {
   }
 }
 
+/** Answer a friendly somebody in the league sent me: accept goes straight into the room. */
+const answering = ref<string | null>(null);
+async function answer(member: any, accept: boolean) {
+  if (answering.value || !member.duel) return;
+  answering.value = member.duel.id;
+  error.value = '';
+  try {
+    const res = await $fetch<any>('/api/duel/respond', {
+      method: 'POST',
+      body: { duelId: member.duel.id, accept },
+    });
+    if (accept) {
+      await navigateTo(`/duel/${res.duelId || member.duel.id}`);
+      return;
+    }
+    await load();
+  } catch (e: any) {
+    error.value = message(e, accept ? 'Could not accept that friendly.' : 'Could not decline that friendly.');
+    await load();
+  } finally {
+    answering.value = null;
+  }
+}
+
 // --- playing a fixture -------------------------------------------------------
 
 const opening = ref(false);
@@ -167,13 +198,27 @@ const opening = ref(false);
  * a draft is already running — the endpoint is idempotent, so both managers tapping at
  * once land in one room rather than two.
  */
-async function play(fixtureId: string) {
+/**
+ * "Start as soon as we are both here". The draft otherwise waits for kick-off, so the
+ * first manager in never starts the clock on the other. Remembered per device.
+ */
+const startEarly = ref(true);
+onMounted(() => {
+  try { startEarly.value = localStorage.getItem('lom.league.startEarly') !== '0'; } catch { /* private mode */ }
+});
+watch(startEarly, (v) => {
+  try { localStorage.setItem('lom.league.startEarly', v ? '1' : '0'); } catch { /* private mode */ }
+});
+
+async function play(fixtureId: string, phase?: string) {
   if (opening.value) return;
   opening.value = true;
   error.value = '';
   try {
     const res = await $fetch<any>(`/api/league/${id.value}/fixture/${fixtureId}/open`, {
       method: 'POST',
+      // Readiness only means something before kick-off; after it the draft is on.
+      body: phase === 'LOBBY' ? { ready: startEarly.value } : {},
     });
     await navigateTo(`/duel/${res.duelId}`);
   } catch (e: any) {
@@ -204,19 +249,28 @@ const TIEBREAK: Record<string, string> = {
 
 const matchDays = computed(() => schedule.value.filter((d) => !d.rest).length);
 
-const dayLabel = (iso: string | null) => {
-  if (!iso) return '';
-  const at = new Date(iso);
-  return at.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-};
+/**
+ * Times, the one way the app writes them (shared/league.ts): a 24-hour clock in the
+ * viewer's own zone, "Today" / "Tomorrow" / a weekday, and the league's own clock beside
+ * it when the two zones read differently.
+ */
+const leagueTz = computed(() => league.value?.timezone || null);
+const viewerTz = runtimeZone();
+const tzDiffers = computed(() => {
+  const sample = schedule.value.find((d) => d.scheduledAt)?.scheduledAt || Date.now();
+  return zonesDiffer(sample, viewerTz, leagueTz.value);
+});
 
-const kickOff = (iso: string | null) => {
-  if (!iso) return '';
-  return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-};
+const dayLabel = (iso: string | null) => (iso ? dayWord(iso, nowMs.value) : '');
+const kickOff = (iso: string | null) => (iso ? clockIn(iso) : '');
+/** '20:30 Paris time', only when it differs from the viewer's clock. */
+const leagueClock = (iso: string | null) =>
+  kickOffText(iso, { leagueTz: leagueTz.value, now: nowMs.value }).league;
 
-const isToday = (iso: string | null) =>
-  Boolean(iso) && new Date(iso!).toDateString() === new Date().toDateString();
+/** Days from today (viewer's calendar) to a kick-off: 0 today, negative in the past. */
+const daysFromToday = (iso: string | null) =>
+  (iso ? dayGap(ymdIn(nowMs.value), ymdIn(iso)) : null);
+const isToday = (iso: string | null) => daysFromToday(iso) === 0;
 
 const next = computed<any>(() => data.value?.next ?? null);
 
@@ -249,6 +303,67 @@ watch(lobbyIn, async (t) => {
 });
 onMounted(() => { lobbyTimer = setInterval(() => { nowMs.value = Date.now(); }, 1000); });
 onBeforeUnmount(() => clearInterval(lobbyTimer));
+
+/** How long ago kick-off was, for a fixture that is live and not yet opened. */
+const sinceKickOff = computed(() => {
+  if (!next.value?.scheduledAt) return '';
+  const mins = Math.max(0, Math.round((nowMs.value - new Date(next.value.scheduledAt).getTime()) / 60000));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  return `${h} h ${String(mins % 60).padStart(2, '0')} min`;
+});
+
+/** How many of my slots a stand-in would fill tonight. */
+const myShortBy = computed(() => (mine.value ? mine.value.rosterSlots - mine.value.rosterFilled : 0));
+
+// --- the calendar: today first, the past folded away -------------------------
+
+const showPast = ref(false);
+
+/** A day is past once its date has gone by and nothing on it is still to play. */
+const isPastDay = (day: any, i: number, all: any[]): boolean => {
+  if (!day.scheduledAt) {
+    // A rest day: past when the next day with a kick-off is.
+    const after = all.slice(i + 1).find((d) => d.scheduledAt);
+    return after ? isPastDay(after, all.indexOf(after), all) : false;
+  }
+  const gap = daysFromToday(day.scheduledAt) ?? 0;
+  return gap < 0 && day.fixtures.every((f: any) => f.result || f.status === 'VOID');
+};
+
+const pastDays = computed(() => (data.value?.schedulePreview
+  ? []
+  : schedule.value.filter((d, i, all) => isPastDay(d, i, all))));
+const shownDays = computed(() =>
+  (showPast.value ? schedule.value : schedule.value.filter((d) => !pastDays.value.includes(d))));
+
+/** The day the calendar is about: today, or the next one with a kick-off. */
+const focusDay = computed(() =>
+  shownDays.value.find((d) => d.scheduledAt && (daysFromToday(d.scheduledAt) ?? -1) >= 0) ?? null);
+
+function jumpToToday() {
+  const target = focusDay.value;
+  if (!target) return;
+  document.getElementById(`day-${target.dayIndex}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** A human date for a calendar day: 'Today', 'Thursday', 'Sat 28 Nov'. */
+const dayHeading = (iso: string | null) => (iso ? dayWord(iso, nowMs.value) : '');
+
+/** The .ics of my fixtures. A plain link: the cookie that signs me in goes with it. */
+const calendarHref = computed(() => `/api/league/${id.value}/calendar.ics`);
+
+/** Stand-ins on a fixture, in words. */
+const standInText = (f: any) => {
+  const parts: string[] = [];
+  for (const side of ['BLUE', 'RED'] as const) {
+    const slots: string[] = f.standIns?.[side] ?? [];
+    if (!slots.length) continue;
+    const who = side === 'BLUE' ? f.blue?.teamName : f.red?.teamName;
+    parts.push(`${who} fielded ${slots.length === 1 ? 'a stand-in' : `${slots.length} stand-ins`} (${slots.join(', ')})`);
+  }
+  return parts.join('; ');
+};
 
 const myRow = computed(() => table.value.find((r) => r.isMe) ?? null);
 const ordinal = (n: number) => {
@@ -304,7 +419,7 @@ async function startNextSeason() {
   error.value = '';
   try {
     const out = await $fetch<any>(`/api/league/${id.value}/season`, { method: 'POST' });
-    note.value = `Season ${out.season} starts ${out.startsOn} — ${out.matchDays} match days.`;
+    note.value = `Season ${out.season} starts ${dateLabel(out.startsOn)} — ${out.matchDays} match days.`;
     confirmNextSeason.value = false;
     await load();
   } catch (e: any) {
@@ -336,6 +451,106 @@ async function drawBracket() {
   }
 }
 
+// --- my team name ------------------------------------------------------------
+
+const renaming = ref(false);
+const newName = ref('');
+const savingName = ref(false);
+
+function startRename() {
+  newName.value = mine.value?.teamName || '';
+  renaming.value = true;
+}
+
+async function saveName() {
+  if (savingName.value) return;
+  savingName.value = true;
+  error.value = '';
+  try {
+    const res = await $fetch<any>(`/api/league/${id.value}/team`, {
+      method: 'POST', body: { teamName: newName.value },
+    });
+    note.value = `You are ${res.teamName} in this league now.`;
+    renaming.value = false;
+    await load();
+  } catch (e: any) {
+    error.value = message(e, 'Could not rename your team.');
+  } finally {
+    savingName.value = false;
+  }
+}
+
+// --- the owner's settings, while forming -------------------------------------
+
+const editing = ref(false);
+const settings = ref({ name: '', matchHour: '20:30', timezone: '' });
+const savingSettings = ref(false);
+
+function startEditing() {
+  settings.value = {
+    name: league.value?.name || '',
+    matchHour: league.value?.matchHour || '20:30',
+    timezone: league.value?.timezone || '',
+  };
+  editing.value = true;
+}
+
+async function saveSettings() {
+  if (savingSettings.value) return;
+  savingSettings.value = true;
+  error.value = '';
+  try {
+    await $fetch(`/api/league/${id.value}/settings`, { method: 'POST', body: settings.value });
+    note.value = 'Saved. The schedule preview has moved with it.';
+    editing.value = false;
+    await load();
+  } catch (e: any) {
+    error.value = message(e, 'Could not save those settings.');
+  } finally {
+    savingSettings.value = false;
+  }
+}
+
+const kicking = ref<string | null>(null);
+const confirmKick = ref<string | null>(null);
+
+async function kick(member: any) {
+  if (kicking.value) return;
+  kicking.value = member.id;
+  error.value = '';
+  try {
+    await $fetch(`/api/league/${id.value}/kick`, { method: 'POST', body: { memberId: member.id } });
+    note.value = `${member.teamName} is out of the league. Mint a new invite code if they should not come back.`;
+    confirmKick.value = null;
+    await load();
+  } catch (e: any) {
+    error.value = message(e, 'Could not remove that manager.');
+  } finally {
+    kicking.value = null;
+  }
+}
+
+const reminting = ref(false);
+async function newCode() {
+  if (reminting.value) return;
+  reminting.value = true;
+  error.value = '';
+  try {
+    const res = await $fetch<any>(`/api/league/${id.value}/invite`, { method: 'POST' });
+    note.value = `New invite code ${res.inviteCode}. The old link no longer works.`;
+    await load();
+  } catch (e: any) {
+    error.value = message(e, 'Could not mint a new code.');
+  } finally {
+    reminting.value = false;
+  }
+}
+
+// --- activity ----------------------------------------------------------------
+
+const feed = computed<any[]>(() => data.value?.feed ?? []);
+const feedWhen = (iso: string | null) => (iso ? `${dayWord(iso, nowMs.value)} ${clockIn(iso)}` : '');
+
 useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League — LOM' }));
 </script>
 
@@ -360,12 +575,13 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         <template v-else-if="league.status === 'ACTIVE'">
           <template v-if="league.season > 1">Season {{ league.season }} since</template>
           <template v-else>Season on since</template>
-          {{ league.startsOn }}
+          {{ dateLabel(league.startsOn) }}
         </template>
         <template v-else>
           Season {{ league.season }} finished
         </template>
-        · {{ league.matchHour }} {{ league.timezone }}
+        · matches at {{ league.matchHour }} {{ zoneCity(league.timezone) }} time
+        <template v-if="tzDiffers"> · times below are yours</template>
       </p>
 
       <!-- The season is over: say who won before anything else. -->
@@ -435,26 +651,60 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
 
       <!-- Tonight. The only thing most people open this screen for. -->
       <section v-if="next" class="panel next">
-        <p class="eyebrow">Day {{ next.dayIndex }}</p>
+        <p class="eyebrow">
+          Day {{ next.dayIndex }}
+          <template v-if="next.stage === 'SEMI'"> · Semi-final</template>
+          <template v-else-if="next.stage === 'GRAND_FINAL'"> · Final</template>
+        </p>
         <p class="next__who">
           <strong>{{ next.opponent }}</strong>
           <span class="faint"> · {{ next.side === 'BLUE' ? 'you draft first' : 'they draft first' }}</span>
         </p>
-        <p class="muted next__when">
+        <p class="muted next__when tnum">
           {{ dayLabel(next.scheduledAt) }} at {{ kickOff(next.scheduledAt) }}
+          <span v-if="leagueClock(next.scheduledAt)" class="faint"> · {{ leagueClock(next.scheduledAt) }}</span>
         </p>
 
-        <button
-          v-if="next.playable" class="btn btn--block next__play" type="button"
-          :disabled="opening" @click="play(next.id)"
-        >
-          {{ opening ? 'Opening' : next.duelId ? 'Back into the draft' : 'Play this fixture' }}
-        </button>
+        <template v-if="next.playable">
+          <button
+            class="btn btn--block next__play" type="button"
+            :disabled="opening" @click="play(next.id, next.phase)"
+          >
+            <template v-if="opening">Opening</template>
+            <template v-else-if="next.duelId">Back into the room</template>
+            <template v-else-if="next.phase === 'LOBBY'">Enter the lobby</template>
+            <template v-else>Play this fixture</template>
+          </button>
+
+          <template v-if="next.phase === 'LOBBY'">
+            <label class="next__early">
+              <input v-model="startEarly" type="checkbox">
+              <span>Start as soon as we are both here</span>
+            </label>
+            <p class="faint next__hint">
+              The draft starts at kick-off, {{ kickOff(next.scheduledAt) }} — earlier only if you
+              both tick this.
+              <template v-if="next.side && next.ready[next.side === 'BLUE' ? 'RED' : 'BLUE'] && next.stage !== 'GHOST'">
+                <b class="next__ready">{{ next.opponent }} is in and ready.</b>
+              </template>
+            </p>
+          </template>
+          <p v-else-if="next.phase === 'LIVE' && !next.duelId" class="faint next__hint">
+            Kicked off {{ sinceKickOff }} ago. Whoever is not there is drafted by the agent.
+            If nobody opens it within a day, the agent plays it for both of you.
+          </p>
+        </template>
         <p v-else-if="lobbyIn !== null && lobbyIn > 0" class="next__hint">
           Lobby opens in <b class="tnum next__count">{{ lobbyText }}</b>
         </p>
         <p v-else class="faint next__hint">
           The lobby opens 15 minutes before kick-off.
+        </p>
+
+        <p v-if="myShortBy > 0" class="notice next__short">
+          Your five is {{ mine.rosterFilled }}/{{ mine.rosterSlots }}.
+          {{ myShortBy === 1 ? 'A weak stand-in fills the empty slot' : `Weak stand-ins fill the ${myShortBy} empty slots` }}
+          when the room opens. <NuxtLink to="/roster">Fill it</NuxtLink>.
         </p>
       </section>
 
@@ -466,14 +716,16 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
             {{ last.result.iWon ? 'Won' : 'Lost' }}
           </strong>
           against {{ last.opponent }}
+          <span v-if="last.result.upset" class="tag tag--new">Upset</span>
           <span class="faint">
             · {{ last.result.blueKills }}–{{ last.result.redKills }}
             in {{ clock(last.result.gameLength) }}
           </span>
         </p>
-        <NuxtLink v-if="last.duelId" class="btn btn--ghost btn--sm" :to="`/duel/${last.duelId}`">
+        <NuxtLink v-if="last.canWatch" class="btn btn--ghost btn--sm" :to="`/duel/${last.duelId}`">
           Watch it again
         </NuxtLink>
+        <p v-if="last.autoPlayed" class="faint last__auto">Nobody opened it within a day, so the agent drafted for both sides.</p>
       </section>
 
       <!-- The table. Only once there is something in it. -->
@@ -486,7 +738,10 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
           >
             <span class="standing__pos tnum">{{ row.position }}</span>
             <span class="standing__who">
-              {{ row.teamName }}
+              <NuxtLink class="standing__link" :to="`/leagues/${league.id}/m/${row.memberId}`">{{ row.teamName }}</NuxtLink>
+              <span v-if="row.form?.length" class="form" :aria-label="`Form: ${row.form.join(' ')}`">
+                <i v-for="(r, i) in row.form" :key="i" class="form__pip" :class="r === 'W' ? 'is-w' : 'is-l'">{{ r }}</i>
+              </span>
               <span v-if="row.decidedBy && TIEBREAK[row.decidedBy]" class="faint standing__why">
                 on {{ TIEBREAK[row.decidedBy] }}
               </span>
@@ -515,11 +770,11 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
             class="panel tie" :class="{ 'is-mine': m.mine, 'is-final': m.stage === 'GRAND_FINAL' }"
           >
             <div class="tie__head">
-              <span class="tie__label">{{ m.label }}</span>
+              <span class="tie__label">{{ m.label }} <span v-if="m.upset" class="tag tag--new">Upset</span></span>
               <span class="faint tie__when">
                 <template v-if="m.status === 'FINAL'">Decided</template>
                 <template v-else-if="m.scheduledAt">
-                  {{ dayLabel(m.scheduledAt) }} · {{ kickOff(m.scheduledAt) }}
+                  {{ dayLabel(m.scheduledAt) }} {{ kickOff(m.scheduledAt) }}
                 </template>
               </span>
             </div>
@@ -591,6 +846,28 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
           remaining {{ league.maxMembers - league.memberCount === 1 ? 'seat' : 'seats' }}.
           It stops working when the season starts.
         </p>
+        <button
+          v-if="data.canEditSettings" class="btn btn--quiet btn--sm invite__new" type="button"
+          :disabled="reminting" @click="newCode"
+        >
+          {{ reminting ? 'Minting' : 'New code (the old link stops working)' }}
+        </button>
+      </section>
+
+      <!-- What happened lately. Derived from the fixtures and the memberships, never stored. -->
+      <section v-if="feed.length > 1 || (feed.length && !forming)" class="block">
+        <p class="eyebrow">Activity</p>
+        <ul class="list feed">
+          <li v-for="item in feed" :key="item.id" class="feed__row" :class="[`is-${item.kind.toLowerCase()}`, { 'is-me': item.isMe }]">
+            <span class="feed__text">
+              {{ item.text }}
+              <span v-if="item.upset" class="tag tag--new">Upset</span>
+              <span v-if="item.autoPlayed" class="faint"> · played by the agent</span>
+            </span>
+            <span class="faint feed__when tnum">{{ feedWhen(item.at) }}</span>
+            <NuxtLink v-if="item.duelId" class="feed__watch" :to="`/duel/${item.duelId}`">Watch</NuxtLink>
+          </li>
+        </ul>
       </section>
 
       <!-- The managers. The part the group actually uses. -->
@@ -608,35 +885,59 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
                 <span v-if="m.isOwner" class="tag">host</span>
                 <span v-if="m.isMe" class="tag tag--me">you</span>
               </span>
-              <span class="manager__cards tnum">{{ m.collection.total }} cards</span>
+              <span v-if="m.record && m.record.won + m.record.lost > 0" class="manager__cards tnum">
+                {{ m.record.won }}–{{ m.record.lost }}
+              </span>
             </div>
 
-            <p class="muted manager__best">
-              <template v-if="m.collection.best">
-                Best: {{ m.collection.best.playerName }}
-                <template v-if="m.collection.best.season">{{ m.collection.best.season }}</template>
-                · {{ m.collection.best.ovr }} OVR
-              </template>
-              <template v-else>No cards opened yet</template>
+            <p v-if="m.form.length" class="muted manager__best">
+              <span class="form" :aria-label="`Form: ${m.form.join(' ')}`">
+                <i v-for="(r, i) in m.form" :key="i" class="form__pip" :class="r === 'W' ? 'is-w' : 'is-l'">{{ r }}</i>
+              </span>
             </p>
 
             <p class="manager__ready" :class="{ 'is-ready': m.ready }">
               Roster {{ m.rosterFilled }}/{{ m.rosterSlots }}
-              <span v-if="!m.ready" class="faint"> · cannot be drafted against yet</span>
+              <span v-if="!m.ready" class="faint"> · stand-ins fill the gaps in a fixture</span>
             </p>
+
+            <form v-if="m.isMe && renaming" class="rename" @submit.prevent="saveName">
+              <input
+                v-model="newName" class="input rename__input" :maxlength="TEAM_NAME_MAX"
+                aria-label="Your team name in this league" required
+              >
+              <button class="btn btn--sm" type="submit" :disabled="savingName">{{ savingName ? 'Saving' : 'Save' }}</button>
+              <button class="btn btn--quiet btn--sm" type="button" @click="renaming = false">Cancel</button>
+            </form>
 
             <div class="manager__acts">
               <NuxtLink class="btn btn--quiet btn--sm" :to="`/leagues/${league.id}/m/${m.id}`">
-                {{ m.isMe ? 'My squad' : 'Squad' }}
+                {{ m.isMe ? 'My season' : 'Season' }}
               </NuxtLink>
+
+              <button v-if="m.isMe && !renaming" class="btn btn--quiet btn--sm" type="button" @click="startRename">
+                Rename team
+              </button>
 
               <template v-if="!m.isMe">
                 <NuxtLink v-if="m.duel && m.duel.status !== 'PENDING'" class="btn btn--ghost btn--sm" :to="`/duel/${m.duel.id}`">
-                  Rejoin
+                  Rejoin friendly
                 </NuxtLink>
-                <span v-else-if="m.duel" class="faint manager__pending">
-                  {{ m.duel.iChallenged ? 'Friendly sent' : 'They challenged you' }}
-                </span>
+                <span v-else-if="m.duel && m.duel.iChallenged" class="faint manager__pending">Friendly sent</span>
+                <template v-else-if="m.duel">
+                  <button
+                    class="btn btn--ghost btn--sm" type="button"
+                    :disabled="answering === m.duel.id || !iAmReady" @click="answer(m, true)"
+                  >
+                    {{ answering === m.duel.id ? 'Answering' : 'Accept friendly' }}
+                  </button>
+                  <button
+                    class="btn btn--quiet btn--sm" type="button"
+                    :disabled="answering === m.duel.id" @click="answer(m, false)"
+                  >
+                    Decline
+                  </button>
+                </template>
                 <button
                   v-else class="btn btn--ghost btn--sm" type="button"
                   :disabled="!m.ready || !iAmReady || challenging === m.profileId"
@@ -644,6 +945,21 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
                 >
                   {{ challenging === m.profileId ? 'Sending' : 'Friendly' }}
                 </button>
+
+                <template v-if="data.canEditSettings">
+                  <button
+                    v-if="confirmKick !== m.id" class="btn btn--quiet btn--sm manager__kick" type="button"
+                    @click="confirmKick = m.id"
+                  >
+                    Remove
+                  </button>
+                  <template v-else>
+                    <button class="btn btn--danger btn--sm" type="button" :disabled="kicking === m.id" @click="kick(m)">
+                      {{ kicking === m.id ? 'Removing' : `Remove ${m.teamName}` }}
+                    </button>
+                    <button class="btn btn--quiet btn--sm" type="button" @click="confirmKick = null">Keep</button>
+                  </template>
+                </template>
               </template>
             </div>
           </li>
@@ -661,8 +977,12 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         <template v-else>
           <p class="muted blurb">
             {{ matchDays }} match days for {{ members.length }} managers, one fixture an evening at
-            {{ league.matchHour }}, everyone against everyone twice — once from each side of the draft.
-            <template v-if="schedule.some((d) => d.rest)">One rest day in the middle.</template>
+            {{ league.matchHour }} {{ zoneCity(league.timezone) }} time, everyone against everyone
+            twice — once from each side of the draft.
+            <template v-if="league.shape.restDays === 1">One rest day in the middle,</template>
+            <template v-else-if="league.shape.restDays > 1">{{ league.shape.restDays }} rest days,</template>
+            then {{ league.shape.playoffDays === 1 ? 'a final' : 'the playoffs' }}: about
+            {{ league.shape.totalDays }} days in all. The length follows the number of managers.
           </p>
 
           <template v-if="league.iAmOwner">
@@ -685,23 +1005,78 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
             {{ members.find((m) => m.isOwner)?.teamName || 'The host' }} starts the season.
           </p>
         </template>
+
+        <!-- The owner's settings. They lock at Start season. -->
+        <div v-if="data.canEditSettings" class="settings">
+          <button v-if="!editing" class="btn btn--quiet btn--sm" type="button" @click="startEditing">
+            Change name, hour or timezone
+          </button>
+          <form v-else class="settings__form" @submit.prevent="saveSettings">
+            <div class="field">
+              <label for="sname">League name</label>
+              <input id="sname" v-model="settings.name" maxlength="40" required>
+            </div>
+            <div class="settings__row">
+              <div class="field">
+                <label for="shour">Match hour</label>
+                <input id="shour" v-model="settings.matchHour" type="time" required>
+              </div>
+              <div class="field">
+                <label for="stz">Timezone</label>
+                <input id="stz" v-model="settings.timezone" placeholder="Europe/Paris" required>
+              </div>
+            </div>
+            <div class="settings__acts">
+              <button class="btn btn--quiet" type="button" @click="editing = false">Cancel</button>
+              <button class="btn btn--ghost" type="submit" :disabled="savingSettings">
+                {{ savingSettings ? 'Saving' : 'Save' }}
+              </button>
+            </div>
+          </form>
+        </div>
       </section>
 
       <!-- The calendar. A preview while forming, the real thing after. -->
       <section v-if="schedule.length" class="block">
-        <p class="eyebrow">
-          {{ data.schedulePreview ? 'Schedule preview' : 'Schedule' }}
+        <div class="cal__head">
+          <p class="eyebrow">
+            {{ data.schedulePreview ? 'Schedule preview' : 'Schedule' }}
+          </p>
+          <div class="cal__acts">
+            <button v-if="focusDay && !data.schedulePreview" class="btn btn--quiet btn--sm" type="button" @click="jumpToToday">
+              {{ isToday(focusDay.scheduledAt) ? 'Today' : 'Next match day' }}
+            </button>
+            <a
+              v-if="!data.schedulePreview" class="btn btn--quiet btn--sm" :href="calendarHref"
+              download data-sound="none"
+            >Add to calendar</a>
+          </div>
+        </div>
+        <p class="faint hint cal__tz">
+          Times are yours<template v-if="viewerTz"> ({{ zoneCity(viewerTz) }})</template>, 24-hour.
+          <template v-if="tzDiffers">The league plays at {{ league.matchHour }} {{ zoneCity(league.timezone) }} time.</template>
         </p>
+
+        <button
+          v-if="pastDays.length" class="btn btn--quiet btn--sm cal__past" type="button"
+          :aria-expanded="showPast" @click="showPast = !showPast"
+        >
+          {{ showPast ? 'Hide' : 'Show' }} {{ pastDays.length }} past {{ pastDays.length === 1 ? 'day' : 'days' }}
+        </button>
+
         <ul class="list days">
           <li
-            v-for="day in schedule" :key="day.dayIndex"
+            v-for="day in shownDays" :id="`day-${day.dayIndex}`" :key="day.dayIndex"
             class="panel day" :class="{ 'is-today': isToday(day.scheduledAt), 'is-rest': day.rest }"
           >
             <div class="day__head">
-              <span class="day__n">Day {{ day.dayIndex }}</span>
-              <span class="faint day__when">
+              <span class="day__n">Day {{ day.dayIndex }}<template v-if="isToday(day.scheduledAt)"> · today</template></span>
+              <span class="faint day__when tnum">
                 <template v-if="day.rest">Rest day — the pack still drops</template>
-                <template v-else>{{ dayLabel(day.scheduledAt) }} · {{ kickOff(day.scheduledAt) }}</template>
+                <template v-else>
+                  {{ dayHeading(day.scheduledAt) }} {{ kickOff(day.scheduledAt) }}
+                  <template v-if="leagueClock(day.scheduledAt)"> · {{ leagueClock(day.scheduledAt) }}</template>
+                </template>
               </span>
             </div>
 
@@ -723,14 +1098,18 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
 
                 <span v-if="f.result" class="fixture__after faint">
                   {{ f.result.winnerTeamName }} in {{ clock(f.result.gameLength) }}
-                  <NuxtLink v-if="f.duelId" :to="`/duel/${f.duelId}`">watch</NuxtLink>
+                  <span v-if="f.result.upset" class="tag tag--new">Upset</span>
+                  <template v-if="f.autoPlayed"> · played by the agent</template>
+                  <NuxtLink v-if="f.canWatch" :to="`/duel/${f.duelId}`">watch</NuxtLink>
                 </span>
+                <span v-else-if="f.status === 'PLAYING'" class="fixture__after faint">Being played now</span>
                 <button
                   v-else-if="f.playable" class="btn btn--ghost btn--sm fixture__play" type="button"
-                  :disabled="opening" @click="play(f.id)"
+                  :disabled="opening" @click="play(f.id, f.phase)"
                 >
-                  {{ f.duelId ? 'Rejoin' : 'Play' }}
+                  {{ f.duelId ? 'Rejoin' : f.phase === 'LOBBY' ? 'Enter the lobby' : 'Play' }}
                 </button>
+                <span v-if="standInText(f)" class="fixture__after faint">{{ standInText(f) }}.</span>
               </li>
             </ul>
           </li>
@@ -964,6 +1343,78 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
 .season-over__next { margin-top: 18px; }
 .season-over__ask { margin-top: 16px; text-align: left; }
 .season-over__acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+/* A phone: the banner is a stack — the name breaks rather than overflows, and the two
+   season buttons are full-width rows rather than a pair squeezed side by side. */
+@media (max-width: 520px) {
+  .season-over { padding: 20px 14px; }
+  .season-over__line { flex-direction: column; gap: 4px; }
+  .season-over__acts { flex-direction: column; }
+  .season-over__acts .btn { width: 100%; min-height: 44px; }
+  .honour { grid-template-columns: 38px minmax(0, 1fr) auto; }
+}
+
+.next__early { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-top: 8px; font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
+.next__early input { width: 20px; height: 20px; accent-color: var(--teal-2); }
+.next__ready { display: block; margin-top: 4px; color: var(--ink-1); font-weight: 650; }
+.next__short { margin: 14px 0 0; font-size: 13px; }
+.last__auto { flex-basis: 100%; font-size: 12px; margin: 0; }
+
+/* Form: the letter carries it, not the colour alone. */
+.form { display: inline-flex; gap: 3px; vertical-align: 1px; }
+.form__pip {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 2px;
+  font-style: normal;
+  font-stretch: 80%;
+  font-weight: 820;
+  font-size: 11px;
+}
+.form__pip.is-w { background: var(--bg-3); color: var(--ink-1); box-shadow: inset 0 0 0 1px var(--line-3); }
+.form__pip.is-l { color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--line-2); }
+.standing__who .form { margin-left: 8px; }
+.standing__link { color: inherit; text-decoration: none; }
+.standing__link:hover { text-decoration: underline; }
+
+.invite__new { margin-top: 12px; }
+
+.rename { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.rename__input { flex: 1 1 160px; min-height: 40px; font-size: 16px; }
+.manager__acts { flex-wrap: wrap; }
+.manager__kick { margin-left: auto; }
+
+.settings { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-1); }
+.settings__form { display: grid; gap: 12px; }
+.settings__row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.settings__acts { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 420px) { .settings__row { grid-template-columns: 1fr; } }
+
+.cal__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.cal__head .eyebrow { font-stretch: 92%; font-weight: 720; font-size: 17px; color: var(--ink-1); margin: 0; }
+.cal__acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.cal__tz { margin: 0 0 10px; }
+.cal__past { margin-bottom: 8px; }
+.day { scroll-margin-top: calc(var(--appbar-h, 56px) + 12px); }
+
+.feed { border-top: 1px solid var(--line-1); }
+.feed__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line-1);
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.feed__row.is-me .feed__text { color: var(--ink-1); }
+.feed__row.is-champion .feed__text { color: var(--gold-1); font-weight: 700; }
+.feed__row.is-bracket .feed__text, .feed__row.is-season .feed__text { font-weight: 650; }
+.feed__text { min-width: 0; overflow-wrap: anywhere; }
+.feed__when { font-size: 11.5px; white-space: nowrap; }
+.feed__watch { grid-column: 1 / -1; font-size: 12.5px; justify-self: start; }
 
 /* Honours: one line per season, the current one marked rather than coloured. */
 .seasons { border-top: 1px solid var(--line-1); }

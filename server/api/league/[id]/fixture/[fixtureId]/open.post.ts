@@ -1,7 +1,7 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { requireMembership } from '~~/server/utils/league';
-import { openFixture, type FixtureRow } from '~~/server/utils/leagueFixture';
+import { openFixture, FIXTURE_COLUMNS, type FixtureRow } from '~~/server/utils/leagueFixture';
 
 /**
  * Play tonight's fixture.
@@ -11,6 +11,10 @@ import { openFixture, type FixtureRow } from '~~/server/utils/leagueFixture';
  * answer with the same duel id, and the screen navigates into the room — which is why
  * there is no separate "join" endpoint and no way for the two of them to end up in
  * different rooms.
+ *
+ * Opening early is a lobby, not a head start: the draft's first clock is kick-off
+ * (server/utils/leagueFixture.ts). `ready: true` in the body says "start as soon as we
+ * are both here", which is the only way the draft begins before kick-off.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -34,7 +38,7 @@ export default defineEventHandler(async (event) => {
 
   const { data: fixture, error } = await db
     .from('league_fixtures')
-    .select('id, league_id, day_index, stage, blue_member_id, red_member_id, scheduled_at, status, duel_id')
+    .select(FIXTURE_COLUMNS)
     .eq('id', fixtureId)
     .eq('league_id', league.id)
     .maybeSingle();
@@ -42,7 +46,11 @@ export default defineEventHandler(async (event) => {
   if (error) throw createError({ statusCode: 500, statusMessage: error.message });
   if (!fixture) throw createError({ statusCode: 404, statusMessage: 'No such fixture.' });
 
-  const { duelId, opened } = await openFixture(db, league, fixture as FixtureRow, members, profileId);
+  const body = await readBody<{ ready?: boolean }>(event).catch(() => null);
+  const ready = typeof body?.ready === 'boolean' ? body.ready : undefined;
 
-  return { duelId, opened, dayIndex: (fixture as FixtureRow).day_index };
+  const row = fixture as unknown as FixtureRow;
+  const { duelId, opened, autoPlayed } = await openFixture(db, league, row, members, profileId, { ready });
+
+  return { duelId, opened, autoPlayed: Boolean(autoPlayed), dayIndex: row.day_index };
 });

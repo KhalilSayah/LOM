@@ -2,6 +2,7 @@ import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import {
   requireMembership, requireOwner, assertLaunchable, buildFixtures, firstMatchDate, shapeLeague,
+  membersOf,
 } from '~~/server/utils/league';
 import { matchDayCount } from '~~/shared/league';
 
@@ -20,6 +21,12 @@ import { matchDayCount } from '~~/shared/league';
  * is no transaction across two PostgREST calls, so the compensation has to be written
  * out, and a league stuck ACTIVE with no calendar would be unplayable and unfixable
  * from the UI.
+ *
+ * The fixtures are built from the members read *after* the flip, not before it. The
+ * join trigger (migration 0016) locks the league row and refuses anything that is not
+ * FORMING, so once the flip has landed nobody else can get in — and anybody who got in
+ * while this request was checking rosters is in the list read afterwards, rather than a
+ * member with no fixtures.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -75,7 +82,6 @@ export default defineEventHandler(async (event) => {
 
   const now = new Date();
   const startsOn = firstMatchDate(league, now);
-  const fixtures = buildFixtures(league, members, now);
 
   const { data: claimed } = await db
     .from('leagues')
@@ -94,6 +100,20 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: `${league.name} has already started.` });
   }
 
+  const roster = await membersOf(db, league.id);
+  const undo = () => db.from('leagues')
+    .update({ status: 'FORMING', starts_on: null, started_at: null })
+    .eq('id', league.id);
+
+  let fixtures: ReturnType<typeof buildFixtures>;
+  try {
+    assertLaunchable(roster);
+    fixtures = buildFixtures(league, roster, now);
+  } catch (e) {
+    await undo();
+    throw e;
+  }
+
   const { error } = await db.from('league_fixtures').insert(fixtures);
 
   if (error) {
@@ -103,9 +123,7 @@ export default defineEventHandler(async (event) => {
     // a second season (migration 0014).
     await db.from('league_fixtures')
       .delete().eq('league_id', league.id).eq('season', league.season ?? 1);
-    await db.from('leagues')
-      .update({ status: 'FORMING', starts_on: null, started_at: null })
-      .eq('id', league.id);
+    await undo();
     throw createError({ statusCode: 500, statusMessage: `Could not write the schedule: ${error.message}` });
   }
 
@@ -118,7 +136,7 @@ export default defineEventHandler(async (event) => {
    * The reason key carries the league id, so a manager in three leagues gets three
    * and a second launch of the same league gets none.
    */
-  for (const m of members) {
+  for (const m of roster) {
     const { error: giftError } = await db.rpc('grant_pack_gift', {
       p_profile: m.profile_id,
       p_pack: 'SIGNING',
@@ -133,7 +151,7 @@ export default defineEventHandler(async (event) => {
   const days = new Set(fixtures.map((f) => f.day_index));
 
   return {
-    league: shapeLeague({ ...league, status: 'ACTIVE', starts_on: startsOn }, members, profileId),
+    league: shapeLeague({ ...league, status: 'ACTIVE', starts_on: startsOn }, roster, profileId),
     startsOn,
     days: days.size,
     matchDays: matchDayCount(
