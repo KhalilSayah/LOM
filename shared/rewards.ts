@@ -142,3 +142,97 @@ export function matchPayout(input: MatchPayoutInput): MatchPayout {
     creditsWithheld: !allowed,
   };
 }
+
+// --- the end of a season -----------------------------------------------------
+
+/**
+ * docs/01 section 5, last row: "Finish season 1st / 2nd / 3rd-4th / else — 1500 / 900 /
+ * 500 / 250".
+ *
+ * The only row of that table that could not be wired until a league had a finish. It has
+ * one now (shared/playoffs.ts, and the bracket it generates), so this is the arithmetic
+ * and server/utils/seasonRewards.ts is the part that touches the ledger.
+ *
+ * `other` is deliberately not zero. A manager who played fourteen evenings and came sixth
+ * has funded six packs' worth of someone else's season; sending them into the next one with
+ * nothing is how a private league loses its sixth manager.
+ */
+export const SEASON_PLACING = {
+  first: 1500,
+  second: 900,
+  /** Third and fourth — the beaten semi-finalists — are paid the same. */
+  semiFinal: 500,
+  other: 250,
+} as const;
+
+/** What a finishing position pays. Positions below fourth all pay the same. */
+export function seasonPlacingCredits(placing: number): number {
+  if (placing === 1) return SEASON_PLACING.first;
+  if (placing === 2) return SEASON_PLACING.second;
+  if (placing === 3 || placing === 4) return SEASON_PLACING.semiFinal;
+  return SEASON_PLACING.other;
+}
+
+/** How a placing is written on a screen, and on the receipt the ledger stores. */
+export function seasonPlacingLabel(placing: number): string {
+  if (placing === 1) return 'Champion';
+  if (placing === 2) return 'Runner-up';
+  if (placing === 3) return 'Third place';
+  if (placing === 4) return 'Fourth place';
+  const t = placing % 100;
+  const suffix = t >= 11 && t <= 13
+    ? 'th'
+    : (['th', 'st', 'nd', 'rd'][placing % 10] ?? 'th');
+  return `Finished ${placing}${suffix}`;
+}
+
+export interface SeasonSettlement {
+  memberId: string;
+  placing: number;
+  credits: number;
+  label: string;
+}
+
+/**
+ * What settling a season still owes.
+ *
+ * The first half of the idempotency story, and the half that can be read and tested. A
+ * season can be settled more than once — both managers finishing the grand final in the
+ * same instant, and the owner's repair button, all reach the same code — and docs/01
+ * section 5 pays 1500 for winning a league, so paying it twice is not a rounding error.
+ *
+ * So: nothing is owed to a manager who already has a `season_rewards` row, nothing is owed
+ * at all until the bracket is decided (which is why `placings` is empty before then — see
+ * seasonPlacings in shared/playoffs.ts), and the same inputs always produce the same list.
+ * Applying this to its own output's complement is a no-op, which is the property the test
+ * checks and the property that matters.
+ *
+ * The second half cannot live here, because it is a race rather than a rule: two callers
+ * can both read the same empty `season_rewards` and both be owed the same payout. That is
+ * what the unique index on `(league_id, season, profile_id)` is for, and why
+ * server/utils/seasonRewards.ts writes its claim row before it moves a single Credit.
+ */
+export function seasonSettlement(
+  placings: Array<{ memberId: string; placing: number }>,
+  alreadySettled: Iterable<string> = [],
+): SeasonSettlement[] {
+  const settled = new Set(alreadySettled);
+  const seen = new Set<string>();
+  const out: SeasonSettlement[] = [];
+
+  for (const { memberId, placing } of placings) {
+    // A member id twice in one list would otherwise be paid twice by a single pass, which
+    // no index can catch because both writes are the same caller's.
+    if (!memberId || settled.has(memberId) || seen.has(memberId)) continue;
+    seen.add(memberId);
+
+    out.push({
+      memberId,
+      placing,
+      credits: seasonPlacingCredits(placing),
+      label: seasonPlacingLabel(placing),
+    });
+  }
+
+  return out;
+}

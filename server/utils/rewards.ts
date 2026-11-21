@@ -59,11 +59,16 @@ export async function rewardFor(
  * Only league fixtures have a season to be first in. Called after the fixture has been
  * marked FINAL, so the fixture being asked about is excluded by id rather than by status —
  * which is also what makes the answer stable if this ever runs twice.
+ *
+ * Scoped to the fixture's own `season` (migration 0014), which is the difference between
+ * "the first win of a season" and "the first win ever". A league on its second season has
+ * its first one's wins in the same table, and without this the 200 would be payable exactly
+ * once in a league's whole life.
  */
 async function isFirstLeagueWin(db: SupabaseClient, duelId: string): Promise<boolean> {
   const { data: fixture } = await db
     .from('league_fixtures')
-    .select('id, league_id, winner_member_id, stage')
+    .select('id, league_id, season, winner_member_id, stage')
     .eq('duel_id', duelId)
     .maybeSingle();
 
@@ -73,6 +78,7 @@ async function isFirstLeagueWin(db: SupabaseClient, duelId: string): Promise<boo
     .from('league_fixtures')
     .select('id', { count: 'exact', head: true })
     .eq('league_id', fixture.league_id)
+    .eq('season', fixture.season ?? 1)
     .eq('winner_member_id', fixture.winner_member_id)
     .eq('status', 'FINAL')
     .neq('id', fixture.id);

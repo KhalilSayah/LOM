@@ -257,9 +257,84 @@ const ordinal = (n: number) => {
   return n + (n % 10 < 4 ? ['th', 'st', 'nd', 'rd'][n % 10] : 'th');
 };
 
-/** Who won it, once the season is over. */
-const champion = computed(() =>
-  (league.value?.status === 'FINISHED' ? table.value.find((r) => r.position === 1) ?? null : null));
+// --- the end of the season ---------------------------------------------------
+
+const playoffs = computed<any>(() => data.value?.playoffs ?? null);
+const honours = computed<any[]>(() => data.value?.honours ?? []);
+
+/**
+ * Who won it.
+ *
+ * The grand final, not the top of the table. They are usually the same manager and the
+ * difference is the whole point of a bracket: a first seed that loses a final did not win
+ * the league, and a screen that said otherwise would be arguing with the trophy.
+ */
+const champion = computed(() => {
+  const memberId = playoffs.value?.championMemberId || league.value?.championMemberId;
+  if (!memberId) return null;
+  return {
+    memberId,
+    teamName: league.value?.championTeamName
+      || members.value.find((m) => m.id === memberId)?.teamName
+      || playoffs.value?.seeds?.find((s: any) => s.memberId === memberId)?.teamName
+      || 'The champion',
+    isMe: mine.value?.id === memberId,
+  };
+});
+
+/** What I was actually paid for the season, once the ledger has paid it. */
+const myHonour = computed(() => honours.value.find((h) => h.isMe) ?? null);
+
+/** Every season this league has finished, newest first. */
+const pastSeasons = computed<any[]>(() => data.value?.pastSeasons ?? []);
+
+/**
+ * Starting the next season (docs/01 section 7 point 4).
+ *
+ * Behind a confirmation, because it commits five other people to another fortnight of
+ * evenings on the evening the last one ended — and because the obvious fear on reading the
+ * button is that it wipes something, so the confirmation is where that gets answered.
+ */
+const confirmNextSeason = ref(false);
+const starting = ref(false);
+
+async function startNextSeason() {
+  if (starting.value) return;
+  starting.value = true;
+  error.value = '';
+  try {
+    const out = await $fetch<any>(`/api/league/${id.value}/season`, { method: 'POST' });
+    note.value = `Season ${out.season} starts ${out.startsOn} — ${out.matchDays} match days.`;
+    confirmNextSeason.value = false;
+    await load();
+  } catch (e: any) {
+    error.value = message(e, 'Could not start the next season.');
+  } finally {
+    starting.value = false;
+  }
+}
+
+/**
+ * The owner's repair button. The bracket draws itself when the last regular fixture goes
+ * FINAL; this is only here for the evening that call fails, so it is quiet and last.
+ */
+const drawing = ref(false);
+async function drawBracket() {
+  if (drawing.value) return;
+  drawing.value = true;
+  note.value = '';
+  try {
+    const out = await $fetch<any>(`/api/league/${id.value}/playoffs`, { method: 'POST' });
+    note.value = out.finished
+      ? 'The season is settled.'
+      : out.generated ? 'The bracket is drawn.' : out.reason || 'Nothing to do yet.';
+    await load();
+  } catch (e: any) {
+    error.value = message(e, 'Could not draw the bracket.');
+  } finally {
+    drawing.value = false;
+  }
+}
 
 useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League — LOM' }));
 </script>
@@ -282,8 +357,14 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
       <h1 class="name">{{ league.name }}</h1>
       <p class="muted sub">
         <template v-if="forming">Forming</template>
-        <template v-else-if="league.status === 'ACTIVE'">Season on since {{ league.startsOn }}</template>
-        <template v-else>Finished</template>
+        <template v-else-if="league.status === 'ACTIVE'">
+          <template v-if="league.season > 1">Season {{ league.season }} since</template>
+          <template v-else>Season on since</template>
+          {{ league.startsOn }}
+        </template>
+        <template v-else>
+          Season {{ league.season }} finished
+        </template>
         · {{ league.matchHour }} {{ league.timezone }}
       </p>
 
@@ -292,10 +373,64 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         <p class="season-over__eyebrow"><span class="gem gem--legendary" aria-hidden="true" />Season over</p>
         <p class="season-over__name">{{ champion.teamName }}</p>
         <p class="season-over__line">
-          <template v-if="champion.isMe">You won the league.</template>
-          <template v-else>Top of the table.</template>
-          <span v-if="myRow && !champion.isMe" class="faint">You finished {{ ordinal(myRow.position) }}.</span>
+          <template v-if="champion.isMe">You won the final.</template>
+          <template v-else>Champion.</template>
+          <span v-if="myHonour && !champion.isMe" class="faint">
+            You finished {{ ordinal(myHonour.placing) }} · {{ myHonour.credits }} Credits.
+          </span>
+          <span v-else-if="myHonour" class="faint">{{ myHonour.credits }} Credits.</span>
+          <!-- No ledger row: the placings have not settled. Say where I came, not what I got. -->
+          <span v-else-if="myRow && !champion.isMe" class="faint">
+            You were {{ ordinal(myRow.position) }} in the table.
+          </span>
         </p>
+
+        <!--
+          The honours board. docs/01 section 7: the champion is recorded, and the placings
+          pay out — so the board shows both, because a payout nobody can read is
+          indistinguishable from one that never happened.
+        -->
+        <ol v-if="honours.length" class="list honours">
+          <li
+            v-for="row in honours" :key="row.memberId"
+            class="honour" :class="{ 'is-me': row.isMe }"
+          >
+            <span class="honour__pos tnum">{{ ordinal(row.placing) }}</span>
+            <span class="honour__who">{{ row.teamName }}</span>
+            <span class="honour__paid tnum">+{{ row.credits }}</span>
+          </li>
+        </ol>
+        <p class="faint hint season-over__hint">
+          Collections are kept in full. Card levels persist.
+        </p>
+
+        <!--
+          docs/01 section 7 point 4. Deliberately not called a reset: season
+          {{ league.season }} keeps its calendar, its results and its replays, and the next
+          one begins beside it.
+        -->
+        <template v-if="data.canStartNextSeason">
+          <button
+            v-if="!confirmNextSeason" class="btn btn--block season-over__next" type="button"
+            @click="confirmNextSeason = true"
+          >
+            Start season {{ data.nextSeason }}
+          </button>
+          <template v-else>
+            <p class="muted blurb season-over__ask">
+              A new calendar for everyone still in the league, starting tonight or tomorrow.
+              Season {{ league.season }} stays where it is — nothing is wiped.
+            </p>
+            <div class="season-over__acts">
+              <button class="btn" type="button" :disabled="starting" @click="startNextSeason">
+                {{ starting ? 'Working…' : `Yes, start season ${data.nextSeason}` }}
+              </button>
+              <button class="btn btn--ghost" type="button" @click="confirmNextSeason = false">
+                Not yet
+              </button>
+            </div>
+          </template>
+        </template>
       </section>
 
       <!-- Tonight. The only thing most people open this screen for. -->
@@ -363,6 +498,83 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         <p class="faint hint">
           Three points a win. Ties go to head-to-head, then to closing wins quickly, then kills.
           Ghost fixtures are played but do not count.
+        </p>
+      </section>
+
+      <!--
+        The bracket. docs/01 section 3: semi-finals seeded off the final table, then the
+        final. It appears the moment the last regular fixture is decided, and the final is
+        drawn with a date on it before its two sides exist — which is what makes it
+        something to look forward to rather than something that turns up.
+      -->
+      <section v-if="playoffs" class="block">
+        <p class="eyebrow">{{ champion ? 'The bracket' : 'Playoffs' }}</p>
+        <ul class="list bracket">
+          <li
+            v-for="m in playoffs.matches" :key="m.key"
+            class="panel tie" :class="{ 'is-mine': m.mine, 'is-final': m.stage === 'GRAND_FINAL' }"
+          >
+            <div class="tie__head">
+              <span class="tie__label">{{ m.label }}</span>
+              <span class="faint tie__when">
+                <template v-if="m.status === 'FINAL'">Decided</template>
+                <template v-else-if="m.scheduledAt">
+                  {{ dayLabel(m.scheduledAt) }} · {{ kickOff(m.scheduledAt) }}
+                </template>
+              </span>
+            </div>
+
+            <p class="tie__sides">
+              <span
+                class="tie__side"
+                :class="{ 'is-winner': m.winnerMemberId && m.winnerMemberId === m.blue?.memberId }"
+              >
+                {{ m.blue ? m.blue.teamName : m.blueLabel }}
+              </span>
+              <span class="tie__v">v</span>
+              <span
+                class="tie__side"
+                :class="{ 'is-winner': m.winnerMemberId && m.winnerMemberId === m.red?.memberId }"
+              >
+                {{ m.red ? m.red.teamName : m.redLabel }}
+              </span>
+            </p>
+
+            <NuxtLink v-if="m.duelId" class="btn btn--ghost btn--sm tie__act" :to="`/duel/${m.duelId}`">
+              {{ m.status === 'FINAL' ? 'Watch it again' : 'Back to the room' }}
+            </NuxtLink>
+          </li>
+        </ul>
+
+        <p class="faint hint">
+          <template v-if="playoffs.seeds.length >= 4">
+            Seeded off the final table: first plays fourth, second plays third. The better
+            seed drafts first.
+          </template>
+          <template v-else-if="playoffs.seeds.length === 3">
+            Three managers, so the top seed byes straight to the final and second plays third.
+          </template>
+          <template v-else>
+            Two managers, so the final is simply first against second.
+          </template>
+          <template v-if="playoffs.missed.length">
+            {{ playoffs.missed.map((x: any) => x.teamName).join(' and ') }} missed the cut.
+          </template>
+        </p>
+      </section>
+
+      <!--
+        The repair button. The bracket draws itself on the server the moment the last regular
+        fixture is decided; this is for the evening that call fails, which is why it is
+        quiet, owner-only, and says exactly what it is.
+      -->
+      <section v-if="data.canDrawPlayoffs" class="block draw">
+        <button class="btn btn--quiet" type="button" :disabled="drawing" @click="drawBracket">
+          {{ drawing ? 'Working…' : playoffs ? 'Advance the bracket' : 'Draw the bracket' }}
+        </button>
+        <p class="faint hint">
+          The regular season is over. The bracket is normally drawn the instant the last
+          fixture is decided — press this if it was not.
         </p>
       </section>
 
@@ -525,6 +737,30 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         </ul>
       </section>
 
+      <!--
+        Past seasons. Only once there is more than this one to show, so a league in its
+        first season is not given an empty trophy cabinet to look at.
+      -->
+      <section v-if="pastSeasons.length > 1 || (pastSeasons.length && league.status !== 'FINISHED')" class="block">
+        <p class="eyebrow">Honours</p>
+        <ul class="list seasons">
+          <li
+            v-for="row in pastSeasons" :key="row.season"
+            class="season-row" :class="{ 'is-current': row.current }"
+          >
+            <span class="season-row__n tnum">Season {{ row.season }}</span>
+            <span class="season-row__who">
+              <template v-if="row.championTeamName">
+                {{ row.championTeamName }}
+                <span v-if="row.iWon" class="faint">· you</span>
+              </template>
+              <span v-else class="faint">No champion recorded</span>
+            </span>
+            <span class="faint season-row__when">{{ row.matchDays ? `${row.matchDays} match days` : '' }}</span>
+          </li>
+        </ul>
+      </section>
+
       <!-- Leaving. Last, quiet, and only while nothing depends on it. -->
       <section v-if="forming" class="block leave">
         <button
@@ -676,6 +912,74 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
 .fixture__after, .fixture__play { grid-column: 1 / -1; }
 .fixture__after { font-size: 11.5px; }
 .fixture__play { justify-self: start; margin: 4px 0 2px; }
+
+/* The honours board, inside the season-over banner: a short ranked list, gold at the top. */
+.honours { margin: 16px 0 0; border-top: 1px solid rgba(216, 178, 104, 0.3); text-align: left; }
+.honour {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 2px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid rgba(216, 178, 104, 0.18);
+  border-radius: 0;
+}
+.honour.is-me .honour__who, .honour.is-me .honour__pos { color: var(--gold-1); }
+.honour:first-child .honour__pos { color: var(--gold-1); }
+.honour__pos { font-stretch: 80%; font-weight: 800; font-size: 12.5px; color: var(--ink-3); }
+.honour__who { font-size: 14px; font-weight: 620; min-width: 0; overflow-wrap: anywhere; }
+.honour__paid { font-stretch: 80%; font-size: 14px; font-weight: 800; color: var(--ink-2); }
+.season-over__hint { text-align: center; }
+
+/* The bracket: two or three ties, the final weighted like a final. */
+.bracket { display: grid; gap: 8px; }
+.tie { padding: 13px 14px; }
+.tie.is-mine { border-color: rgba(31, 207, 193, 0.4); }
+.tie.is-final { border-color: rgba(216, 178, 104, 0.45); }
+.tie__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.tie__label { font-stretch: 112%; font-size: 11px; font-weight: 760; letter-spacing: 0.14em; text-transform: uppercase; }
+.tie.is-final .tie__label { color: var(--gold-1); }
+.tie__when { font-size: 12px; }
+.tie__sides {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 4px 10px;
+  align-items: baseline;
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.tie.is-final .tie__sides { font-size: 15.5px; }
+.tie__side { min-width: 0; overflow-wrap: anywhere; }
+.tie__side:last-child { text-align: right; }
+/* The winner carries weight and full-strength ink, never a colour alone. */
+.tie__side.is-winner { color: var(--ink-1); font-weight: 750; }
+.tie__v { font-size: 11px; color: var(--ink-3); }
+.tie__act { margin-top: 10px; }
+
+.draw { display: grid; justify-items: start; gap: 6px; }
+
+.season-over__next { margin-top: 18px; }
+.season-over__ask { margin-top: 16px; text-align: left; }
+.season-over__acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
+/* Honours: one line per season, the current one marked rather than coloured. */
+.seasons { border-top: 1px solid var(--line-1); }
+.season-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line-1);
+}
+.season-row.is-current { background: var(--bg-3); }
+.season-row__n { font-stretch: 112%; font-size: 11px; font-weight: 760; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+.season-row.is-current .season-row__n { color: var(--gold-1); }
+.season-row__who { font-size: 14.5px; font-weight: 620; min-width: 0; overflow-wrap: anywhere; }
+.season-row__when { font-size: 12px; }
 
 .leave { display: grid; justify-items: start; gap: 8px; margin-top: 28px; }
 .leave__acts { display: flex; gap: 8px; }

@@ -49,6 +49,25 @@ Rest days exist because a 14-day streak of mandatory live attendance is unrealis
 `opponent_game_length - own_game_length` across wins, rewarding fast closes) -> total kills ->
 deterministic coin flip seeded from `league_id`.
 
+**The playoff days are not generated at launch**, because they need a table and a table needs
+matches that have been played. They are appended the moment the last **regular** fixture goes
+FINAL — from the server, in the same call that writes the result, for the reason section 8
+gives for the standings: a season that waits on somebody opening the app is a season that can
+be held hostage. Ghost fixtures do not gate it; nobody is obliged to play a bye. The gaps are
+relative, so the shape above survives a league whose regular season was a different length:
+semis the day after the last regular fixture, a rest day, then the final. The league owner
+also has a button for it, which calls the same code with the same guards — it is the repair
+path for an evening when the automatic call failed, not a way to force a bracket onto an
+unfinished season (that would be a forfeit, and forfeits are
+[05 section 7](05-draft-and-live-session.md)).
+
+**Smaller brackets.** Four or more managers get the top four and the bracket above. Three get
+a bye: the top seed goes straight to the final, and seeds 2 and 3 play for the right to meet
+them — an empty fourth seat would be a semi-final somebody wins by walking. Two play a final
+and nothing else, which is the only thing a bracket can add to a season they have spent
+playing each other. The higher seed always drafts first, in every round; the regular season
+reversed sides every cycle precisely so that this is the one place it is earned.
+
 ## 4. The daily loop in detail
 
 All times are league-local. `M` = the league's match hour.
@@ -116,16 +135,20 @@ v1 keeps the economy tiny on purpose: one soft currency (**Credits**) and card X
 [02 section 5.1.1](02-cards-and-collection.md). A mastery token for a specific champion (500)
 and a daily-pack re-roll (150) are still unbuilt.
 
-**Credits come from:** every row of the table above except the season placings, plus the
-sponsors a manager has signed ([12](12-sponsors.md)) and duplicate pulls. A finished match
-writes one `match_rewards` row per manager and pays against it; the unique index on
-`(duel_id, profile_id)` is what makes a duel that finishes twice pay once. The receipt is
-stored on that row and the result screen renders it, rather than recomputing numbers that
-could then disagree with the ledger.
+**Credits come from:** every row of the table above, plus the sponsors a manager has signed
+([12](12-sponsors.md)) and duplicate pulls. A finished match writes one `match_rewards` row
+per manager and pays against it; the unique index on `(duel_id, profile_id)` is what makes a
+duel that finishes twice pay once. The receipt is stored on that row and the result screen
+renders it, rather than recomputing numbers that could then disagree with the ledger.
 
-The **season placings are still unwired**, because a league has no finish: there are no
-playoffs and nothing marks a season done. Until there is, an operator closes a season by
-hand with `select grant_credits_by_handle('someone', 1500);`.
+The **season placings are live.** A league has a finish now: the bracket is drawn the moment
+the last regular fixture is decided, the grand final sets `leagues.status` to FINISHED with a
+champion on it, and the placings pay against one `season_rewards` row per manager per season
+— the same idempotency shape as a match, so a season that settles twice pays once. Who
+finished where comes from the bracket, not from the table: a first seed that loses the final
+is paid as the runner-up, because that is what it is. 1st and 2nd are the two finalists, 3rd
+and 4th the beaten semi-finalists, and everybody else keeps their regular-season position
+and the 250. See section 7, `shared/playoffs.ts` and `supabase/migrations/0013_playoffs.sql`.
 
 Two details are not in this table. A Ghost pays at 50% (section 6), and past **three paid
 Ghost matches in a pack-day** a Ghost pays card XP and no Credits at all — the Ghost here is
@@ -153,13 +176,36 @@ They exist so nobody has a dead day.
 
 ## 7. Season reset
 
-At the end of day 14:
+When the grand final is decided:
 
-1. Champion is recorded in the league's honours board.
-2. Season rewards pay out.
-3. **Collections are kept in full.** Nothing is wiped. Card levels persist.
+1. Champion is recorded in the league's honours board. **Built** — `leagues.champion_member_id`
+   is written in the same update that sets `status` to FINISHED, so there is never a finished
+   league without one.
+2. Season rewards pay out. **Built** — one `season_rewards` row per manager per season, the
+   claim written before a single Credit moves, and the unique index on
+   `(league_id, season, profile_id)` is what makes a league that settles twice pay once. The
+   numbers are the last row of section 5.
+3. **Collections are kept in full.** Nothing is wiped. Card levels persist. Built by doing
+   nothing, which is the point: no code anywhere touches a collection at a season boundary.
 4. A new season can be started by the league owner. New fixtures, standings cleared.
+   **Built** — the owner gets a *Start season N* button on a finished league. "Standings
+   cleared" is read as *a different question*, not as a deletion: a fixture belongs to a
+   season (`league_fixtures.season`), so season 1's calendar, results, replays, standings and
+   payouts are all still there to read, and the table is empty because it is asking about
+   season 2. The catalogue is re-pinned, because a season played months later should be
+   played on the cards that exist by then ([03 section 9](03-data-pipeline.md)).
 5. A **Season Pack** is granted to every manager: guaranteed Epic-or-better player card.
+   **Built** — one card with an Epic floor, granted when the grand final is decided rather
+   than when the next season starts, so a league that never plays again still hands them out.
+   Flat for everyone who finished, not scaled by placing: the placings in section 5 already
+   pay by position, and a reward only the champion gets is a reward that makes a sixth-place
+   manager close the app. It is a pack type nobody can buy — `is_active = false`, which the
+   shop and the buy route filter on and the gift route does not.
+
+The honours board of point 1 is `league_seasons`: one row per season a league has finished,
+with its champion and how long it was. `leagues.champion_member_id` holds the champion of the
+*current* season only — null while one is being played, cleared when the next starts — so the
+board is what outlives it.
 
 The anti-runaway control is that daily packs are identical for everyone and the sim compresses
 rating differences ([04 section 9](04-simulation-engine.md)). If, after two seasons of
@@ -188,6 +234,10 @@ standings cannot be held hostage by someone who refuses to open the app.
 - **Rest-day cadence.** Is 1 rest day per 5 match days enough for a group of adults? Playtest.
 - **Strategy presets.** Three may be too few to be interesting, or exactly right for v1.
   Decide after the balance pass; the sim supports arbitrary modifier bundles.
-- **Playoffs at 6.** 1v4 / 2v3 leaves seeds 5-6 with nothing but exhibitions. Alternative:
-  full 6-team bracket with 1 and 2 getting byes, spread over days 12-14.
+- **Playoffs at 6.** 1v4 / 2v3 is what got built, and it does leave seeds 5-6 with nothing:
+  the exhibition matches section 3 mentions for them are not generated, so in a six-manager
+  league two people have three empty evenings at the end of a season. The alternatives are a
+  full six-team bracket with byes for 1 and 2, or exhibitions as a stage that pays like a
+  Ghost. Needs a playtest to say which is the real problem — three quiet evenings, or a
+  bracket nobody can hold in their head.
 - **Anti-runaway.** Season draft vs. pure daily-pack equality — needs two seasons of data.

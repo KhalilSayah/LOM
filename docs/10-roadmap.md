@@ -89,6 +89,17 @@ mid-draft and recovering, and one of them never showing up at all.
 - Result screen, grades, "what decided it", share images.
 - Reschedule requests and league pause.
 
+**Done when:** a league can be played from an invite code to a champion and then played
+again, without an operator touching the database.
+
+Where it stands: standings, schedule, match history, the playoff bracket, the champion, the
+placing payouts and the season reset are built ([01 section 7](01-game-loop.md) marks each
+point). The result screen and grades are built; "what decided it" and share images are not —
+share images are listed again as a v1.1 item below, which is where they belong. Reschedule
+requests and league pause are not built, and they are the same missing machinery as forfeits
+([05 section 7](05-draft-and-live-session.md)): all three need a way to say that an evening
+did not happen.
+
 ### M8 — Playtest & tune (weeks 18-20)
 - One real 14-day season with six real friends.
 - Instrument everything in [00 section 8](00-vision-and-scope.md) as metrics, not vibes.

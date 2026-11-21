@@ -141,3 +141,35 @@ test('a league outside the size band is refused', () => {
   assert.throws(() => seasonSchedule(ids(1)), /at least 2/);
   assert.throws(() => seasonSchedule(ids(7)), /at most 6/);
 });
+
+// --- a second season (docs/01 section 7 point 4) -----------------------------
+
+test('a second season is the same calendar again, from day 1', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const first = seasonSchedule(ids, 14);
+  const second = seasonSchedule(ids, 14);
+
+  /**
+   * The same members get the same calendar, counted from day 1 — the generator has no
+   * memory of a season having been played, and should not grow one.
+   *
+   * This is the whole reason `league_fixtures.season` exists (migration 0014). A second
+   * season collides with the first on every day index, so the two are told apart by the
+   * season they belong to rather than by pushing the new one further down the calendar:
+   * "day 1" has to mean the first evening of *this* season on everybody's screen.
+   */
+  assert.deepEqual(first, second);
+  assert.equal(first[0]!.dayIndex, 1);
+  assert.equal(second[0]!.dayIndex, 1);
+});
+
+test('a second season of a league that lost a manager is a smaller season, not a broken one', () => {
+  // Somebody leaves between seasons. The calendar regenerates around who is left.
+  const before = seasonSchedule(['a', 'b', 'c', 'd'], 14);
+  const after = seasonSchedule(['a', 'b', 'c'], 14);
+
+  assert.ok(matchDayCount(after) > 0);
+  assert.notDeepEqual(before, after);
+  // Three managers means a Ghost every round, and every one of them is somebody's fixture.
+  assert.ok(after.filter((d) => !d.rest).every((d) => d.pairings.length > 0));
+});
