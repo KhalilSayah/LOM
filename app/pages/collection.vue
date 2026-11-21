@@ -33,6 +33,16 @@ const inRoster = ref<Record<string, string>>({});
 async function load() {
   if (!managerId.value) return;
   loading.value = true;
+  try {
+    await read();
+  } catch (e: any) {
+    error.value = e?.message || 'Could not load your cards.';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function read() {
   const [{ data, error: err }, { data: slots }] = await Promise.all([
     supabase
       .from('collection_cards')
@@ -51,8 +61,6 @@ async function load() {
   const held: Record<string, string> = {};
   for (const slot of (slots || []) as any[]) held[slot.collection_card_id] = slot.role;
   inRoster.value = held;
-
-  loading.value = false;
 }
 
 watch(managerId, load, { immediate: true });
@@ -98,7 +106,7 @@ useHead({ title: 'Cards — LOM' });
       <span class="topbar__meta tnum">{{ cards.length }} {{ cards.length === 1 ? 'card' : 'cards' }}</span>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
     <div class="cards__layout">
       <aside v-if="cards.length" class="filters">
@@ -151,11 +159,13 @@ useHead({ title: 'Cards — LOM' });
             v-for="item in filtered" :key="item.id"
             class="card-grid__item" :to="`/card/${item.card.cardKey}`"
           >
+            <span class="card-grid__tags">
+              <span v-if="item.isNew" class="card-grid__badge card-grid__badge--new">New</span>
+              <span v-else-if="item.level > 1" class="card-grid__badge">Lv {{ item.level }}</span>
+              <span v-if="inRoster[item.id]" class="card-grid__slot" :title="'In your team at ' + inRoster[item.id]">{{ inRoster[item.id] }}</span>
+              <span v-if="item.copies > 1" class="card-grid__dupes">×{{ item.copies }}</span>
+            </span>
             <LomCard :card="item.card" compact :interactive="false" />
-            <span v-if="item.isNew" class="card-grid__badge card-grid__badge--new">New</span>
-            <span v-else-if="item.level > 1" class="card-grid__badge">Lv {{ item.level }}</span>
-            <span v-if="inRoster[item.id]" class="card-grid__slot">{{ inRoster[item.id] }}</span>
-            <span v-if="item.copies > 1" class="card-grid__dupes">×{{ item.copies }}</span>
           </NuxtLink>
         </div>
       </section>

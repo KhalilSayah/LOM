@@ -30,6 +30,11 @@ async function load() {
   }
 }
 
+function retry() {
+  loading.value = true;
+  load();
+}
+
 // --- hosting -----------------------------------------------------------------
 
 const hosting = ref(false);
@@ -114,47 +119,61 @@ useHead({ title: 'Leagues — LOM' });
       <NuxtLink class="topbar__meta" to="/discovery">Find a manager</NuxtLink>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
-
     <div v-if="loading" class="skeleton leagues-skeleton" />
 
     <template v-else>
-      <ul v-if="leagues.length" class="list">
-        <li v-for="l in leagues" :key="l.id" class="panel league">
-          <NuxtLink class="league__link" :to="`/leagues/${l.id}`">
-            <span class="league__head">
-              <strong class="league__name">{{ l.name }}</strong>
-              <span class="league__status" :class="`is-${l.status.toLowerCase()}`">
-                {{ l.status === 'FORMING' ? 'Forming' : l.status === 'ACTIVE' ? 'Season on' : 'Finished' }}
-              </span>
-            </span>
+      <!-- Your leagues. A failed load says so and offers a retry: it is not "no league yet". -->
+      <section class="yours">
+        <h2 class="sect">Your leagues</h2>
 
-            <span class="league__meta">
-              {{ l.memberCount }} of {{ l.maxMembers }} managers · {{ l.matchHour }} {{ l.timezone }}
-            </span>
+        <div v-if="error && !data" class="notice notice--bad load-error" role="alert">
+          <span>{{ error }}</span>
+          <button class="btn btn--quiet btn--sm" type="button" @click="retry">Try again</button>
+        </div>
 
-            <span v-if="l.next" class="league__next">
-              Day {{ l.next.dayIndex }} · vs <strong>{{ l.next.opponent }}</strong>
-              <span class="faint"> · {{ kickOff(l.next.scheduledAt) }}</span>
-            </span>
-            <span v-else-if="l.status === 'FORMING'" class="league__next faint">
-              {{ l.memberCount < 2
-                ? 'Waiting for somebody to join'
-                : l.iAmOwner ? 'Ready when you are' : 'Waiting for the owner to start it' }}
-            </span>
-            <span v-else class="league__next faint">No fixture scheduled</span>
-          </NuxtLink>
-        </li>
-      </ul>
+        <template v-else>
+          <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
-      <div v-else class="empty">
-        <h2>No league yet</h2>
-        <p>Host one and send the link to the group, or paste the code somebody sent you.</p>
-      </div>
+          <ul v-if="leagues.length" class="rows">
+            <li v-for="l in leagues" :key="l.id" class="row">
+              <NuxtLink class="league" :to="`/leagues/${l.id}`">
+                <span class="league__head">
+                  <strong class="league__name">{{ l.name }}</strong>
+                  <span v-if="l.status === 'FORMING'" class="tag">Forming</span>
+                  <span v-else-if="l.status === 'ACTIVE'" class="tag tag--live">Season on</span>
+                  <span v-else class="label league__done">Finished</span>
+                </span>
+
+                <span class="league__meta tnum">
+                  {{ l.memberCount }} of {{ l.maxMembers }} managers · {{ l.matchHour }} {{ l.timezone }}
+                </span>
+
+                <span v-if="l.next" class="league__next">
+                  Day {{ l.next.dayIndex }} · vs <strong>{{ l.next.opponent }}</strong>
+                  <span class="faint"> · {{ kickOff(l.next.scheduledAt) }}</span>
+                </span>
+                <span v-else-if="l.status === 'FORMING'" class="league__next faint">
+                  {{ l.memberCount < 2
+                    ? 'Waiting for somebody to join'
+                    : l.iAmOwner ? 'Ready when you are' : 'Waiting for the host to start it' }}
+                </span>
+                <span v-else class="league__next faint">No fixture scheduled</span>
+
+                <svg class="ico league__go" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+              </NuxtLink>
+            </li>
+          </ul>
+
+          <div v-else class="empty">
+            <h2>No league yet</h2>
+            <p>Host one and send the link to the group, or paste the code somebody sent you.</p>
+          </div>
+        </template>
+      </section>
 
       <!-- Host -->
       <section class="panel block">
-        <p class="eyebrow">Host a league</p>
+        <h2 class="sect">Host a league</h2>
 
         <template v-if="!hosting">
           <p class="muted blurb">
@@ -190,7 +209,7 @@ useHead({ title: 'Leagues — LOM' });
             The match hour is wall-clock time in that zone, so it survives the clocks changing.
           </p>
 
-          <p v-if="hostError" class="notice notice--bad">{{ hostError }}</p>
+          <p v-if="hostError" class="notice notice--bad form__error" role="alert">{{ hostError }}</p>
 
           <div class="form__acts">
             <button class="btn btn--quiet" type="button" @click="hosting = false">Cancel</button>
@@ -203,18 +222,19 @@ useHead({ title: 'Leagues — LOM' });
 
       <!-- Join -->
       <section class="panel block">
-        <p class="eyebrow">Join with a code</p>
+        <h2 class="sect">Join with a code</h2>
         <form class="join" @submit.prevent="join">
           <input
             v-model="code" class="join__input" inputmode="text" autocapitalize="characters"
-            spellcheck="false" maxlength="40" placeholder="H7K2M4" aria-label="Invite code or link"
+            autocomplete="off" spellcheck="false" maxlength="40" placeholder="H7K2M4"
+            aria-label="Invite code or link"
           >
-          <button class="btn" type="submit" :disabled="joining">
+          <button class="btn btn--ghost" type="submit" :disabled="joining">
             {{ joining ? 'Joining' : 'Join' }}
           </button>
         </form>
-        <p class="faint hint">A whole invite link works too — paste it and tap Join.</p>
-        <p v-if="joinError" class="notice notice--bad">{{ joinError }}</p>
+        <p v-if="joinError" class="notice notice--bad join__error" role="alert">{{ joinError }}</p>
+        <p v-else class="faint hint">A whole invite link works too. Paste it and tap Join.</p>
       </section>
     </template>
   </main>
@@ -223,52 +243,61 @@ useHead({ title: 'Leagues — LOM' });
 <style scoped>
 .leagues-skeleton { height: 26vh; }
 
-.list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
-.league { padding: 0; }
-.league__link {
+.sect { margin: 0 0 12px; font-stretch: 92%; font-weight: 720; font-size: 17px; }
+.panel .sect { margin-bottom: 8px; }
+
+.load-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* One surface, rows split by keylines. */
+.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-1); }
+.row { border-bottom: 1px solid var(--line-1); }
+.league {
+  position: relative;
   display: grid;
   gap: 4px;
-  padding: 13px 14px;
+  min-height: 44px;
+  padding: 13px 32px 13px 4px;
   color: inherit;
   text-decoration: none;
 }
-.league__head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.league__name { font-family: var(--font-display); font-size: 17px; }
-.league__status {
-  flex: none;
-  font-family: var(--font-label);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+.league__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.league__name { font-stretch: 85%; font-size: 19px; font-weight: 800; line-height: 1.1; }
+.league__done { font-size: 10.5px; }
+.league__meta { font-size: 12.5px; color: var(--ink-3); }
+.league__next { font-size: 13.5px; color: var(--ink-2); }
+.league__next strong { color: var(--ink-1); }
+.league__go { position: absolute; right: 4px; top: 50%; width: 20px; height: 20px; margin-top: -10px; color: var(--ink-3); }
+@media (hover: hover) and (pointer: fine) {
+  .league:hover { background: var(--bg-2); }
+  .league:hover .league__go { color: var(--ink-1); }
 }
-.league__status.is-active { color: var(--teal-1); }
-.league__status.is-forming { color: var(--warn); }
-.league__meta { font-size: 12.5px; color: var(--ink-dim); }
-.league__next { font-size: 13.5px; }
 
-.block { margin-top: 14px; }
-.blurb { font-size: 13.5px; margin: 6px 0 12px; }
-.form { display: grid; gap: 11px; margin-top: 10px; }
+.block { margin-top: 24px; }
+.blurb { font-size: 13.5px; margin: 0 0 14px; }
+.form { display: grid; gap: 12px; margin-top: 10px; }
 .form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .form__acts { display: flex; justify-content: flex-end; gap: 8px; }
+.form__error { margin: 0; }
 .hint { font-size: 12px; margin: 8px 0 0; }
 
-.join { display: flex; gap: 8px; margin-top: 8px; }
+.join { display: flex; gap: 8px; margin-top: 10px; }
 .join__input {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  min-height: 44px;
+  min-height: 48px;
   padding: 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--sunken);
-  color: var(--ink);
-  font-family: var(--font-display);
-  font-size: 16px;
-  letter-spacing: 0.18em;
+  border: 1px solid var(--line-2);
+  border-radius: 2px;
+  background: var(--bg-0);
+  color: var(--ink-1);
+  font-family: inherit;
+  font-stretch: 85%;
+  font-size: 18px;
+  font-weight: 760;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
-.join__input:focus { border-color: var(--accent); outline: none; }
+.join__input:focus { border-color: var(--teal-2); outline: none; }
+.join__input::placeholder { color: var(--ink-4); }
+.join__error { margin: 10px 0 0; }
 </style>

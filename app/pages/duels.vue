@@ -23,6 +23,46 @@ const responding = ref<string | null>(null);
 
 const error = computed(() => queueError.value || listError.value);
 
+/**
+ * Which lanes are still empty. The queue refuses an incomplete five anyway; asking first
+ * means the big button sends you to fix it instead of to an error.
+ */
+const missing = ref<string[]>([]);
+const ROLE_NAME: Record<string, string> = { TOP: 'top', JNG: 'jungle', MID: 'mid', BOT: 'bot', SUP: 'support' };
+async function loadRoster() {
+  try {
+    const r = await $fetch<any>('/api/roster');
+    missing.value = Object.keys(ROLE_NAME).filter((role) => !r?.roster?.[role]);
+  } catch {
+    missing.value = [];
+  }
+}
+
+/** Wins and losses over what is listed, and the current run. */
+const record = computed(() => {
+  const done = (data.value?.finished ?? []).filter((d: any) => d.won !== null);
+  const wins = done.filter((d: any) => d.won).length;
+  let streak = 0;
+  const first = done[0]?.won;
+  for (const d of done) { if (d.won === first) streak++; else break; }
+  return { wins, losses: done.length - wins, streak, streakWon: Boolean(first) };
+});
+
+const SOURCE_NAME: Record<string, string> = { LEAGUE: 'League', CHALLENGE: 'Friendly', QUEUE: 'Battle', BOT: 'Practice' };
+const mmss = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+function ago(iso: string | null) {
+  if (!iso) return '';
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 60) return mins <= 1 ? 'just now' : `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+}
+
+/** A room you are already in. Being put back into it beats starting another. */
+const liveRoom = computed(() => data.value?.live?.[0] ?? null);
+
 async function load() {
   try {
     data.value = await $fetch<any>('/api/duel/list');
@@ -54,7 +94,7 @@ const seconds = computed(() => Math.floor(elapsed.value));
 /** The search spinner's four dots, so it reads as activity rather than a frozen screen. */
 const pulse = computed(() => Math.floor(elapsed.value * 2) % 4);
 
-onMounted(() => { restore(); load(); });
+onMounted(() => { restore(); load(); loadRoster(); });
 
 watch(searching, (on, was) => { if (on && !was) playSound('searchStart'); });
 watch(botOffered, (on) => { if (on) playSound('toggle'); });
@@ -69,13 +109,33 @@ useHead({ title: 'Battle — LOM' });
       <NuxtLink class="topbar__meta" to="/discovery">Find a manager</NuxtLink>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
     <!-- The button. Everything else on this screen is secondary to it. -->
     <section class="arena" :class="{ 'is-searching': searching }">
       <span class="arena__tl" aria-hidden="true" /><span class="arena__br" aria-hidden="true" />
 
-      <template v-if="!searching">
+      <template v-if="!searching && liveRoom">
+        <p class="arena__lede">
+          You are mid-match against <b>{{ liveRoom.opponent }}</b>.
+          {{ liveRoom.status === 'WATCHING' ? 'The game is playing out.' : 'The draft is waiting for you.' }}
+        </p>
+        <NuxtLink class="btn btn--lg arena__go" :to="`/duel/${liveRoom.id}`">Rejoin</NuxtLink>
+        <p class="arena__sub">One room at a time. Finish this one to start another.</p>
+      </template>
+
+      <template v-else-if="!searching && missing.length">
+        <p class="arena__lede">
+          Your five is not ready: no {{ missing.map((r) => ROLE_NAME[r]).join(', ') }}.
+          Every lane needs a card before you can draft.
+        </p>
+        <NuxtLink class="btn btn--lg arena__go" to="/roster">Set your five</NuxtLink>
+        <p class="arena__sub">
+          No card for a lane? <NuxtLink to="/shop">A Signing pack</NuxtLink> has one for every lane.
+        </p>
+      </template>
+
+      <template v-else-if="!searching">
         <p class="arena__lede">Draft against another manager, live, then watch the match play out together.</p>
         <button class="btn btn--lg arena__go" type="button" :disabled="busy" @click="search">
           {{ busy ? 'Starting' : 'Battle' }}
@@ -114,7 +174,7 @@ useHead({ title: 'Battle — LOM' });
 
     <template v-else-if="data">
       <!-- Being put back into a live room beats everything else on this page. -->
-      <section v-if="data.live?.length" class="block">
+      <section v-if="data.live?.length > 1" class="block">
         <h2 class="sect">You are in a room</h2>
         <ul class="rows">
           <li v-for="d in data.live" :key="d.id" class="row">
@@ -126,7 +186,7 @@ useHead({ title: 'Battle — LOM' });
                 <template v-else>{{ d.side === 'BLUE' ? 'Blue' : 'Red' }} side · step {{ Math.min(d.turn + 1, 20) }} of 20</template>
               </span>
             </p>
-            <NuxtLink class="btn btn--sm" :to="`/duel/${d.id}`">Rejoin</NuxtLink>
+            <NuxtLink class="btn btn--ghost btn--sm" :to="`/duel/${d.id}`">Rejoin</NuxtLink>
           </li>
         </ul>
       </section>
@@ -166,11 +226,23 @@ useHead({ title: 'Battle — LOM' });
       </section>
 
       <section v-if="data.finished.length" class="block">
-        <h2 class="sect">Played</h2>
+        <h2 class="sect played__head">
+          Played
+          <span v-if="record.wins + record.losses" class="played__rec tnum">
+            {{ record.wins }}W {{ record.losses }}L<template v-if="record.streak > 1"> · {{ record.streak }} {{ record.streakWon ? 'wins' : 'losses' }} in a row</template>
+          </span>
+        </h2>
         <ul class="rows">
           <li v-for="d in data.finished" :key="d.id" class="row">
-            <span class="tag" :class="d.won ? 'tag--live' : 'tag--red'">{{ d.won ? 'Won' : 'Lost' }}</span>
-            <p class="row__t">vs {{ d.opponent }}<span v-if="d.isBot" class="row__s">The agent</span></p>
+            <span class="tag played__tag" :class="d.won ? 'tag--new' : d.won === false ? 'tag--red' : ''">{{ d.won ? 'Won' : d.won === false ? 'Lost' : 'Over' }}</span>
+            <p class="row__t">
+              vs {{ d.opponent }}
+              <span class="row__s">
+                <template v-if="d.score"><b class="tnum">{{ d.score.mine }}–{{ d.score.theirs }}</b> · </template>
+                <template v-if="d.gameLength"><span class="tnum">{{ mmss(d.gameLength) }}</span> · </template>
+                {{ SOURCE_NAME[d.source] || 'Friendly' }}<template v-if="d.completedAt || d.createdAt"> · {{ ago(d.completedAt || d.createdAt) }}</template>
+              </span>
+            </p>
             <NuxtLink class="btn btn--quiet btn--sm" :to="`/duel/${d.id}`">Watch</NuxtLink>
           </li>
         </ul>
@@ -189,6 +261,10 @@ useHead({ title: 'Battle — LOM' });
 
 <style scoped>
 .battle__skeleton { height: 160px; margin-top: 20px; }
+.played__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.played__rec { font-size: 12.5px; letter-spacing: 0.02em; text-transform: none; color: var(--ink-2); font-weight: 700; }
+.played__tag { min-width: 52px; justify-content: center; }
+.row__s b { color: var(--ink-1); font-weight: 800; }
 
 .arena {
   position: relative;

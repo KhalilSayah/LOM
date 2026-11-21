@@ -36,6 +36,20 @@ const TIMING = {
 };
 
 /**
+ * The show scales with what is inside. A Common turns over briskly; an Icon is a moment.
+ * `walk` is the walkout: Legendary and Icon cards hold face down while their identity is
+ * read out a beat at a time (role, league, team, season) before the player is shown.
+ * `motes` is the size of the burst.
+ */
+const BY_RARITY = {
+  COMMON: { charge: 380, tear: 280, rise: 420, walk: 0, flip: 560, motes: 0 },
+  RARE: { charge: 520, tear: 360, rise: 480, walk: 0, flip: 660, motes: 12 },
+  EPIC: { charge: 660, tear: 420, rise: 560, walk: 0, flip: 760, motes: 22 },
+  LEGENDARY: { charge: 820, tear: 460, rise: 620, walk: 1800, flip: 860, motes: 34 },
+  ICON: { charge: 1050, tear: 520, rise: 720, walk: 2700, flip: 960, motes: 48 },
+};
+
+/**
  * How long the card is allowed to hang face-down waiting for its art.
  *
  * The reveal is the one moment in the game that is pure theatre, and a card that turns
@@ -80,6 +94,7 @@ function motes(n) {
 export function createPack(card, opts = {}) {
   const data = normaliseCard(card);
   const theme = RARITY_THEMES[data.rarity] || RARITY_THEMES.COMMON;
+  const T = BY_RARITY[data.rarity] || BY_RARITY.COMMON;
   const reduced = typeof window !== 'undefined'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -87,7 +102,7 @@ export function createPack(card, opts = {}) {
   scene.className = 'lom-pack-scene';
   scene.dataset.phase = 'idle';
   scene.dataset.rarity = data.rarity;
-  scene.setAttribute('style', themeVars(data.rarity));
+  scene.setAttribute('style', `${themeVars(data.rarity)};--walk:${T.walk}ms;--flip:${T.flip}ms`);
 
   scene.innerHTML = `
     <div class="lom-pack-scene__sky" aria-hidden="true">
@@ -116,13 +131,17 @@ export function createPack(card, opts = {}) {
         <span class="lom-burst" aria-hidden="true">
           <span class="lom-burst__ring"></span>
           <span class="lom-burst__flash"></span>
-          ${motes(18)}
+          ${motes(T.motes)}
         </span>
       </div>
 
     </div>
 
     <p class="lom-pack-scene__hint" aria-live="polite">Tap the pack to open</p>
+
+    <div class="lom-walkout" aria-hidden="true">
+      <span>${esc(data.role)}</span><span>${esc(data.region)}</span><span>${esc(data.team)}</span><span>${data.season}</span>
+    </div>
 
     <div class="lom-pack-scene__banner" aria-hidden="true">
       <span class="lom-pack-scene__band"><span class="lom-gem lom-gem--${String(data.rarity).toLowerCase()}" aria-hidden="true"></span>${theme.label}</span>
@@ -185,25 +204,42 @@ export function createPack(card, opts = {}) {
     setPhase('charge');
     hint.textContent = '';
 
-    at(TIMING.charge, () => setPhase('tear'));
-    at(TIMING.charge + TIMING.tear, () => setPhase('rise'));
-    at(TIMING.charge + TIMING.tear + TIMING.rise, async () => {
+    at(T.charge, () => setPhase('tear'));
+    at(T.charge + T.tear, () => setPhase('rise'));
+    at(T.charge + T.tear + T.rise, async () => {
       // Hold at `rise` — the card is out of the pack and face down, which reads as
       // anticipation rather than as a wait — until the art is ready or the cap expires.
       const held = Date.now();
       await Promise.race([artReady, new Promise((r) => setTimeout(r, ART_HOLD_MS))]);
       if (phase !== 'rise') return;   // reset() or destroy() happened while we waited
+      opts.onHeld?.(Date.now() - held);
 
+      if (T.walk) {
+        setPhase('walkout');
+        walkTimer = setTimeout(flip, T.walk);
+        timers.push(walkTimer);
+      } else {
+        flip();
+      }
+    });
+  }
+
+  let walkTimer = null;
+
+  /** Turn the card over. Also the skip: a tap during the walkout jumps straight here. */
+  function flip() {
+    if (phase !== 'rise' && phase !== 'walkout') return;
+    if (walkTimer) { clearTimeout(walkTimer); walkTimer = null; }
+    {
       setPhase('flip');
       built.el.classList.remove('is-flipped');
       opts.onReveal?.(data);
-      opts.onHeld?.(Date.now() - held);
 
-      at(TIMING.flip, () => {
+      at(T.flip, () => {
         setPhase('done');
         hint.textContent = `${data.playerName} ${data.season} — ${theme.label}, ${data.ovr} OVR`;
       });
-    });
+    }
   }
 
   function reset() {
@@ -216,6 +252,7 @@ export function createPack(card, opts = {}) {
   }
 
   packEl.addEventListener('click', open);
+  scene.addEventListener('click', () => { if (phase === 'walkout') flip(); });
   packEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
   });

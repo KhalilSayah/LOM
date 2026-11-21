@@ -61,7 +61,7 @@ export function createCard(card, opts = {}) {
   const data = normaliseCard(card);
   const stage = document.createElement('div');
   stage.className = 'lom-stage';
-  stage.innerHTML = cardHtml(data, { compact: opts.compact === true });
+  stage.innerHTML = cardHtml(data, { compact: opts.compact === true, interactive: opts.interactive !== false });
   const el = /** @type {HTMLElement} */ (stage.firstElementChild);
   const controller = opts.interactive === false ? null : attachTilt(el, opts);
   return { stage, el, controller, data };

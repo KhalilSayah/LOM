@@ -114,17 +114,55 @@ const label = (pack: ShopPack) => {
 };
 
 onMounted(load);
-/** Cards out of a bought pack land with the stinger of the best one among them. */
+/**
+ * A bought pack comes out face down, and the cards are turned one at a time: by tapping
+ * them, or with "Reveal all", which goes left to right. They are laid out worst to best,
+ * so the last card turned is the one worth waiting for. The backs glow in their rarity,
+ * the same tease a sealed pack gives: you know something good is in there before you
+ * know who.
+ */
 const ORDER = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON'];
+const rarityOf = (c: any) => String(c?.card?.rarity || c?.rarity || 'COMMON').toUpperCase();
+
+const laidOut = computed(() => (opened.value?.cards ?? [])
+  .map((c: any, i: number) => ({ ...c, _i: i }))
+  .sort((x: any, y: any) => ORDER.indexOf(rarityOf(x)) - ORDER.indexOf(rarityOf(y))));
+
+const turned = ref<Set<number>>(new Set());
+const allTurned = computed(() => !!opened.value && turned.value.size >= laidOut.value.length);
+let revealTimers: ReturnType<typeof setTimeout>[] = [];
+
+function turn(i: number) {
+  if (turned.value.has(i)) return;
+  const next = new Set(turned.value);
+  next.add(i);
+  turned.value = next;
+  const card = laidOut.value.find((c: any) => c._i === i);
+  const r = rarityOf(card);
+  playSound(ORDER.indexOf(r) >= 2 ? revealSoundFor(r) : 'cardFlip');
+}
+
+function revealAll() {
+  revealTimers.forEach(clearTimeout);
+  const left = laidOut.value.filter((c: any) => !turned.value.has(c._i));
+  left.forEach((c: any, n: number) => {
+    // The last one waits a beat longer: it is the best card in the pack.
+    const extra = n === left.length - 1 && left.length > 1 ? 420 : 0;
+    revealTimers.push(setTimeout(() => turn(c._i), n * 340 + extra));
+  });
+}
+
 watch(opened, (o) => {
-  if (!o?.cards?.length) return;
-  const best = o.cards.reduce((top: string, c: any) => {
-    const r = c.card?.rarity || c.rarity || 'COMMON';
-    return ORDER.indexOf(r) > ORDER.indexOf(top) ? r : top;
-  }, 'COMMON');
-  setTimeout(() => playSound(revealSoundFor(best)), 150);
-  if (o.creditsEarned) setTimeout(() => playSound('coin'), 900);
+  revealTimers.forEach(clearTimeout);
+  turned.value = new Set();
+  if (o?.cards?.length) playSound('packTear');
 });
+
+watch(allTurned, (done) => {
+  if (done && opened.value?.creditsEarned) setTimeout(() => playSound('coin'), 500);
+});
+
+onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
 </script>
 
 
@@ -141,24 +179,51 @@ watch(opened, (o) => {
 
     <!-- what just came out -->
     <section v-else-if="opened" class="opened">
-      <p class="label">{{ opened.packName }}</p>
-      <h2 class="opened__head">{{ opened.cards.length }} {{ opened.cards.length === 1 ? 'card' : 'cards' }}</h2>
-      <div class="opened__grid">
-        <article v-for="c in opened.cards" :key="c.slot" class="opened__slot">
-          <LomCard v-if="c.card" :card="c.card" />
-          <p v-if="c.wasDuplicate" class="opened__dupe">
-            Duplicate: +{{ c.xpAwarded }} XP<span v-if="c.creditsAwarded">, +{{ c.creditsAwarded }} credits</span>
-          </p>
-          <p v-else class="opened__new"><span class="tag tag--new">New</span></p>
-        </article>
-      </div>
-      <p v-if="opened.creditsEarned" class="notice">
-        Duplicates paid back <strong>{{ opened.creditsEarned }} credits</strong>.
-      </p>
-      <div class="opened__actions">
-        <button class="btn btn--ghost" type="button" @click="opened = null">Back to the shop</button>
-        <NuxtLink class="btn" to="/collection">See them in Cards</NuxtLink>
-      </div>
+      <header class="opened__top">
+        <div>
+          <p class="label">{{ opened.packName }}</p>
+          <h2 class="opened__head">
+            <template v-if="allTurned">{{ opened.cards.length }} {{ opened.cards.length === 1 ? 'card' : 'cards' }}</template>
+            <template v-else>Tap a card to turn it</template>
+          </h2>
+        </div>
+        <button v-if="!allTurned" class="btn btn--gold" type="button" data-sound="none" @click="revealAll">
+          Reveal all
+        </button>
+      </header>
+
+      <ul class="opened__grid">
+        <li v-for="(c, n) in laidOut" :key="c._i" class="opened__slot">
+          <button
+            v-if="!turned.has(c._i)"
+            class="facedown" type="button" data-sound="none"
+            :data-rarity="rarityOf(c).toLowerCase()"
+            :aria-label="'Turn card ' + (n + 1)"
+            @click="turn(c._i)"
+          >
+            <span class="facedown__mark" aria-hidden="true" />
+            <span class="facedown__word" aria-hidden="true">LOM</span>
+          </button>
+          <div v-else class="opened__face" :data-rarity="rarityOf(c).toLowerCase()">
+            <LomCard v-if="c.card" :card="c.card" />
+            <p v-if="c.wasDuplicate" class="opened__dupe">
+              Already yours: +{{ c.xpAwarded }} XP<span v-if="c.creditsAwarded">, +{{ c.creditsAwarded }} credits</span>
+            </p>
+            <p v-else class="opened__new"><span class="tag tag--new">New</span></p>
+          </div>
+        </li>
+      </ul>
+
+      <template v-if="allTurned">
+        <p v-if="opened.creditsEarned" class="notice">
+          Duplicates paid back <strong>{{ opened.creditsEarned }} credits</strong>.
+        </p>
+        <div class="opened__actions">
+          <button class="btn btn--ghost" type="button" @click="opened = null">Back to the shop</button>
+          <NuxtLink v-if="opened.cards.length >= 5" class="btn btn--ghost" to="/roster">Set your five</NuxtLink>
+          <NuxtLink class="btn" to="/collection">See them in Cards</NuxtLink>
+        </div>
+      </template>
     </section>
 
     <template v-else>
@@ -287,13 +352,87 @@ watch(opened, (o) => {
 .pk__mark::after { content: ''; position: absolute; inset: 24%; background: var(--acc); }
 .pk__name { position: absolute; left: 0; right: 0; top: 56%; text-align: center; font-stretch: 75%; font-weight: 860; font-size: 15cqw; text-transform: uppercase; color: color-mix(in srgb, var(--acc) 40%, #fff); }
 
-.opened { display: grid; gap: 14px; }
-.opened__head { font-size: 30px; }
-.opened__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
-.opened__slot { display: grid; gap: 8px; align-content: start; }
-.opened__dupe { margin: 0; font-size: 12px; color: var(--ink-3); text-align: center; }
+.opened { display: grid; gap: 16px; }
+.opened__top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.opened__head { font-size: 30px; margin: 2px 0 0; }
+.opened__grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+@media (min-width: 900px) { .opened__grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.opened__slot { display: grid; align-content: start; }
+.opened__face { display: grid; gap: 8px; animation: turn-in 300ms cubic-bezier(.2, .8, .25, 1.1) both; }
+.opened__face[data-rarity="legendary"], .opened__face[data-rarity="icon"] { animation-duration: 460ms; }
+@keyframes turn-in {
+  0% { transform: perspective(900px) rotateY(-90deg) scale(.96); opacity: .4; }
+  100% { transform: none; opacity: 1; }
+}
+.opened__dupe { margin: 0; font-size: 13px; color: var(--ink-2); text-align: center; }
 .opened__new { margin: 0; text-align: center; }
 .opened__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* the back of an unturned card: the pack's mark, glowing in the rarity it is hiding */
+.facedown {
+  --glow: var(--r-common);
+  position: relative;
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background:
+    radial-gradient(80% 60% at 50% 42%, color-mix(in srgb, var(--glow) 26%, transparent), transparent 70%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.03) 0 2px, transparent 2px 9px),
+    linear-gradient(160deg, var(--bg-3), var(--bg-1));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4) inset, 0 8px 24px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 160ms, box-shadow 160ms, border-color 160ms;
+  animation: deal 380ms cubic-bezier(.2, .8, .25, 1) both;
+}
+.opened__slot:nth-child(2) .facedown { animation-delay: 70ms; }
+.opened__slot:nth-child(3) .facedown { animation-delay: 140ms; }
+.opened__slot:nth-child(4) .facedown { animation-delay: 210ms; }
+.opened__slot:nth-child(5) .facedown { animation-delay: 280ms; }
+@keyframes deal { from { opacity: 0; transform: translateY(18px) scale(.94); } }
+.facedown:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--glow) 60%, var(--line-2)); }
+.facedown:focus-visible { outline: 2px solid var(--gold-1); outline-offset: 3px; }
+.facedown[data-rarity="rare"] { --glow: var(--r-rare); }
+.facedown[data-rarity="epic"] { --glow: var(--r-epic); border-color: color-mix(in srgb, var(--r-epic) 45%, var(--line-2)); }
+.facedown[data-rarity="legendary"] {
+  --glow: var(--r-legendary);
+  border-color: color-mix(in srgb, var(--r-legendary) 60%, var(--line-2));
+  box-shadow: 0 0 28px color-mix(in srgb, var(--r-legendary) 30%, transparent), 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: deal 380ms cubic-bezier(.2, .8, .25, 1) both, throb 1.6s 600ms ease-in-out infinite;
+}
+.facedown[data-rarity="icon"] {
+  --glow: var(--r-icon);
+  border-color: var(--r-icon);
+  box-shadow: 0 0 34px color-mix(in srgb, var(--r-icon) 36%, transparent), 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: deal 380ms cubic-bezier(.2, .8, .25, 1) both, throb 1.2s 600ms ease-in-out infinite;
+}
+@keyframes throb { 50% { transform: translateY(-3px) scale(1.015); } }
+.facedown__mark {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: 30%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 1.5px solid color-mix(in srgb, var(--glow) 70%, var(--ink-3));
+}
+.facedown__mark::after { content: ''; position: absolute; inset: 26%; background: color-mix(in srgb, var(--glow) 80%, var(--ink-2)); }
+.facedown__word {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 66%;
+  text-align: center;
+  font-stretch: 75%;
+  font-weight: 880;
+  font-size: 20px;
+  letter-spacing: 0.2em;
+  color: var(--ink-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .facedown, .opened__face { animation: none !important; }
+}
 
 .shop__foot { font-size: 12.5px; text-align: center; margin: 20px 0 8px; }
 

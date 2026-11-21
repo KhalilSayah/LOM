@@ -46,13 +46,13 @@ onBeforeUnmount(() => clearTimeout(timer));
     <p class="eyebrow">Your code</p>
     <p class="share__code tnum">{{ pretty }}</p>
     <p class="muted share__note">
-      Hand this to anyone. They put it into Discovery and your collection opens up.
+      Hand this to anyone. They put it into Find a manager and your cards open up.
     </p>
     <div class="share__row">
-      <button class="btn btn--quiet" type="button" :disabled="!code" @click="copy('code')">
+      <button class="btn btn--quiet" type="button" :disabled="!code" data-sound="success" @click="copy('code')">
         Copy code
       </button>
-      <button class="btn btn--quiet" type="button" :disabled="!code" @click="copy('link')">
+      <button class="btn btn--quiet" type="button" :disabled="!code" data-sound="success" @click="copy('link')">
         Copy link
       </button>
     </div>
@@ -62,21 +62,19 @@ onBeforeUnmount(() => clearTimeout(timer));
 
 <style scoped>
 .share__code {
-  font-family: var(--font-display);
-  font-size: 32px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-stretch: 85%;
+  font-size: 34px;
+  font-weight: 820;
+  letter-spacing: 0.14em;
   margin: 6px 0 0;
-  color: var(--accent);
+  color: var(--ink-1);
 }
 .share__note { font-size: 13.5px; line-height: 1.55; margin: 8px 0 0; }
 .share__row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .share__flash {
-  font-family: var(--font-label);
   font-size: 13px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent);
+  font-weight: 650;
+  color: var(--teal-1);
   margin: 10px 0 0;
 }
 @media (max-width: 380px) {

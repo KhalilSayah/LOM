@@ -57,11 +57,47 @@ const myFilled = computed(() => new Set(
 ));
 const openSlots = computed(() => SLOTS.filter((s) => !myFilled.value.has(s)));
 
+const theirLineup = computed(() =>
+  (state.value?.side === 'BLUE' ? state.value?.redLineup : state.value?.blueLineup) || {});
+const theirFilled = computed(() => new Set(
+  (state.value?.actions || [])
+    .filter((a: any) => a.side !== state.value?.side && a.slot)
+    .map((a: any) => a.slot),
+));
+
+/**
+ * Which champions the grid shows. A pick wants yours, the champions your open slots know
+ * best; a ban wants theirs, the ones their open slots would play. "All" is the full list.
+ * It follows the step until the person chooses for themselves.
+ */
+type PoolView = 'mine' | 'theirs' | 'all';
+const poolView = ref<PoolView>('mine');
+const poolViewChosen = ref(false);
+watch(isPick, (pick) => {
+  if (!poolViewChosen.value) poolView.value = pick ? 'mine' : 'theirs';
+}, { immediate: true });
+function setPoolView(v: PoolView) {
+  poolView.value = v;
+  poolViewChosen.value = true;
+}
+
 const champions = computed(() => {
   const q = search.value.trim().toLowerCase();
-  return pool.value
+  const theirOpen = SLOTS.filter((sl) => !theirFilled.value.has(sl));
+  const list = pool.value
     .filter((c) => !q || c.name.toLowerCase().includes(q))
-    .map((c) => ({ ...c, gone: taken.value.has(c.key) }));
+    .map((c) => ({
+      ...c,
+      gone: taken.value.has(c.key),
+      mine: Math.max(0, ...openSlots.value.map((sl) => masteryOn(myLineup.value, sl, c.key))),
+      theirs: Math.max(0, ...theirOpen.map((sl) => masteryOn(theirLineup.value, sl, c.key))),
+    }));
+  // A search looks through everything, whichever view is on.
+  if (q || poolView.value === 'all') return list;
+  const key = poolView.value;
+  return list
+    .filter((c) => c[key] > 0)
+    .sort((a, b) => Number(a.gone) - Number(b.gone) || b[key] - a[key]);
 });
 
 /** What each of my cards would be worth on this champion — the reason to pick it. */
@@ -181,8 +217,24 @@ const redName = computed(() => nameOf('RED'));
  * as a broken replay rather than an old one. At RESULT the match is over by definition, so the
  * honest frame is the last one.
  */
+/**
+ * A finished match can be rewatched. The rewatch clock is this client's alone, so it is
+ * only offered once both players are past the shared watch; until it is touched the result
+ * shows its last frame, as before.
+ */
+const rewatch = ref<number | null>(null);
+const transport = ref<any>(null);
+const rewatchClock = computed({
+  get: () => rewatch.value ?? matchEnd(state.value?.result),
+  set: (t: number) => { rewatch.value = t; },
+});
+function seek(t: number) {
+  rewatch.value = t;
+  nextTick(() => transport.value?.play());
+}
+
 const watchAt = computed(() => {
-  if (phase.value === 'RESULT') return state.value?.result?.gameLength ?? 0;
+  if (phase.value === 'RESULT') return rewatchClock.value;
   return matchClock.value;
 });
 
@@ -300,8 +352,22 @@ useHead(() => ({
           :red-name="redName"
           :my-side="mySide"
           :show-result="phase === 'RESULT'"
-        />
+        :seekable="phase === 'RESULT'"
+          result-first
+        @seek="seek"
+        >
+          <template v-if="phase === 'RESULT'" #controls>
+            <ReplayTransport
+              ref="transport"
+              v-model:clock="rewatchClock"
+              :length="matchEnd(state.result)"
+              :initial-speed="4"
+              :skip="rewatch !== null"
+            />
+          </template>
+        </MatchWatch>
         <div v-if="phase === 'RESULT'" class="again">
+          <NuxtLink v-if="state.source === 'LEAGUE'" class="btn btn--ghost btn--lg" to="/leagues">League table</NuxtLink>
           <NuxtLink class="btn btn--lg" to="/duels">Battle again</NuxtLink>
         </div>
       </template>
@@ -314,9 +380,9 @@ useHead(() => ({
 
       <!-- ===== The draft ======================================================= -->
       <template v-else-if="state && phase === 'DRAFT'">
-        <section class="turn" :class="{ 'is-mine': state.myTurn }" aria-live="polite">
+        <section class="turn" :class="{ 'is-mine': state.myTurn }">
           <div>
-            <p class="turn__who">
+            <p class="turn__who" aria-live="polite">
               <template v-if="state.myTurn">Your {{ isPick ? 'pick' : 'ban' }}</template>
               <template v-else-if="theirHover">{{ state.opponent }} eyes {{ theirHover.championName }}</template>
               <template v-else>{{ state.opponent }} is {{ isPick ? 'picking' : 'banning' }}</template>
@@ -396,9 +462,19 @@ useHead(() => ({
         <!-- the pool -->
         <section class="pool">
           <div class="pool__head">
-            <p class="pool__count">Champions <span class="faint tnum">{{ champions.filter(c => !c.gone).length }} left</span></p>
+            <p class="pool__count">Champions <span class="faint tnum">{{ pool.filter(c => !taken.has(c.key)).length }} left</span></p>
             <input v-model="search" class="input pool__search" type="search" placeholder="Search champions" aria-label="Search champions">
+            <div class="seg pool__view" role="group" aria-label="Show champions">
+              <button type="button" :aria-pressed="poolView === 'mine'" @click="setPoolView('mine')">Your pools</button>
+              <button type="button" :aria-pressed="poolView === 'theirs'" @click="setPoolView('theirs')">Theirs</button>
+              <button type="button" :aria-pressed="poolView === 'all'" @click="setPoolView('all')">All</button>
+            </div>
           </div>
+          <p v-if="!champions.length" class="pool__none faint">
+            <template v-if="search">No champion matches “{{ search }}”.</template>
+            <template v-else-if="poolView === 'mine'">Nothing left in your open slots' pools. Try All.</template>
+            <template v-else>Nothing left in their pools. Try All.</template>
+          </p>
           <ul class="pool__grid">
             <li v-for="c in champions" :key="c.key">
               <button
@@ -411,8 +487,12 @@ useHead(() => ({
               >
                 <img :src="art(c.key)" :alt="c.name" loading="lazy">
                 <span class="champ__name">{{ c.name }}</span>
-                <span v-if="isPick && !c.gone && Math.max(0, ...openSlots.map(s => masteryOn(myLineup, s, c.key))) > 0" class="champ__m tnum">
-                  {{ Math.max(0, ...openSlots.map(s => masteryOn(myLineup, s, c.key))) }}
+                <span
+                  v-if="!c.gone && (poolView === 'theirs' || (!isPick && poolView !== 'mine') ? c.theirs : c.mine) > 0"
+                  class="champ__m tnum"
+                  :class="{ 'is-theirs': poolView === 'theirs' || (!isPick && poolView !== 'mine') }"
+                >
+                  {{ poolView === 'theirs' || (!isPick && poolView !== 'mine') ? c.theirs : c.mine }}
                 </span>
               </button>
             </li>
@@ -495,13 +575,13 @@ useHead(() => ({
 .lobby__count { margin: 8px 0 0; font-size: 72px; }
 .lobby__note { margin: 0; max-width: 36ch; font-size: 13px; }
 
-.again { display: flex; justify-content: center; padding: 20px 16px 0; }
+.again { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; padding: 20px 0 0; }
 .room--watch .room__body, .room--result .room__body { padding: 0 16px 24px; }
 .room--watch .notice { margin: 12px 0; }
 
 /* --- the draft ---------------------------------------------------------------- */
 .turn { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-2); }
-.turn.is-mine { background: linear-gradient(90deg, rgba(31, 207, 193, 0.14), rgba(31, 207, 193, 0.02) 70%); box-shadow: inset 3px 0 0 var(--teal-2); }
+.turn.is-mine { background: linear-gradient(90deg, rgba(31, 207, 193, 0.14), rgba(31, 207, 193, 0.02) 70%); }
 .turn__who { margin: 0; font-stretch: 80%; font-weight: 840; font-size: 24px; line-height: 1.05; text-transform: uppercase; }
 .turn.is-mine .turn__who { color: var(--teal-1); }
 .turn__phase { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-3); }
@@ -557,6 +637,9 @@ useHead(() => ({
 .pool__head { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; margin-bottom: 12px; }
 .pool__count { margin: 0; font-size: 13.5px; font-weight: 650; }
 .pool__search { min-height: 42px; font-size: 15px; }
+.pool__view { grid-column: 1 / -1; }
+.pool__none { margin: 4px 0 12px; font-size: 14px; }
+.champ__m.is-theirs { color: var(--red-2); }
 .pool__grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 10px 8px; }
 .champ { position: relative; display: grid; gap: 4px; justify-items: center; width: 100%; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
 .champ img { width: 100%; aspect-ratio: 1; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line-2); }

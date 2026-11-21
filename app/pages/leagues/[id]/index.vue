@@ -220,6 +220,47 @@ const isToday = (iso: string | null) =>
 
 const next = computed<any>(() => data.value?.next ?? null);
 
+/**
+ * The lobby countdown. Ticks only while there is a fixture waiting on its lobby, and the
+ * moment it opens the page re-reads once, so the Play button appears without a refresh.
+ */
+const nowMs = ref(Date.now());
+let lobbyTimer: ReturnType<typeof setInterval> | undefined;
+let reopened = false;
+const lobbyIn = computed(() => {
+  const at = next.value?.opensAt ? new Date(next.value.opensAt).getTime() : null;
+  if (!at || next.value?.playable) return null;
+  return Math.max(0, Math.round((at - nowMs.value) / 1000));
+});
+const lobbyText = computed(() => {
+  const t = lobbyIn.value;
+  if (t === null) return '';
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = t % 60;
+  return h ? `${h} h ${String(m).padStart(2, '0')} min` : `${m}:${String(sec).padStart(2, '0')}`;
+});
+watch(lobbyIn, async (t) => {
+  if (t === 0 && !reopened) {
+    reopened = true;
+    await load();
+    reopened = false;
+  }
+});
+onMounted(() => { lobbyTimer = setInterval(() => { nowMs.value = Date.now(); }, 1000); });
+onBeforeUnmount(() => clearInterval(lobbyTimer));
+
+const myRow = computed(() => table.value.find((r) => r.isMe) ?? null);
+const ordinal = (n: number) => {
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return n + 'th';
+  return n + (n % 10 < 4 ? ['th', 'st', 'nd', 'rd'][n % 10] : 'th');
+};
+
+/** Who won it, once the season is over. */
+const champion = computed(() =>
+  (league.value?.status === 'FINISHED' ? table.value.find((r) => r.position === 1) ?? null : null));
+
 useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League — LOM' }));
 </script>
 
@@ -246,6 +287,17 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         · {{ league.matchHour }} {{ league.timezone }}
       </p>
 
+      <!-- The season is over: say who won before anything else. -->
+      <section v-if="champion" class="season-over">
+        <p class="season-over__eyebrow"><span class="gem gem--legendary" aria-hidden="true" />Season over</p>
+        <p class="season-over__name">{{ champion.teamName }}</p>
+        <p class="season-over__line">
+          <template v-if="champion.isMe">You won the league.</template>
+          <template v-else>Top of the table.</template>
+          <span v-if="myRow && !champion.isMe" class="faint">You finished {{ ordinal(myRow.position) }}.</span>
+        </p>
+      </section>
+
       <!-- Tonight. The only thing most people open this screen for. -->
       <section v-if="next" class="panel next">
         <p class="eyebrow">Day {{ next.dayIndex }}</p>
@@ -263,6 +315,9 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
         >
           {{ opening ? 'Opening' : next.duelId ? 'Back into the draft' : 'Play this fixture' }}
         </button>
+        <p v-else-if="lobbyIn !== null && lobbyIn > 0" class="next__hint">
+          Lobby opens in <b class="tnum next__count">{{ lobbyText }}</b>
+        </p>
         <p v-else class="faint next__hint">
           The lobby opens 15 minutes before kick-off.
         </p>
@@ -364,7 +419,7 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
               </NuxtLink>
 
               <template v-if="!m.isMe">
-                <NuxtLink v-if="m.duel && m.duel.status !== 'PENDING'" class="btn btn--sm" :to="`/duel/${m.duel.id}`">
+                <NuxtLink v-if="m.duel && m.duel.status !== 'PENDING'" class="btn btn--ghost btn--sm" :to="`/duel/${m.duel.id}`">
                   Rejoin
                 </NuxtLink>
                 <span v-else-if="m.duel" class="faint manager__pending">
@@ -486,7 +541,7 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
           </p>
           <div class="leave__acts">
             <button class="btn btn--quiet" type="button" @click="confirmLeave = false">Keep it</button>
-            <button class="btn" type="button" :disabled="leaving" @click="leave">
+            <button class="btn btn--danger" type="button" :disabled="leaving" @click="leave">
               {{ league.iAmOwner ? 'Disband' : 'Leave' }}
             </button>
           </div>
@@ -537,6 +592,29 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
 
 /* The table: one surface, rows split by keylines. Yours carries a marker, not a colour alone. */
 .standings { border-top: 1px solid var(--line-1); }
+.next__count { font-stretch: 80%; font-size: 18px; color: var(--ink-1); }
+.season-over {
+  margin: 4px 0 18px;
+  padding: 22px 18px;
+  text-align: center;
+  border: 1px solid rgba(216, 178, 104, 0.45);
+  border-radius: 6px;
+  background: radial-gradient(120% 140% at 50% 0%, rgba(216, 178, 104, 0.18), transparent 62%), var(--bg-2);
+}
+.season-over__eyebrow {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  font-stretch: 116%;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gold-1);
+}
+.season-over__name { margin: 8px 0 0; font-stretch: 75%; font-weight: 880; font-size: clamp(28px, 7vw, 40px); line-height: 1; text-transform: uppercase; overflow-wrap: anywhere; }
+.season-over__line { margin: 10px 0 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; color: var(--ink-2); }
 .standing {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) auto 36px;
@@ -548,7 +626,8 @@ useHead(() => ({ title: league.value ? `${league.value.name} — LOM` : 'League 
   border-bottom: 1px solid var(--line-1);
   border-radius: 0;
 }
-.standing.is-me { background: linear-gradient(90deg, rgba(31, 207, 193, 0.08), transparent 70%); box-shadow: inset 2px 0 0 var(--teal-2); }
+.standing.is-me { background: var(--bg-3); }
+.standing.is-me .standing__pos, .standing.is-me .standing__who { color: var(--gold-1); }
 .standing__pos { font-stretch: 80%; font-weight: 800; font-size: 16px; color: var(--ink-3); text-align: center; }
 .standing:first-child .standing__pos { color: var(--gold-1); }
 .standing__who { font-size: 14.5px; font-weight: 620; min-width: 0; }

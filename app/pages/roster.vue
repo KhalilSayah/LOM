@@ -124,6 +124,49 @@ async function choose(role: string, entry: any | null) {
 }
 
 /**
+ * The strongest card you own for every lane. Chemistry is left to the person: it trades
+ * rating for links, and that trade is the interesting decision on this screen, so the
+ * shortcut only does the obvious part.
+ */
+const bestFive = computed<Record<string, any>>(() => {
+  const out: Record<string, any> = {};
+  for (const role of ROLES) {
+    out[role] = owned.value
+      .filter((c) => c.card.role === role)
+      .sort((a, b) => b.card.ovr - a.card.ovr || (b.level ?? 1) - (a.level ?? 1))[0] ?? null;
+  }
+  return out;
+});
+
+/** Slots the shortcut would change. Empty when the five already is the best five. */
+const autofillChanges = computed(() =>
+  ROLES.filter((r) => bestFive.value[r] && held(r)?.id !== bestFive.value[r].id));
+
+async function autofill() {
+  if (saving.value || !autofillChanges.value.length) return;
+  const changes = [...autofillChanges.value];
+  for (const role of changes) data.value.roster[role] = bestFive.value[role];
+  playSound('slotIn');
+
+  saving.value = true;
+  try {
+    for (const role of changes) {
+      await $fetch('/api/roster/slot', {
+        method: 'POST',
+        body: { role, collectionCardId: bestFive.value[role].id },
+      });
+    }
+    error.value = '';
+    if (chemistry.value.average > 0) playSound('chemistry');
+  } catch (e: any) {
+    error.value = message(e, 'Some of that did not save.');
+  } finally {
+    saving.value = false;
+    await load();
+  }
+}
+
+/**
  * Where each role stands on the board: its lane on the Rift, blue base bottom-left.
  * Top up the left edge, jungle between the lanes, mid on the diagonal, bot and support
  * along the bottom. A formation a League player reads without a legend.
@@ -165,9 +208,16 @@ useHead({ title: 'Team — LOM' });
     <header class="topbar">
       <h1>Team</h1>
       <span class="topbar__meta tnum">{{ filledCount }} of 5 set</span>
+      <button
+        v-if="data && autofillChanges.length"
+        class="btn btn--ghost btn--sm team__auto" type="button" data-sound="none"
+        :disabled="saving" @click="autofill"
+      >
+        {{ filledCount < 5 ? 'Fill with my best' : 'Use my best five' }}
+      </button>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
     <div v-if="loading" class="skeleton team__skeleton" />
 
@@ -202,8 +252,10 @@ useHead({ title: 'Team — LOM' });
             >
               <LomCard v-if="slots[role]" :card="slots[role]" compact :interactive="false" />
               <span v-else class="slot__hole" aria-hidden="true">+</span>
-              <span v-if="chemistry.byRole[role]!.bonus" class="slot__chem tnum">+{{ chemistry.byRole[role]!.bonus }}</span>
-              <span class="tag slot__role" :class="{ 'tag--live': selectedRole === role }">{{ role }}</span>
+              <span class="slot__tags">
+                <span class="tag slot__role" :class="{ 'is-sel': selectedRole === role }">{{ role }}</span>
+                <span v-if="chemistry.byRole[role]!.bonus" class="slot__chem tnum">+{{ chemistry.byRole[role]!.bonus }}</span>
+              </span>
             </button>
           </div>
 
@@ -253,7 +305,7 @@ useHead({ title: 'Team — LOM' });
           <div class="bench">
             <div class="bench__head">
               <h2>Your {{ selectedRole }} cards <span class="faint tnum">{{ bench.length }}</span></h2>
-              <input v-model="search" class="input bench__search" type="search" :placeholder="`Search ${selectedRole.toLowerCase()}s`" :aria-label="`Search your ${selectedRole} cards`">
+              <input v-model="search" class="input bench__search" type="search" :placeholder="`Search your ${selectedRole} cards`" :aria-label="`Search your ${selectedRole} cards`">
             </div>
 
             <ul v-if="bench.length" class="bench__grid">
@@ -295,6 +347,8 @@ useHead({ title: 'Team — LOM' });
 
 <style scoped>
 .team__skeleton { height: 520px; }
+.team .topbar__meta { margin-left: auto; }
+.team__auto { flex: none; }
 .team__grid { display: grid; gap: 28px; }
 
 .totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 0 14px; border-top: 1px solid var(--line-1); border-bottom: 1px solid var(--line-1); }
@@ -331,7 +385,7 @@ useHead({ title: 'Team — LOM' });
   transition: transform 160ms var(--ease-out);
 }
 .slot :deep(.lom-card) { transition: box-shadow 160ms ease; }
-.slot.is-selected :deep(.lom-card) { box-shadow: 0 0 0 2px var(--teal-2), 0 10px 24px rgba(0, 0, 0, 0.6); }
+.slot.is-selected :deep(.lom-card) { box-shadow: 0 0 0 2px var(--gold-2), 0 10px 24px rgba(0, 0, 0, 0.6); }
 .slot__hole {
   display: grid;
   place-items: center;
@@ -342,13 +396,11 @@ useHead({ title: 'Team — LOM' });
   font-size: 24px;
   color: var(--ink-3);
 }
-.slot.is-selected .slot__hole { border-color: var(--teal-2); color: var(--teal-1); }
-.slot__role { position: absolute; left: 50%; bottom: -11px; translate: -50% 0; z-index: 3; }
+.slot.is-selected .slot__hole { border-color: var(--gold-2); color: var(--gold-1); }
+/* Role and chemistry sit in a strip above the card, never on its name or year. */
+.slot__tags { position: absolute; left: -12px; right: -12px; bottom: calc(100% + 5px); z-index: 3; display: flex; justify-content: center; align-items: center; gap: 3px; }
+.slot__role.is-sel { --tag: var(--gold-2); color: var(--gold-ink); }
 .slot__chem {
-  position: absolute;
-  top: -8px;
-  right: -8px;
-  z-index: 3;
   padding: 1px 5px;
   border: 1px solid rgba(216, 176, 100, 0.5);
   border-radius: 2px;
@@ -380,10 +432,10 @@ useHead({ title: 'Team — LOM' });
 .bench__search { min-height: 44px; font-size: 15px; }
 .bench__grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 22px 10px; }
 .pick { position: relative; display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
-.pick.is-in :deep(.lom-card) { box-shadow: 0 0 0 2px var(--teal-2); }
+.pick.is-in :deep(.lom-card) { box-shadow: 0 0 0 2px var(--gold-2); }
 .pick.is-elsewhere { opacity: 0.55; }
 .pick__tag { display: block; min-height: 16px; margin-top: 6px; font-size: 11.5px; font-weight: 650; color: var(--ink-3); text-align: center; }
-.pick.is-in .pick__tag { color: var(--teal-1); }
+.pick.is-in .pick__tag { color: var(--gold-1); }
 .bench__none { font-size: 14px; }
 
 .foot { display: grid; gap: 8px; justify-items: start; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-1); }

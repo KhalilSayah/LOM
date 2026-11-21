@@ -16,31 +16,22 @@
  * you teach them to skip forever.
  */
 
-const SPEEDS = [1, 2, 4, 60];
-
 const data = ref<any>(null);
 const loading = ref(true);
 const error = ref('');
-
 const clock = ref(0);
-const speed = ref(60);
-const playing = ref(false);
-const reduced = ref(false);
-
-let raf = 0;
-let last = 0;
+const transport = ref<any>(null);
 
 const result = computed(() => data.value?.result ?? null);
-const length = computed(() => result.value?.gameLength ?? 0);
+const length = computed(() => matchEnd(result.value));
 
 async function load(seed?: string) {
   loading.value = true;
-  playing.value = false;
+  transport.value?.pause();
   try {
     data.value = await $fetch<any>('/api/sim/run', { query: seed ? { seed } : {} });
     clock.value = 0;
     error.value = '';
-    if (!reduced.value) start();
   } catch (e: any) {
     error.value = e?.statusMessage || e?.data?.statusMessage || 'Could not run a match.';
   } finally {
@@ -48,47 +39,13 @@ async function load(seed?: string) {
   }
 }
 
-function tick(now: number) {
-  if (!playing.value) return;
-  const dt = (now - last) / 1000;
-  last = now;
-
-  clock.value = Math.min(length.value, clock.value + dt * speed.value);
-  if (clock.value >= length.value) playing.value = false;
-  else raf = requestAnimationFrame(tick);
+/** A key moment in the result was picked: go there and play from it. */
+function seek(t: number) {
+  clock.value = t;
+  nextTick(() => transport.value?.play());
 }
 
-function start() {
-  if (clock.value >= length.value) clock.value = 0;
-  playing.value = true;
-  last = performance.now();
-  cancelAnimationFrame(raf);
-  raf = requestAnimationFrame(tick);
-}
-
-function pause() {
-  playing.value = false;
-  cancelAnimationFrame(raf);
-}
-
-const toggle = () => (playing.value ? pause() : start());
-
-function skipToResult() {
-  pause();
-  clock.value = length.value;
-}
-
-function scrub(e: Event) {
-  pause();
-  clock.value = Number((e.target as HTMLInputElement).value);
-}
-
-onMounted(() => {
-  reduced.value = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  load();
-});
-
-onBeforeUnmount(() => cancelAnimationFrame(raf));
+onMounted(() => load());
 
 useHead({ title: 'Replay — LOM' });
 </script>
@@ -97,16 +54,24 @@ useHead({ title: 'Replay — LOM' });
   <main class="page page--wide">
     <header class="topbar">
       <h1>Replay</h1>
-      <span v-if="data" class="topbar__meta">{{ data.seed }}</span>
+      <span v-if="data" class="topbar__meta tnum">Seed {{ data.seed }}</span>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
-    <div v-if="loading" class="skeleton map-skeleton" />
+    <!-- Shaped like what is coming: the scoreboard strip, then the map at the art's own
+         2000 by 1670 aspect, with the ticker column beside it on a wide screen. -->
+    <div v-if="loading" class="replay-skeleton" aria-hidden="true">
+      <div class="skeleton replay-skeleton__board" />
+      <div class="replay-skeleton__stage">
+        <div class="skeleton replay-skeleton__map" />
+        <div class="skeleton replay-skeleton__ticker" />
+      </div>
+    </div>
 
     <template v-else-if="result">
       <p v-if="data.source === 'FIXTURE' && data.missing.length" class="notice">
-        Fielding a stand-in five: your roster is missing
+        Fielding a stand-in team: yours is missing
         {{ data.missing.join(', ') }}. <NuxtLink to="/roster">Fill it</NuxtLink> and the
         next match runs with your cards.
       </p>
@@ -117,27 +82,19 @@ useHead({ title: 'Replay — LOM' });
         :blue-name="data.blueName"
         :red-name="data.redName"
         :show-result="clock >= length"
-      />
-
-      <!-- Transport. A sandbox gets one; a duel does not. -->
-      <section class="transport">
-        <input
-          class="transport__scrub" type="range" min="0" :max="length" step="1"
-          :value="clock" aria-label="Scrub" @input="scrub"
-        >
-        <div class="transport__row">
-          <button class="btn" type="button" @click="toggle">
-            {{ playing ? 'Pause' : clock >= length ? 'Replay' : 'Play' }}
-          </button>
-          <div class="chips">
-            <button
-              v-for="s in SPEEDS" :key="s" class="chip"
-              :aria-pressed="speed === s" @click="speed = s"
-            >{{ s }}×</button>
-          </div>
-          <button class="btn btn--quiet" type="button" @click="skipToResult">Skip to result</button>
-        </div>
-      </section>
+        seekable
+        @seek="seek"
+      >
+        <template #controls>
+          <ReplayTransport
+            ref="transport"
+            :key="data.seed"
+            v-model:clock="clock"
+            :length="length"
+            autoplay
+          />
+        </template>
+      </MatchWatch>
 
       <div class="again">
         <button class="btn btn--ghost" type="button" @click="load()">Run another match</button>
@@ -148,14 +105,19 @@ useHead({ title: 'Replay — LOM' });
 </template>
 
 <style scoped>
-.map-skeleton { aspect-ratio: 1; border-radius: var(--radius); }
+.replay-skeleton { display: grid; gap: 12px; }
+.replay-skeleton__board { height: 64px; }
+.replay-skeleton__stage { display: grid; gap: 12px; }
+.replay-skeleton__map { aspect-ratio: 2000 / 1670; }
+.replay-skeleton__ticker { height: 120px; }
+@media (min-width: 820px) {
+  .replay-skeleton__stage { grid-template-columns: minmax(0, 1fr) 300px; align-items: start; }
+  .replay-skeleton__ticker { height: 100%; min-height: 240px; }
+}
 
-.transport { margin-top: 14px; display: grid; gap: 10px; }
-.transport__scrub { width: 100%; accent-color: var(--accent); }
-.transport__row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
 .again {
-  margin-top: 16px;
+  margin-top: 24px;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;

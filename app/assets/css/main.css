@@ -125,10 +125,8 @@ p { text-wrap: pretty; }
 
 /* --- page frame ------------------------------------------------------------ */
 
-.shell {
-  min-height: 100%;
-  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 16px);
-}
+.shell { min-height: 100%; }
+.shell.has-nav { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 16px); }
 .shell.is-focus { padding-bottom: env(safe-area-inset-bottom, 0px); }
 
 .page {
@@ -208,7 +206,7 @@ a.topbar__meta:hover { color: var(--ink-1); }
 }
 .is-blue { color: var(--blue-2); }
 .is-red { color: var(--red-2); }
-.is-won { color: var(--teal-1); }
+.is-won { color: var(--gold-1); }
 .is-lost { color: var(--red-2); }
 
 /* --- buttons ---------------------------------------------------------------
@@ -255,7 +253,8 @@ a.topbar__meta:hover { color: var(--ink-1); }
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 .btn:active { transform: scale(0.97); }
-.btn:disabled, .btn[aria-disabled='true'] { cursor: not-allowed; filter: grayscale(0.7) brightness(0.55); transform: none; }
+.btn:disabled, .btn[aria-disabled='true'] { --fill: var(--bg-3); color: var(--ink-3); cursor: not-allowed; filter: none; transform: none; }
+.btn:disabled::before, .btn[aria-disabled='true']::before { box-shadow: none; }
 .btn svg { width: 17px; height: 17px; flex: none; }
 .btn--block { width: 100%; }
 .btn--lg { min-height: 56px; padding: 0 30px; font-size: 14px; --c: 12px; }
@@ -311,6 +310,25 @@ a.topbar__meta:hover { color: var(--ink-1); }
 }
 .icon-btn svg { width: 22px; height: 22px; }
 @media (hover: hover) and (pointer: fine) { .icon-btn:hover { color: var(--ink-1); background: var(--bg-3); } }
+
+/* Touch: every control is at least 44px tall under a finger. */
+@media (pointer: coarse) {
+  .btn--sm, .btn--quiet { min-height: 44px; }
+  .chip { min-height: 44px; }
+  .seg button { min-height: 42px; }
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .ico { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -561,9 +579,13 @@ input[type='search']::-webkit-search-cancel-button { filter: grayscale(1) bright
   background: var(--tag, rgba(4, 7, 13, 0.88));
   clip-path: polygon(var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%, 0 var(--c));
 }
-.card-grid__badge { left: 6px; bottom: -8px; color: var(--ink-1); }
-.card-grid__slot { --tag: var(--teal-2); right: 6px; bottom: -8px; color: var(--teal-ink); }
-.card-grid__dupes { right: 6px; top: 6px; color: var(--ink-2); }
+/* Tags live in their own strip above the card, never on the art: the name and the
+   year are half a card's identity and nothing may sit on them. */
+.card-grid__tags { display: flex; align-items: center; gap: 4px; height: 20px; margin-bottom: 6px; overflow: hidden; }
+.card-grid__badge, .card-grid__slot, .card-grid__dupes { position: relative !important; }
+.card-grid__badge { color: var(--ink-1); }
+.card-grid__slot { --tag: var(--bg-4); color: var(--gold-1); }
+.card-grid__dupes { margin-left: auto; color: var(--ink-2); }
 
 .lom-card-host { display: block; width: 100%; }
 
@@ -688,7 +710,7 @@ input[type='search']::-webkit-search-cancel-button { filter: grayscale(1) bright
   .appbar { padding-inline: 32px; }
   .deskNav { display: flex; }
   .tabbar { display: none; }
-  .shell { padding-bottom: 48px; }
+  .shell.has-nav { padding-bottom: 48px; }
   .page { padding-block: 16px 40px; }
   .topbar { min-height: 64px; padding-top: 18px; }
   .topbar h1 { font-size: 36px; }

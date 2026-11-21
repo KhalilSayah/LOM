@@ -83,9 +83,17 @@ onBeforeUnmount(() => { focus.value = false; });
 
 /** The reveal, voiced phase by phase; the stinger matches what came out. */
 const PHASE_SOUND: Record<string, SoundName> = { charge: 'packCharge', tear: 'packTear', rise: 'cardRise', flip: 'cardFlip' };
+/** The walkout: one beat per line of the card's identity, spaced like the animation. */
+const WALK_MS: Record<string, number> = { LEGENDARY: 1800, ICON: 2700 };
+let beatTimers: ReturnType<typeof setTimeout>[] = [];
 function onPhase(phase: string) {
   const s = PHASE_SOUND[phase];
   if (s) playSound(s);
+  if (phase === 'walkout') {
+    const walk = WALK_MS[(freshPull.value?.card?.rarity || freshPull.value?.rarity || '').toUpperCase()] ?? 1800;
+    beatTimers = [0.06, 0.28, 0.5, 0.72].map((f) => setTimeout(() => playSound('walkBeat'), walk * f));
+  }
+  if (phase === 'flip') { beatTimers.forEach(clearTimeout); beatTimers = []; }
 }
 function onRevealed() {
   revealed.value = true;
@@ -106,12 +114,34 @@ let drift = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
 const remaining = ref('');
 
+/**
+ * The status is re-read when the countdown runs out, but not once a second: the server's
+ * clock and ours can disagree by a moment, and a pack that is not quite ready yet must not
+ * turn into a request every tick. One read in flight at a time, then a growing pause.
+ */
+let reloading = false;
+let retryAt = 0;
+let retryGap = 2000;
+
+async function reloadWhenDue() {
+  if (reloading || Date.now() < retryAt) return;
+  reloading = true;
+  try {
+    await load();
+  } finally {
+    reloading = false;
+    retryAt = Date.now() + retryGap;
+    retryGap = Math.min(retryGap * 2, 60000);
+  }
+}
+
 function tick() {
   if (!status.value) return;
   const ms = new Date(status.value.nextOpensAt).getTime() - (Date.now() + drift);
   if (ms <= 0) {
     remaining.value = '00:00:00';
-    if (!status.value.available) load();
+    if (!status.value.available) reloadWhenDue();
+    else retryGap = 2000;
     return;
   }
   const s = Math.floor(ms / 1000);
@@ -188,14 +218,20 @@ useHead({ title: 'Home — LOM' });
       @revealed="onRevealed"
       @kept="keep"
     />
-    <p v-if="revealed && freshPull.wasDuplicate" class="notice reveal-page__dupe">
-      You already had {{ freshPull.card.playerName }} {{ freshPull.card.season }}. The copy became
-      <strong>+{{ freshPull.xpAwarded }} XP</strong> on the card you hold.
-    </p>
+    <div v-if="revealed && (freshPull.wasDuplicate || freshPull.forcedBy)" class="reveal-page__notes" aria-live="polite">
+      <p v-if="freshPull.forcedBy" class="reveal-page__note reveal-page__note--pity">
+        <span class="gem" :class="freshPull.forcedBy === 'icon-pity' ? 'gem--icon' : 'gem--legendary'" aria-hidden="true" />
+        {{ freshPull.forcedBy === 'icon-pity' ? 'Icon' : 'Legendary' }} guarantee paid out. The meter starts again.
+      </p>
+      <p v-if="freshPull.wasDuplicate" class="reveal-page__note">
+        Already yours. The copy became
+        <strong>+{{ freshPull.xpAwarded }} XP</strong><template v-if="freshPull.creditsEarned"> and <strong class="reveal-page__credits">+{{ freshPull.creditsEarned }} credits</strong></template>.
+      </p>
+    </div>
   </main>
 
   <main v-else class="page page--full home">
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
     <div class="home__grid">
       <div class="home__main">
@@ -203,11 +239,11 @@ useHead({ title: 'Home — LOM' });
 
         <!-- no cards loaded yet -->
         <section v-else-if="status && !status.catalogue" class="empty">
-          <h2>No catalogue loaded</h2>
+          <h2>The cards are not in yet</h2>
           <p>
-            There are no cards to roll against yet. Build one and push it to Supabase:
-            <code>npm run catalogue:build</code> then <code>npm run catalogue:push</code>.
+            There is nothing to open until the player catalogue is loaded. Check back shortly.
           </p>
+          <button class="btn btn--ghost" type="button" @click="load">Check again</button>
         </section>
 
         <!-- the pack -->
@@ -246,14 +282,14 @@ useHead({ title: 'Home — LOM' });
                 A duplicate: it became +{{ status.claim!.xpAwarded }} XP on the card you hold.
               </p>
               <p class="hero__next">Next pack in <b class="num">{{ remaining }}</b></p>
-              <p class="faint hero__tz">{{ status.hour }}:00 {{ status.timeZone.replace('_', ' ') }}</p>
+              <p class="faint hero__tz">{{ status.hour }}:00 {{ status.timeZone.replaceAll('_', ' ') }}</p>
             </template>
 
             <template v-else>
               <p class="hero__state hero__state--quiet">Daily pack</p>
               <h1 class="hero__title">Next pack</h1>
               <p class="hero__next"><b class="num">{{ remaining }}</b></p>
-              <p class="faint hero__tz">{{ status.hour }}:00 {{ status.timeZone.replace('_', ' ') }}</p>
+              <p class="faint hero__tz">{{ status.hour }}:00 {{ status.timeZone.replaceAll('_', ' ') }}</p>
             </template>
 
           </div>
@@ -299,7 +335,7 @@ useHead({ title: 'Home — LOM' });
             <li v-if="liveDuelId" class="move">
               <span class="move__mark move__mark--live" aria-hidden="true" />
               <p class="move__t">You are in a live room<span class="move__s">Somebody is on the other side of it</span></p>
-              <NuxtLink class="btn btn--sm" :to="`/duel/${liveDuelId}`">Rejoin</NuxtLink>
+              <NuxtLink class="btn btn--ghost btn--sm" :to="`/duel/${liveDuelId}`">Rejoin</NuxtLink>
             </li>
             <li v-if="duelsIncoming" class="move">
               <span class="move__mark" aria-hidden="true">{{ duelsIncoming }}</span>
@@ -446,14 +482,44 @@ useHead({ title: 'Home — LOM' });
 
 /* --- the reveal ------------------------------------------------------------- */
 .reveal-page {
+  position: relative;
   min-height: 100svh;
-  display: grid;
-  align-content: center;
-  gap: 8px;
-  padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-  background: radial-gradient(70% 45% at 50% 44%, #101a2c, var(--bg-0) 75%);
+  background: radial-gradient(70% 55% at 50% 44%, #101a2c, var(--bg-0) 78%);
 }
-.reveal-page__dupe { max-width: 420px; margin: 0 auto; }
+.reveal-page__notes {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: max(16px, env(safe-area-inset-top));
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  pointer-events: none;
+  z-index: 3;
+}
+.reveal-page__note {
+  margin: 0;
+  max-width: 440px;
+  padding: 9px 14px;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ink-1);
+  background: rgba(10, 15, 27, 0.86);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  backdrop-filter: blur(6px);
+  animation: note-in 360ms 500ms cubic-bezier(.2, .8, .2, 1) both;
+}
+.reveal-page__note--pity { display: inline-flex; align-items: center; gap: 8px; border-color: rgba(216, 178, 104, 0.5); color: var(--gold-1); }
+.reveal-page__credits { color: var(--gold-1); }
+/* Landscape: the card fills the height, so the notes sit beside it instead of over it. */
+@media (min-aspect-ratio: 1/1) and (min-width: 700px) {
+  .reveal-page__notes { right: auto; top: 50%; transform: translateY(-50%); width: min(26vw, 320px); justify-items: stretch; }
+  .reveal-page__note { text-align: left; }
+}
+@keyframes note-in { from { opacity: 0; transform: translateY(-8px); } }
+@media (prefers-reduced-motion: reduce) { .reveal-page__note { animation: none; } }
 
 @media (min-width: 720px) {
   .hero { grid-template-columns: 220px minmax(0, 1fr); grid-template-areas: "art text" "art pity"; gap: 24px 36px; padding: 32px 36px; }

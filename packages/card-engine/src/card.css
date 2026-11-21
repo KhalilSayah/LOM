@@ -815,3 +815,74 @@
     linear-gradient(180deg, rgba(4, 7, 12, 0.55) 0%, rgba(4, 7, 12, 0) 26%),
     linear-gradient(0deg, rgba(5, 8, 13, 0.96) 0%, rgba(5, 8, 13, 0.7) 24%, rgba(5, 8, 13, 0.05) 50%);
 }
+
+/* ===========================================================================
+   Readable at a glance
+   The front's small print is larger, and the back is rebuilt to carry less,
+   larger: who and when, the rating and the depth of the pool, four champions
+   as bars, four season numbers. Everything on it reads at arm's length.
+   =========================================================================== */
+
+.lom-meta { font-size: 0.58em; letter-spacing: 0.14em; }
+.lom-name { font-size: 2.12em; }
+.lom-season { font-size: 1.66em; }
+.lom-stats { gap: 0.34em 0.8em; margin: 0.5em 0 0.55em; }
+.lom-stat__label { font-size: 0.5em; opacity: 0.75; }
+.lom-stat__val { font-size: 0.82em; }
+.lom-stat__track { display: none; }
+.lom-pool__tile { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24); }
+.lom-pool__m { font-size: 0.42em; padding: 0 0.2em; }
+.lom-foot { font-size: 0.46em; opacity: 0.85; }
+.lom-foot__key { display: none; }
+
+.lom-card--compact .lom-meta { font-size: 0.64em; }
+.lom-card--compact .lom-name { font-size: 2.35em; }
+.lom-card--compact .lom-season { font-size: 1.85em; }
+
+/* --- the back ------------------------------------------------------------- */
+.lom-card__face--back .lom-card__plate { filter: brightness(0.55) saturate(0.8); }
+.lom-back {
+  gap: 0.55em;
+  padding: 1.1em 1.05em 0.95em;
+  text-align: left;
+  background: linear-gradient(180deg, rgba(5, 8, 13, 0.35), rgba(5, 8, 13, 0.78));
+}
+.lom-back__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5em; padding-bottom: 0.5em; border-bottom: 1px solid color-mix(in srgb, var(--r-accent) 40%, transparent); }
+.lom-back__title { margin: 0; font-stretch: 75%; font-weight: 860; font-size: 1.95em; line-height: 0.92; text-transform: uppercase; color: #fff; }
+.lom-back__sub { margin: 0.3em 0 0; font-stretch: 112%; font-size: 0.56em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.8; }
+.lom-back__year { font-stretch: 75%; font-weight: 780; font-size: 1.7em; line-height: 0.92; color: var(--r-accent); font-variant-numeric: tabular-nums; }
+.lom-card[data-rarity='ICON'] .lom-back__year { background: var(--prism); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+.lom-back__row { display: grid; grid-template-columns: auto 1fr; gap: 0.9em; align-items: center; }
+.lom-back__ovr, .lom-back__depth { display: flex; align-items: center; gap: 0.35em; }
+.lom-back__ovr b { font-stretch: 75%; font-weight: 860; font-size: 2.5em; line-height: 0.85; color: #fff; font-variant-numeric: tabular-nums; }
+.lom-back__ovr i { font-style: normal; font-stretch: 112%; font-size: 0.66em; font-weight: 800; letter-spacing: 0.12em; color: var(--r-accent); }
+.lom-back__depth { justify-self: end; }
+.lom-back__depth b { font-stretch: 75%; font-weight: 840; font-size: 1.7em; line-height: 0.85; font-variant-numeric: tabular-nums; }
+.lom-back__depth i { font-style: normal; font-size: 0.52em; line-height: 1.15; opacity: 0.75; }
+
+.lom-back__h { margin: 0.25em 0 0; font-stretch: 116%; font-size: 0.52em; font-weight: 760; letter-spacing: 0.14em; text-transform: uppercase; color: var(--r-accent); opacity: 1; }
+.lom-back__pool { gap: 0.38em; }
+.lom-back__pool-row { grid-template-columns: 2.1em minmax(0, 1fr) 3.4em 1.6em; gap: 0.5em; font-size: 1em; }
+.lom-back__icon { width: 2.1em; height: 2.1em; border-radius: 0.2em; }
+.lom-back__pool-name { min-width: 0; font-size: 0.78em; font-weight: 650; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lom-back__pool-name small { display: block; font-size: 0.72em; font-weight: 500; opacity: 0.65; }
+.lom-back__pool-bar { height: 0.28em; border-radius: 0.14em; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+.lom-back__pool-bar i { display: block; height: 100%; background: var(--r-accent); }
+.lom-back__pool-m { font-stretch: 85%; font-size: 0.9em; font-weight: 800; color: #fff; text-align: right; }
+
+.lom-back__grid { margin-top: auto; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.3em; }
+.lom-back__grid div { display: flex; flex-direction: column; align-items: center; padding: 0.4em 0.1em; border-radius: 0.2em; background: rgba(0, 0, 0, 0.35); }
+.lom-back__grid dd { order: 1; margin: 0; font-stretch: 80%; font-weight: 820; font-size: 0.95em; line-height: 1; color: #fff; }
+.lom-back__grid dt { order: 2; margin-top: 0.3em; font-size: 0.46em; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+
+.lom-back__prov {
+  margin: 0;
+  font-size: 0.46em;
+  line-height: 1.45;
+  opacity: 0.6;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}

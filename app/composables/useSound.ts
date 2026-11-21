@@ -22,7 +22,7 @@ export type SoundName =
   | 'searchStart' | 'matchFound' | 'yourTurn' | 'lockIn' | 'ban' | 'theirLock'
   | 'timerTick' | 'timerUrgent' | 'draftDone'
   | 'kill' | 'objective' | 'baron' | 'victory' | 'defeat'
-  | 'slotIn' | 'chemistry';
+  | 'slotIn' | 'chemistry' | 'walkBeat';
 
 const STORE_KEY = 'lom-sound';
 
@@ -266,6 +266,9 @@ const RECIPES: Record<SoundName, (c: AudioContext) => void> = {
     [[0, 0], [-2, 0.2], [-5, 0.42]].forEach(([s, at]) => chime(c, N(s!, 392), at!, 0.11, 1));
     tone(c, { freq: N(-17, 392), at: 0.42, dur: 1.4, gain: 0.06, type: 'triangle', attack: 0.1, release: 0.9 });
   },
+
+  // the walkout: a drum and a struck plate, once per line of the card's identity
+  walkBeat: (c) => { tone(c, { freq: 90, to: 45, dur: 0.28, gain: 0.32, attack: 0.002 }); hiss(c, { dur: 0.12, gain: 0.1, type: 'lowpass', freq: 1200, to: 200 }); chime(c, 1318.5, 0.01, 0.05, 0.35); },
 
   // the team
   slotIn: (c) => { tone(c, { freq: 300, to: 120, dur: 0.1, gain: 0.18, attack: 0.002 }); hiss(c, { dur: 0.04, gain: 0.08, freq: 2600, q: 2 }); },

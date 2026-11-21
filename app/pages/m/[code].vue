@@ -66,121 +66,153 @@ const filtered = computed(() => {
     .sort((a, b) => b.card.ovr - a.card.ovr);
 });
 
+const BAND_LABEL: Record<string, string> = { COMMON: 'Common', RARE: 'Rare', EPIC: 'Epic', LEGENDARY: 'Legendary', ICON: 'Icon' };
+// Rarest first, as on your own Cards screen.
+const BANDS_DESC = [...BANDS].reverse();
+
+function clearFilters() {
+  role.value = null;
+  band.value = null;
+  search.value = '';
+}
+
 useHead(() => ({
   title: data.value
-    ? `${data.value.manager.displayName}'s collection — LOM`
-    : 'Collection — LOM',
+    ? `${data.value.manager.displayName}'s cards — LOM`
+    : 'Cards — LOM',
 }));
 </script>
 
 <template>
   <main class="page page--wide">
     <header class="topbar">
-      <button class="btn btn--quiet" type="button" @click="$router.back()">Back</button>
-      <span v-if="data" class="topbar__meta">{{ formatShareCode(data.manager.shareCode) }}</span>
+      <NuxtLink class="backlink" to="/discovery"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>Find a manager</NuxtLink>
+      <span v-if="data" class="topbar__meta tnum">{{ formatShareCode(data.manager.shareCode) }}</span>
     </header>
 
-    <p v-if="error" class="notice notice--bad">{{ error }}</p>
+    <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
 
-    <template v-if="data">
-      <section class="panel who">
-        <p class="eyebrow">{{ data.isSelf ? 'You' : 'Manager' }}</p>
-        <p class="who__name">{{ data.manager.displayName }}</p>
-        <p class="muted who__handle">@{{ data.manager.handle }}</p>
-        <p class="who__total">
-          <span class="tnum who__n">{{ data.collection.total }}</span>
-          <span class="who__unit">{{ data.collection.total === 1 ? 'card' : 'cards' }}</span>
-        </p>
-        <p v-if="data.collection.best" class="muted who__best">
-          Best: {{ data.collection.best.playerName }}
-          <template v-if="data.collection.best.season">{{ data.collection.best.season }}</template>
-          · {{ data.collection.best.ovr }} OVR
-        </p>
-      </section>
+    <div v-if="loading" class="skeleton head-skeleton" />
 
-      <div v-if="cards.length" class="filters">
-        <input
-          v-model="search" class="filters__search" type="search"
-          placeholder="Player, team or champion" aria-label="Search this collection"
-        >
-        <div class="chips">
-          <button class="chip" :aria-pressed="role === null" @click="role = null">All</button>
-          <button
-            v-for="r in ROLES" :key="r" class="chip"
-            :aria-pressed="role === r" @click="role = role === r ? null : r"
-          >{{ r }}</button>
-        </div>
-        <div class="chips">
-          <button
-            v-for="b in BANDS" :key="b" class="chip"
-            :aria-pressed="band === b" :disabled="!byBand[b]"
-            @click="band = band === b ? null : b"
+    <section v-else-if="data" class="who">
+      <h1 class="who__name">
+        {{ data.manager.displayName }}
+        <span v-if="data.isSelf" class="tag">You</span>
+      </h1>
+      <p class="muted who__handle">@{{ data.manager.handle }}</p>
+      <p class="who__total">
+        <span class="num who__n">{{ data.collection.total }}</span>
+        <span class="who__unit">{{ data.collection.total === 1 ? 'card' : 'cards' }}</span>
+      </p>
+      <p v-if="data.collection.best" class="muted who__best">
+        Best: {{ data.collection.best.playerName }}
+        <template v-if="data.collection.best.season">{{ data.collection.best.season }}</template>
+        · <span class="tnum">{{ data.collection.best.ovr }}</span> OVR
+      </p>
+    </section>
+
+    <h1 v-else class="sr-only">A manager's cards</h1>
+
+    <section v-if="loading || data" class="block">
+      <h2 class="sect">Cards</h2>
+
+      <div class="cards__layout">
+        <aside v-if="cards.length" class="filters">
+          <input
+            v-model="search" class="input filters__search" type="search"
+            placeholder="Player, team or champion" aria-label="Search these cards"
           >
-            {{ b.toLowerCase() }}<span v-if="byBand[b]" class="chip__n"> {{ byBand[b] }}</span>
-          </button>
+          <div class="seg filters__roles" role="group" aria-label="Role">
+            <button type="button" :aria-pressed="role === null" @click="role = null">All</button>
+            <button
+              v-for="r in ROLES" :key="r" type="button"
+              :aria-pressed="role === r" @click="role = role === r ? null : r"
+            >{{ r }}</button>
+          </div>
+          <div class="filters__bands" role="group" aria-label="Rarity">
+            <button
+              v-for="b in BANDS_DESC" :key="b" class="chip" type="button"
+              :aria-pressed="band === b" :disabled="!byBand[b]"
+              @click="band = band === b ? null : b"
+            >
+              <i class="gem" :class="`gem--${b.toLowerCase()}`" aria-hidden="true" />
+              {{ BAND_LABEL[b] }}<span class="chip__n">{{ byBand[b] || 0 }}</span>
+            </button>
+          </div>
+        </aside>
+
+        <div class="cards__main">
+          <p v-if="cards.length" class="cards__count faint">
+            {{ filtered.length }} shown · highest rating first
+          </p>
+
+          <div v-if="loading" class="card-grid">
+            <div v-for="i in 6" :key="i" class="skeleton grid-skeleton" />
+          </div>
+
+          <div v-else-if="data && !cards.length" class="empty">
+            <h2>Nothing here yet</h2>
+            <p>{{ data.manager.displayName }} has not opened a pack.</p>
+          </div>
+
+          <div v-else-if="data && !filtered.length" class="empty">
+            <h2>No match</h2>
+            <p>None of these cards fit those filters.</p>
+            <button class="btn btn--ghost" type="button" @click="clearFilters">Clear filters</button>
+          </div>
+
+          <div v-else-if="data" class="card-grid">
+            <div v-for="item in filtered" :key="item.id" class="card-grid__item">
+              <LomCard :card="item.card" compact />
+              <span v-if="item.level > 1" class="card-grid__badge">Lv {{ item.level }}</span>
+              <span v-if="item.copies > 1" class="card-grid__dupes">×{{ item.copies }}</span>
+            </div>
+          </div>
         </div>
       </div>
-    </template>
-
-    <div v-if="loading" class="card-grid">
-      <div v-for="i in 6" :key="i" class="skeleton grid-skeleton" />
-    </div>
-
-    <div v-else-if="data && !cards.length" class="empty">
-      <h2>Nothing here yet</h2>
-      <p>{{ data.manager.displayName }} has not opened a pack.</p>
-    </div>
-
-    <div v-else-if="data && !filtered.length" class="empty">
-      <h2>No match</h2>
-      <p>Nothing in this collection fits those filters.</p>
-    </div>
-
-    <div v-else-if="data" class="card-grid">
-      <div v-for="item in filtered" :key="item.id" class="card-grid__item">
-        <span v-if="item.level > 1" class="card-grid__badge">LV {{ item.level }}</span>
-        <span v-if="item.copies > 1" class="card-grid__dupes">×{{ item.copies }}</span>
-        <LomCard :card="item.card" compact />
-      </div>
-    </div>
+    </section>
 
     <p v-if="data && !data.isSelf" class="faint foot">
-      Found by code. They stay in your Discovery list — <NuxtLink to="/discovery">see everyone</NuxtLink>.
+      Found by code, so they stay on your list. <NuxtLink to="/discovery">See everyone you have found</NuxtLink>.
     </p>
   </main>
 </template>
 
 <style scoped>
-.who__name { font-family: var(--font-display); font-size: 24px; font-weight: 700; margin: 6px 0 0; }
-.who__handle { font-size: 13.5px; margin: 2px 0 0; }
-.who__total { display: flex; align-items: baseline; gap: 7px; margin: 12px 0 0; }
-.who__n { font-family: var(--font-display); font-size: 30px; font-weight: 700; }
-.who__unit {
-  font-family: var(--font-label);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-}
-.who__best { font-size: 13.5px; margin: 8px 0 0; }
+.backlink { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; margin-left: -6px; padding-right: 8px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.backlink svg { width: 20px; height: 20px; }
+.backlink:hover { color: var(--ink-1); }
 
-.filters { display: grid; gap: 8px; margin: 14px 0 16px; }
-.filters__search {
-  width: 100%;
-  min-height: 44px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--sunken);
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 16px;
-}
-.filters__search:focus { border-color: var(--accent); outline: none; }
-.chip:disabled { opacity: 0.35; cursor: default; }
-.chip__n { opacity: 0.7; margin-left: 2px; }
+.head-skeleton { height: 120px; }
+
+.who__name { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: clamp(30px, 7vw, 44px); line-height: 0.95; margin: 4px 0 0; }
+.who__handle { font-size: 13.5px; margin: 6px 0 0; }
+.who__total { display: flex; align-items: baseline; gap: 7px; margin: 14px 0 0; }
+.who__n { font-size: 30px; }
+.who__unit { font-size: 13px; font-weight: 600; color: var(--ink-3); }
+.who__best { font-size: 13.5px; margin: 6px 0 0; }
+
+.block { margin-top: 28px; }
+.sect { margin: 0 0 12px; font-stretch: 92%; font-weight: 720; font-size: 17px; }
+
+.filters { display: grid; gap: 10px; margin-bottom: 16px; }
+.filters__search { min-height: 44px; font-size: 16px; }
+.filters__roles button { font-size: 11px; }
+.filters__bands { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px; }
+.filters__bands::-webkit-scrollbar { display: none; }
+.cards__count { margin: 0 0 12px; font-size: 12.5px; }
 .grid-skeleton { aspect-ratio: 63 / 88; }
-.foot { font-size: 12.5px; margin: 18px 0 0; text-align: center; }
-.foot a { color: var(--accent); }
+
+.foot { font-size: 12.5px; margin: 24px 0 0; text-align: center; }
+
+@media (min-width: 1024px) {
+  .cards__layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 36px; align-items: start; }
+  .cards__layout:not(:has(.filters)) { grid-template-columns: minmax(0, 1fr); }
+  .filters { position: sticky; top: calc(var(--appbar-h) + 16px); }
+  .filters__roles { flex-direction: column; }
+  .filters__roles button { justify-content: flex-start; padding: 0 12px; }
+  .filters__bands { flex-direction: column; margin: 0; padding: 0; overflow: visible; }
+  .filters__bands .chip { justify-content: flex-start; }
+  .filters__bands .chip__n { margin-left: auto; }
+}
 </style>

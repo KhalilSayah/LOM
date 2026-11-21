@@ -60,12 +60,13 @@ const isFocus = computed(() => focus.value || route.path.startsWith('/duel/'));
 const inBattle = computed(() => route.path.startsWith('/duel') || route.path === '/discovery' || route.path.startsWith('/m/'));
 const inLeague = computed(() => route.path.startsWith('/leagues') || route.path.startsWith('/join'));
 const inCards = computed(() => route.path.startsWith('/card'));
+const inTeam = computed(() => route.path.startsWith('/roster') || route.path.startsWith('/replay'));
 
 const initial = computed(() => (user.value?.email || '?').slice(0, 1));
 </script>
 
 <template>
-  <div class="shell" :class="{ 'is-focus': isFocus }">
+  <div class="shell" :class="{ 'is-focus': isFocus, 'has-nav': !!user && !isFocus }">
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <defs>
         <symbol id="lom-logo" viewBox="0 0 28 28"><path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="#d8b064" stroke-width="1.6" /><path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="#d8b064" /></symbol>
@@ -84,13 +85,13 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
 
       <nav class="deskNav" aria-label="Main">
         <NuxtLink to="/pack">Home</NuxtLink>
-        <NuxtLink to="/collection" :class="{ 'router-link-active': inCards }">Cards</NuxtLink>
+        <NuxtLink to="/collection" :class="{ 'router-link-active': inCards }" :aria-current="inCards ? 'page' : undefined">Cards</NuxtLink>
         <NuxtLink :to="battleTo" :class="{ 'router-link-active': inBattle, 'is-live': liveDuelId }">
           {{ liveDuelId ? 'Live' : 'Battle' }}
           <span v-if="battleCount" class="count">{{ battleCount }}</span>
         </NuxtLink>
-        <NuxtLink to="/leagues" :class="{ 'router-link-active': inLeague }">League</NuxtLink>
-        <NuxtLink to="/roster">Team</NuxtLink>
+        <NuxtLink to="/leagues" :class="{ 'router-link-active': inLeague }" :aria-current="inLeague ? 'page' : undefined">League</NuxtLink>
+        <NuxtLink to="/roster" :class="{ 'router-link-active': inTeam }" :aria-current="inTeam ? 'page' : undefined">Team</NuxtLink>
         <NuxtLink to="/shop">Shop</NuxtLink>
       </nav>
 
@@ -116,13 +117,13 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
 
     <!-- A gift arrived. Said once, politely, wherever the manager happens to be. -->
     <Transition name="gift">
-      <aside v-if="toast" class="gifttoast" role="status" aria-live="polite">
+      <aside v-if="toast && !isFocus" class="gifttoast" role="status" aria-live="polite">
         <span class="gifttoast__mark" aria-hidden="true"><i class="tag tag--new">Gift</i></span>
         <span class="gifttoast__text">
           <strong>{{ toast.title }}</strong>
           <span v-if="toast.body" class="gifttoast__body">{{ toast.body }}</span>
         </span>
-        <NuxtLink class="btn btn--sm" to="/shop" @click="toast = null">Open</NuxtLink>
+        <NuxtLink class="btn btn--gold btn--sm" to="/shop" @click="toast = null">Open</NuxtLink>
         <button class="icon-btn" type="button" aria-label="Dismiss" @click="toast = null">
           <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
         </button>
@@ -134,8 +135,9 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
         <svg class="ico" aria-hidden="true"><use href="#nav-home" /></svg>
         Home
         <span v-if="homeDot" class="tabbar__dot" aria-hidden="true" />
+        <span v-if="homeDot" class="sr-only">, something new</span>
       </NuxtLink>
-      <NuxtLink to="/collection" :class="{ 'router-link-active': inCards }">
+      <NuxtLink to="/collection" :class="{ 'router-link-active': inCards }" :aria-current="inCards ? 'page' : undefined">
         <svg class="ico" aria-hidden="true"><use href="#nav-cards" /></svg>
         Cards
       </NuxtLink>
@@ -146,12 +148,13 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
         <span class="diamond"><svg class="ico" aria-hidden="true"><use href="#nav-battle" /></svg></span>
         {{ liveDuelId ? 'Live' : 'Battle' }}
         <span v-if="battleCount" class="count" aria-hidden="true">{{ battleCount }}</span>
+        <span v-if="battleCount" class="sr-only">, {{ battleCount }} waiting</span>
       </NuxtLink>
-      <NuxtLink to="/leagues" :class="{ 'router-link-active': inLeague }">
+      <NuxtLink to="/leagues" :class="{ 'router-link-active': inLeague }" :aria-current="inLeague ? 'page' : undefined">
         <svg class="ico" aria-hidden="true"><use href="#nav-league" /></svg>
         League
       </NuxtLink>
-      <NuxtLink to="/roster">
+      <NuxtLink to="/roster" :class="{ 'router-link-active': inTeam }" :aria-current="inTeam ? 'page' : undefined">
         <svg class="ico" aria-hidden="true"><use href="#nav-team" /></svg>
         Team
       </NuxtLink>
