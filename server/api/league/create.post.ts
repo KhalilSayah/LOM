@@ -1,6 +1,9 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { shapeLeague, membersOf } from '~~/server/utils/league';
+import {
+  shapeLeague, membersOf, requireMatchHour, requireTimezone, assertLeagueRoom,
+} from '~~/server/utils/league';
+import { cleanTeamName } from '~~/shared/league';
 
 /**
  * Host a league.
@@ -11,68 +14,44 @@ import { shapeLeague, membersOf } from '~~/server/utils/league';
  *
  * The invite code is minted by the database (supabase/migrations/0009_leagues.sql),
  * not here: it has to stay unique against a table this route cannot lock.
+ *
+ * There is no season length any more. It was accepted and stored, and then mostly
+ * ignored — and where it was not ignored, a short one cut the double round robin off
+ * halfway. The length is now whatever "everyone against everyone twice" takes for the
+ * number of managers who turn up (shared/league.ts `seasonShape`), and the form says
+ * so. `seasonLengthDays` in an old client's body is simply not read.
  */
-
-const MAX_LEAGUES_PER_MANAGER = 8;
-
-/** A timezone the runtime actually knows. An unknown one would throw at kick-off. */
-function validTimezone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
   const db = serverSupabaseServiceRole(event);
   const profileId = await ensureProfile(db, manager);
 
   const body = await readBody<{
-    name?: string; timezone?: string; matchHour?: string; seasonLengthDays?: number;
+    name?: string; timezone?: string; matchHour?: string; teamName?: string;
   }>(event);
 
-  const name = String(body?.name ?? '').trim();
+  const name = String(body?.name ?? '').replace(/\s+/g, ' ').trim();
   if (name.length < 2 || name.length > 40) {
     throw createError({ statusCode: 400, statusMessage: 'Give the league a name, 2 to 40 characters.' });
   }
 
-  const timezone = String(body?.timezone ?? '').trim() || 'Europe/Paris';
-  if (!validTimezone(timezone)) {
-    throw createError({ statusCode: 400, statusMessage: `${timezone} is not a timezone this app knows.` });
-  }
+  const timezone = requireTimezone(body?.timezone);
+  const matchHour = requireMatchHour(body?.matchHour ?? '20:30');
 
-  const matchHour = String(body?.matchHour ?? '20:30').trim();
-  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(matchHour)) {
-    throw createError({ statusCode: 400, statusMessage: 'The match hour looks like 20:30.' });
-  }
-
-  const seasonLengthDays = Number(body?.seasonLengthDays ?? 14);
-  if (!Number.isInteger(seasonLengthDays) || seasonLengthDays < 2 || seasonLengthDays > 60) {
-    throw createError({ statusCode: 400, statusMessage: 'A season is between 2 and 60 days.' });
-  }
-
-  const { count } = await db
-    .from('league_members')
-    .select('id', { count: 'exact', head: true })
-    .eq('profile_id', profileId);
-
-  if ((count ?? 0) >= MAX_LEAGUES_PER_MANAGER) {
-    throw createError({
-      statusCode: 409,
-      statusMessage: `You are in ${count} leagues already. Leave one before starting another.`,
-    });
-  }
+  // Finished leagues do not count against the cap (server/utils/league.ts).
+  await assertLeagueRoom(db, profileId);
 
   const { data: profile } = await db
     .from('profiles').select('handle, display_name').eq('id', profileId).maybeSingle();
 
+  const teamName = cleanTeamName(body?.teamName)
+    ?? cleanTeamName(profile?.display_name || profile?.handle)
+    ?? 'Manager';
+
   const { data: league, error } = await db
     .from('leagues')
-    .insert({ name, owner_id: profileId, timezone, match_hour: matchHour, season_length_days: seasonLengthDays })
-    .select('id, name, owner_id, invite_code, timezone, match_hour, season_length_days, status, starts_on, created_at, started_at, catalogue_version_id')
+    .insert({ name, owner_id: profileId, timezone, match_hour: matchHour })
+    .select('id, name, owner_id, invite_code, timezone, match_hour, season_length_days, status, starts_on, created_at, started_at, finished_at, catalogue_version_id, season, champion_member_id')
     .single();
 
   if (error || !league) {
@@ -82,7 +61,7 @@ export default defineEventHandler(async (event) => {
   const { error: memberError } = await db.from('league_members').insert({
     league_id: league.id,
     profile_id: profileId,
-    team_name: (profile?.display_name || profile?.handle || 'Manager').slice(0, 24),
+    team_name: teamName,
     is_owner: true,
   });
 

@@ -1,6 +1,6 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { shapeLeague, type LeagueRow, type MemberRow } from '~~/server/utils/league';
+import { shapeLeague, draftedSides, type LeagueRow, type MemberRow } from '~~/server/utils/league';
 import { fixtureWindow } from '~~/shared/league';
 
 /**
@@ -70,7 +70,7 @@ export default defineEventHandler(async (event) => {
    */
   const { data: fixtures } = await db
     .from('league_fixtures')
-    .select('league_id, season, day_index, stage, blue_member_id, red_member_id, scheduled_at, status, duel_id')
+    .select('league_id, season, day_index, stage, blue_member_id, red_member_id, ghost_side, scheduled_at, status, duel_id')
     .in('league_id', leagueIds)
     .not('scheduled_at', 'is', null)
     .neq('status', 'FINAL')
@@ -90,13 +90,18 @@ export default defineEventHandler(async (event) => {
   }
 
   const nextByLeague = new Map<string, any>();
+  const now = Date.now();
   for (const f of (fixtures || []) as any[]) {
     if (nextByLeague.has(f.league_id)) continue;
     if ((f.season ?? 1) !== (seasonOf.get(f.league_id) ?? 1)) continue;
-    const mineSide = myMemberIds.has(f.blue_member_id) ? 'BLUE'
-      : myMemberIds.has(f.red_member_id) ? 'RED' : null;
+    // Sides as drafted: a Ghost on blue puts the manager on red (migration 0016).
+    const sides = draftedSides(f);
+    const mineSide = myMemberIds.has(sides.blue as string) ? 'BLUE'
+      : myMemberIds.has(sides.red as string) ? 'RED' : null;
     if (!mineSide) continue;
-    nextByLeague.set(f.league_id, { ...f, mineSide });
+    // A bye a day overdue is nobody's obligation, and should not sit here for ever.
+    if (f.stage === 'GHOST' && !f.duel_id && fixtureWindow(f.scheduled_at, now).overdue) continue;
+    nextByLeague.set(f.league_id, { ...f, mineSide, sides });
   }
 
   const leagues = rows.map((row: any) => {
@@ -106,8 +111,9 @@ export default defineEventHandler(async (event) => {
     const byMemberId = new Map(members.map((m) => [m.id, m]));
 
     const opponentId = next
-      ? (next.mineSide === 'BLUE' ? next.red_member_id : next.blue_member_id)
+      ? (next.mineSide === 'BLUE' ? next.sides.red : next.sides.blue)
       : null;
+    const window = next ? fixtureWindow(next.scheduled_at, now) : null;
 
     return {
       ...shapeLeague(league, members, profileId),
@@ -121,15 +127,23 @@ export default defineEventHandler(async (event) => {
             opponent: opponentId ? byMemberId.get(opponentId)?.team_name ?? 'Unknown' : 'A Ghost',
             /** Already in a room, so the list can say "rejoin" rather than "play". */
             duelId: next.duel_id ?? null,
-            playable: fixtureWindow(next.scheduled_at).open,
+            playable: Boolean(window?.open),
+            /** True once kick-off has passed: "you are late" rather than "coming up". */
+            started: Boolean(window?.started),
           }
         : null,
     };
   });
 
-  // Forming first — those are the ones waiting on somebody to act — then by name.
+  /**
+   * By my next fixture, soonest first — the list is where somebody checks what they play
+   * next, so the league that wants them soonest is the one at the top. Then the leagues
+   * still forming, which are waiting on a human; then everything else, finished last.
+   */
+  const rank = (l: any) => (l.next ? 0 : l.status === 'FORMING' ? 1 : l.status === 'ACTIVE' ? 2 : 3);
   leagues.sort((a, b) => {
-    if (a.status !== b.status) return a.status === 'FORMING' ? -1 : 1;
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    if (a.next && b.next) return String(a.next.scheduledAt).localeCompare(String(b.next.scheduledAt));
     return a.name.localeCompare(b.name);
   });
 

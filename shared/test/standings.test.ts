@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { standings, WIN_POINTS, type PlayedFixture } from '../standings.ts';
+import {
+  standings, formOf, headToHead, upsetIds, WIN_POINTS, type PlayedFixture, type ResultFixture,
+} from '../standings.ts';
 
 /**
  * The table, tested because it is the thing a league argues about.
@@ -137,4 +139,38 @@ test('positions are 1..n with no gaps', () => {
 test('a result involving somebody who has left is not scored', () => {
   const rows = standings(['a'], [played('a', 'gone', 'gone')]);
   assert.equal(rows[0]!.played, 0);
+});
+
+// --- one manager's season ----------------------------------------------------
+
+let day = 0;
+const result = (blue: string | null, red: string | null, winnerSide: 'BLUE' | 'RED', stage = 'REGULAR'): ResultFixture => {
+  day += 1;
+  const at = new Date(Date.UTC(2026, 0, day)).toISOString();
+  return {
+    id: `f${day}`, stage, status: 'FINAL', blueMemberId: blue, redMemberId: red,
+    winnerSide, winnerMemberId: winnerSide === 'BLUE' ? blue : red, playedAt: at, scheduledAt: at,
+  };
+};
+
+test('form is the last five against managers, oldest first, Ghosts left out', () => {
+  day = 0;
+  const fx = [
+    result('a', 'b', 'BLUE'), result('a', null, 'BLUE', 'GHOST'), result('c', 'a', 'BLUE'),
+    result('a', 'b', 'RED'), result('a', 'c', 'BLUE'), result('b', 'a', 'RED'), result('a', 'c', 'BLUE'),
+  ];
+  assert.deepEqual(formOf('a', fx), ['L', 'L', 'W', 'W', 'W']);
+  assert.deepEqual(headToHead('a', 'b', fx), { played: 3, won: 2, lost: 1 });
+});
+
+test('an upset is two wins of table beaten, or the lower seed winning a playoff', () => {
+  day = 0;
+  const fx = [
+    result('a', 'c', 'BLUE'), result('a', 'd', 'BLUE'),
+    result('a', 'c', 'RED'),           // c beats a, who was 6 points clear: an upset
+    result('a', 'b', 'BLUE'),          // a beats b: expected
+    result('a', 'b', 'RED', 'SEMI'),   // lower seed wins: an upset
+  ];
+  const up = upsetIds(fx);
+  assert.deepEqual([...up].sort(), ['f3', 'f5']);
 });
