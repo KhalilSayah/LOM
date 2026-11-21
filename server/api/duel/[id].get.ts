@@ -2,6 +2,7 @@ import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { stepAt, DRAFT_ORDER, DRAFT_LENGTH } from '~~/shared/draft';
 import { loadActions, catchUp, draftPool, sideOf, botActsAt } from '~~/server/utils/duelRun';
+import { rewardFor } from '~~/server/utils/rewards';
 
 /**
  * The whole state of a duel room, as all three of its screens need it.
@@ -112,5 +113,15 @@ export default defineEventHandler(async (event) => {
      * network tab anyway at the cost of the only thing that makes the watch shared.
      */
     result: duel.status === 'WATCHING' || duel.status === 'COMPLETE' ? duel.result : null,
+
+    /**
+     * What the match paid this manager, as the receipt the payout actually wrote
+     * (docs/01 section 5). Read rather than recomputed: a result screen that worked the
+     * numbers out for itself could disagree with the ledger, and the ledger is what the
+     * Credits pill is counting.
+     */
+    rewards: duel.status === 'WATCHING' || duel.status === 'COMPLETE'
+      ? await rewardFor(db, duel.id, profileId)
+      : null,
   };
 });

@@ -170,7 +170,7 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
   <main class="page page--wide shop">
     <header class="topbar">
       <h1>Shop</h1>
-      <span class="topbar__meta">Credits come from duplicates</span>
+      <span class="topbar__meta">Credits come from matches, sponsors and duplicates</span>
     </header>
 
     <p v-if="error" class="notice notice--bad">{{ error }}</p>
@@ -287,9 +287,23 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
         </div>
       </section>
 
+      <!-- The other half of the economy, one tap away: this screen is where Credits are
+           spent, so it is where the question "how do I get more" gets asked. -->
+      <section class="offer offer--sponsors">
+        <div class="offer__body">
+          <h2 class="offer__name">Sponsors</h2>
+          <p class="offer__blurb">
+            A contract pays on every match you play, and pays more when the five you fielded
+            met its terms. Two slots.
+          </p>
+          <NuxtLink class="btn btn--ghost offer__cta" to="/sponsors">Open the sponsor book</NuxtLink>
+        </div>
+      </section>
+
       <p class="shop__foot faint">
-        Credits come from duplicate pulls. Every card from every pack counts toward the same
-        Legendary and Icon guarantee as the daily one.
+        Credits come from playing matches, from the sponsors you have signed, and from
+        duplicate pulls. Every card from every pack counts toward the same Legendary and Icon
+        guarantee as the daily one.
       </p>
     </template>
   </main>

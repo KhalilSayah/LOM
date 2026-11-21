@@ -74,7 +74,11 @@ Target: **10 minutes a day**, with optional depth.
 Deferred to the management layer — see [10 — Roadmap](10-roadmap.md).
 
 - Transfer market / trading between managers / auction house
-- Contracts, wages, budgets, sponsorships, any economy with money
+- Contracts, wages, budgets, any economy with money
+  - *Changed:* **sponsors shipped early** — see [12](12-sponsors.md). The match loop pays now,
+    and a second faucet with a condition attached to it was the cheapest way to give the
+    collection a reason to be wide rather than just high-rated. Wages, budgets and transfer
+    fees remain out.
 - Training schedules, stamina, morale, form, injuries
 - Scouting, academy teams, youth prospects
 - In-game substitutions, mid-season role changes
