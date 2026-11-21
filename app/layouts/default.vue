@@ -4,7 +4,7 @@ import type { Gift } from '~/composables/useGiftSignal';
 const user = useSupabaseUser();
 const supabase = useSupabaseClient();
 const route = useRoute();
-const { packReady } = usePackSignal();
+const { packReady, questsReady } = usePackSignal();
 const { credits, start: startWallet } = useWallet();
 const focus = useFocusMode();
 const { enabled: soundOn, setEnabled: setSound } = useSound();
@@ -81,7 +81,7 @@ onBeforeUnmount(() => clearTimeout(toastTimer));
 
 const battleTo = computed(() => (liveDuelId.value ? `/duel/${liveDuelId.value}` : '/duels'));
 const battleCount = computed(() => incoming.value || drafting.value || 0);
-const homeDot = computed(() => packReady.value || giftsWaiting.value > 0);
+const homeDot = computed(() => packReady.value || giftsWaiting.value > 0 || questsReady.value > 0);
 
 /** A duel room is a full-screen place with its own way out; so is a reveal in progress. */
 const isFocus = computed(() => focus.value || route.path.startsWith('/duel/'));

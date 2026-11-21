@@ -506,14 +506,8 @@ async function finish(db: SupabaseClient, duel: any, actions: LockedAction[]) {
     );
 
     return {
-      /**
-       * TODO(integrator): roster strategy preset. The sim already reads `team.strategy`
-       * (packages/sim/src/state.js, default 'STANDARD'). When the roster screen stores a
-       * preset, snapshot it with the lineup where lineups are frozen (snapshotLineup in
-       * server/utils/duel.ts, called at accept / pairing / bot creation) and pass it here as
-       * `strategy: lineup.strategy` — read from the frozen lineup, never from the live
-       * roster, so a change made mid-draft cannot reach the match.
-       */
+      /** Frozen with the lineup at accept, so a change made mid-draft cannot reach the match. */
+      strategy: (lineup as any).strategy ?? 'STANDARD',
       players: SLOTS.map((slot) => {
         const card = lineup[slot];
         const pick = picks.get(slot);

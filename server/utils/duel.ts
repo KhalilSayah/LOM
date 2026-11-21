@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { strategyFor } from './strategy';
 import { randomBytes, randomInt } from 'node:crypto';
 import {
   SLOTS, ACTION_SECONDS, BONUS_SECONDS,
@@ -44,7 +45,8 @@ export interface DuelCard {
   artChampionKey: string | null;
 }
 
-export type Lineup = Record<Slot, DuelCard | null>;
+/** The five, plus the team strategy frozen with them so a change mid-draft never reaches the match. */
+export type Lineup = Record<Slot, DuelCard | null> & { strategy?: string };
 
 /**
  * The five cards a manager brings, copied at accept.
@@ -54,16 +56,18 @@ export type Lineup = Record<Slot, DuelCard | null>;
  * the card has since been levelled, re-rated by a new catalogue, or traded away.
  */
 export async function snapshotLineup(db: SupabaseClient, profileId: string): Promise<Lineup> {
-  const [{ data: slots }, { data: owned }] = await Promise.all([
+  const [{ data: slots }, { data: owned }, strategy] = await Promise.all([
     db.from('roster_slots').select('role, collection_card_id').eq('profile_id', profileId),
     db.from('collection_cards')
       .select(`id, level, card_definitions ( ${CARD_SELECT} )`)
       .eq('profile_id', profileId),
+    strategyFor(db, profileId),
   ]);
 
   const byId = new Map((owned || []).map((row: any) => [row.id, row]));
   const out = {} as Lineup;
   for (const slot of SLOTS) out[slot] = null;
+  out.strategy = strategy;
 
   for (const row of slots || []) {
     const held = byId.get((row as any).collection_card_id);
