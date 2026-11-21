@@ -53,29 +53,64 @@ export const OBJECTIVE_POS = {
   SCUTTLE: { x: 7400, y: 4200 },
 };
 
-/** Structures fall from the outside in, so their positions walk up the lane. */
+/**
+ * Where every structure stands: per lane the outer, inner and inhibitor turrets and
+ * then the inhibitor, plus the two nexus turrets and the nexus.
+ *
+ * Blue's are written out; red's are blue's rotated 180 degrees about the centre. That
+ * rotation sends the left edge (blue's top lane) to the right edge, which is red's
+ * *bot* lane, so red's top structures are the mirror of blue's bot ones and vice versa.
+ * Walking a step diagonally from a base, which is what this used to do, put blue's
+ * turrets in the river and red's top turrets in the bot lane.
+ *
+ * The map renderer draws from this same table, so a falling turret and the ring that
+ * marks it are always in the same place.
+ */
+const BLUE_STRUCTURES = {
+  TOP: [{ x: 980, y: 10440 }, { x: 1180, y: 6430 }, { x: 1180, y: 4400 }, { x: 1050, y: 3700 }],
+  MID: [{ x: 5850, y: 6400 }, { x: 5050, y: 4800 }, { x: 3900, y: 3600 }, { x: 3300, y: 3200 }],
+  BOT: [{ x: 10500, y: 1050 }, { x: 6900, y: 1220 }, { x: 4300, y: 1220 }, { x: 3700, y: 1050 }],
+  nexusTurrets: [{ x: 1750, y: 2270 }, { x: 2180, y: 1810 }],
+  nexus: { x: 1500, y: 1500 },
+};
+
+const rotate = ({ x, y }) => ({ x: MAP_MAX - x, y: MAP_MAX - y });
+
+export const STRUCTURES = {
+  BLUE: BLUE_STRUCTURES,
+  RED: {
+    TOP: BLUE_STRUCTURES.BOT.map(rotate),
+    MID: BLUE_STRUCTURES.MID.map(rotate),
+    BOT: BLUE_STRUCTURES.TOP.map(rotate),
+    nexusTurrets: BLUE_STRUCTURES.nexusTurrets.map(rotate),
+    nexus: rotate(BLUE_STRUCTURES.nexus),
+  },
+};
+
+/**
+ * The position of a structure belonging to `team`: index 0-2 the lane's turrets from
+ * the outside in, 3 its inhibitor, 4 a nexus turret, 5 the nexus.
+ */
 export function structurePos(team, lane, index) {
-  const towards = team === 'BLUE' ? 1 : -1;
-  const base = lane === 'TOP'
-    ? { x: 1800, y: 7000 }
-    : lane === 'BOT'
-      ? { x: 7000, y: 1800 }
-      : { x: 5600, y: 5600 };
-
-  const step = 1700 * index * towards;
-  const raw = team === 'BLUE'
-    ? { x: base.x + step, y: base.y + step }
-    : { x: MAP_MAX - base.x - step, y: MAP_MAX - base.y - step };
-
-  // Clamped, because the nexus is five steps in from an outer turret and the
-  // arithmetic walks off the map before it gets there. An off-map coordinate is not
-  // a cosmetic problem: the replay interpolates dots between event positions, so one
-  // bad point drags a champion across the river and back.
-  return {
-    x: Math.max(0, Math.min(MAP_MAX, raw.x)),
-    y: Math.max(0, Math.min(MAP_MAX, raw.y)),
-  };
+  const built = STRUCTURES[team] || STRUCTURES.BLUE;
+  if (index >= 5) return { ...built.nexus };
+  if (index === 4) return { ...built.nexusTurrets[lane === 'BOT' ? 1 : 0] };
+  const row = built[lane] || built.MID;
+  return { ...row[Math.max(0, Math.min(3, index))] };
 }
+
+/** How the commentary says a region, with BLUE and RED left for the viewer to name. */
+export const REGION_TEXT = {
+  TOP_LANE: 'the top lane',
+  BOT_LANE: 'the bot lane',
+  MID_LANE: 'the mid lane',
+  BLUE_JUNGLE: "BLUE's jungle",
+  RED_JUNGLE: "RED's jungle",
+  DRAGON_PIT: 'the dragon pit',
+  BARON_PIT: 'the Baron pit',
+  BLUE_BASE: "BLUE's base",
+  RED_BASE: "RED's base",
+};
 
 /** A region, chosen for the phase, for a fight that has no objective to anchor it. */
 export function regionFor(rng, phase) {

@@ -10,7 +10,13 @@
  * the teamfight loss curves for kill counts.
  */
 
-export const SIM_VERSION = '1.0.0';
+/**
+ * 1.1.0: fights credit kills and assists to the players who were in them, CS is farmed
+ * per role rather than read back out of gold, objectives resolve in the tick they spawn,
+ * narration and presentation draw from their own streams, and fights announce their
+ * multikills and steals. Results from 1.0.0 still replay: every new field is optional.
+ */
+export const SIM_VERSION = '1.1.0';
 
 export const BALANCE = {
   /** 15 game-seconds per tick: a 35-minute game is 140 ticks (docs/04 section 3). */
@@ -99,7 +105,15 @@ export const BALANCE = {
    * (docs/04 section 6.1). This is the main dial on how many kills a game produces:
    * every contested objective is a teamfight, and a teamfight is three bodies.
    */
-  objective: { uncontested: 0.88, setupSlope: 0.12 },
+  objective: {
+    uncontested: 0.88,
+    setupSlope: 0.12,
+    /**
+     * When the side that won the fight at the pit starts the objective, the chance that
+     * the other side's jungler, still standing, smites it away from them.
+     */
+    steal: 0.1,
+  },
 
   /** Lane phase (docs/04 section 6.2). Pressure is in arbitrary units per tick. */
   lane: {
@@ -132,7 +146,8 @@ export const BALANCE = {
   skirmishRate: { EARLY: 0.028, MID: 0.032, LATE: 0.02 },
   /** A skirmish with bodies on both sides can turn into the real thing. */
   escalation: 0.2,
-  teamfightRate: { EARLY: 0, MID: 0.015, LATE: 0.075 },
+  /** LATE was 0.075 before objectives resolved at their spawn; see secondsPerStructure. */
+  teamfightRate: { EARLY: 0, MID: 0.015, LATE: 0.068 },
 
   /** docs/04 section 6.4: deaths from a fight, as a function of how lopsided it was. */
   fight: {
@@ -146,13 +161,31 @@ export const BALANCE = {
     winnerBase: 1.35,
     winnerMargin: 3,
     skirmishScale: 0.4,
-    /** Steepness of the inverse-power weighting that decides who dies. */
-    deathBias: 14,
+    /**
+     * Chance that a teammate who was in the fight is credited with the assist, by role.
+     * Supports and junglers are in on almost everything, which is what their kill
+     * participation looks like in any real box score.
+     */
+    assistChance: { TOP: 0.48, JNG: 0.7, MID: 0.56, BOT: 0.56, SUP: 0.84 },
+    /** Added to the chance above in a fight of two or three, where nobody is far away. */
+    smallFightAssist: 0.18,
+    /**
+     * Steepness of the inverse-power weighting that decides who dies. 14 until 1.1.0;
+     * once kills went to the people in the fight rather than to the strongest player
+     * anywhere, the best card stopped being fed by fights it was not in, and the
+     * "best player dies less" row needed a steeper curve to hold.
+     */
+    deathBias: 22,
   },
 
   /** Seconds of enemy respawn time converted into one structure (docs/04 section 6.5). */
   siege: {
-    secondsPerStructure: 50,
+    /**
+     * 50 until 1.1.0. Baron and dragons now resolve when they spawn rather than up to
+     * 45 seconds early, which added most of a minute to the average game and two kills
+     * with it; a slightly cheaper structure takes that minute back.
+     */
+    secondsPerStructure: 47,
     baron: 1.6,
     elder: 1.35,
     aceBonus: 1.15,
@@ -186,6 +219,14 @@ export const BALANCE = {
     respawn: { base: 8, perMinute: 1.4, min: 8, max: 60 },
     /** Gold per creep, used to back-compute CS for the box score. */
     goldPerCs: 21,
+    /**
+     * Creeps a minute while alive, by role: minions in lane, camps in the jungle, and
+     * almost nothing for a support. Pitched a little above the real per-minute averages
+     * because dead time and the first ninety seconds farm nothing.
+     */
+    csPerMin: { TOP: 8.05, JNG: 6.15, MID: 9.2, BOT: 9.55, SUP: 1.35 },
+    /** No minion reaches a lane before this. */
+    csFrom: 85,
   },
 
   /** Each dragon is a small stacking power buff; soul is the big one. */
@@ -195,6 +236,8 @@ export const BALANCE = {
   baronPower: 0.06,
 
   grades: { splus: 1.75, s: 1.1, a: 0.45, b: -0.45, c: -1.1 },
+  /** How a grade is made: role performance, the result, and the card's expectation. */
+  gradeWeights: { performance: 0.9, result: 0.36, expectation: 0.3 },
 };
 
 /**

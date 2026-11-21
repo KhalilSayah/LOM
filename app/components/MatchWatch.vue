@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { buildTracks, positionsAt, structuresAt, scoreAt } from '~~/packages/sim/src/replay.js';
+import { buildTracks, positionsAt, structuresAt, scoreAt, laneOfEvent, winChance, winPriors } from '~~/packages/sim/src/replay.js';
+import type { MatchSoundName } from '~/composables/useSound';
 
 /**
  * A match, being watched.
@@ -60,17 +61,159 @@ const SOUND_OF: Record<string, 'kill' | 'objective' | 'baron'> = {
 };
 const RANK = { kill: 1, objective: 2, baron: 3 } as const;
 
+// --- names ----------------------------------------------------------------------------
+
+const nameByPid = computed(() => {
+  const out: Record<string, string> = {};
+  for (const r of props.result?.boxScore ?? []) out[r.pid] = r.name;
+  return out;
+});
+const who = (pid: string | undefined) => (pid ? nameByPid.value[pid] || '' : '');
+const teamName = (side: string) => {
+  const n = side === 'BLUE' ? props.blueName : props.redName;
+  return n === 'You' ? 'your team' : n;
+};
+
+// --- big moments --------------------------------------------------------------------
+
+/**
+ * The handful of moments a caster would shout about, each with its banner line, its sound
+ * and whether a fast replay should slow down for it. Built once per result.
+ *
+ * A result from before sim 1.1.0 has no MULTIKILL events; for those, multikills are read off
+ * the kill log instead (one player, kills no more than ten seconds apart), so an old duel
+ * still gets its triple kill.
+ */
+type Big = { t: number; seq: number; kind: string; team: string; text: string; sound: MatchSoundName; slow: boolean; rank: number };
+const MULTI_WORD: Record<number, string> = { 2: 'Double', 3: 'Triple', 4: 'Quadra', 5: 'Penta' };
+const MULTI_SOUND: Record<number, MatchSoundName> = { 2: 'doubleKill', 3: 'tripleKill', 4: 'quadraKill', 5: 'pentaKill' };
+
+function derivedMultikills(events: any[]) {
+  const out: any[] = [];
+  const run = new Map<string, { n: number; last: number; seq: number; team: string }>();
+  for (const e of events) {
+    if (e.type !== 'KILL' && e.type !== 'FIRST_BLOOD') continue;
+    const killer = e.actors?.killer;
+    const victim = e.actors?.victim;
+    if (victim) run.delete(victim);
+    if (!killer) continue;
+    const r = run.get(killer);
+    const next = r && e.t - r.last <= 10 ? { n: r.n + 1, last: e.t, seq: e.seq, team: e.team } : { n: 1, last: e.t, seq: e.seq, team: e.team };
+    run.set(killer, next);
+    if (next.n >= 2) {
+      const prev = out.findIndex((m) => m.actors.killer === killer && e.t - m.t <= 10);
+      if (prev >= 0) out.splice(prev, 1);
+      out.push({ type: 'MULTIKILL', t: e.t + 1, seq: e.seq + 0.5, team: e.team, actors: { killer }, payload: { count: Math.min(5, next.n) } });
+    }
+  }
+  return out;
+}
+
+const bigMoments = computed<Big[]>(() => {
+  const events: any[] = props.result?.events ?? [];
+  const multis = events.some((e) => e.type === 'MULTIKILL') ? [] : derivedMultikills(events);
+  const out: Big[] = [];
+  for (const e of [...events, ...multis]) {
+    const team = e.team || '';
+    const side = teamName(team);
+    const base = { t: e.t, seq: e.seq ?? 0, kind: e.type, team };
+    switch (e.type) {
+      case 'FIRST_BLOOD':
+        out.push({ ...base, text: `First blood: ${who(e.actors?.killer) || side}`, sound: 'firstBlood', slow: false, rank: 2 });
+        break;
+      case 'MULTIKILL': {
+        const n = Math.min(5, e.payload?.count ?? 2);
+        out.push({ ...base, text: `${MULTI_WORD[n]} kill: ${who(e.actors?.killer)}`, sound: MULTI_SOUND[n], slow: n >= 3, rank: 2 + n });
+        break;
+      }
+      case 'ACE':
+        out.push({ ...base, text: `Ace for ${side}`, sound: 'ace', slow: true, rank: 6 });
+        break;
+      case 'BARON':
+        out.push(e.payload?.stolen
+          ? { ...base, text: `Baron steal: ${who(e.actors?.killer)}`, sound: 'steal', slow: true, rank: 8 }
+          : { ...base, text: `Baron for ${side}`, sound: 'baronTaken', slow: true, rank: 7 });
+        break;
+      case 'ELDER':
+        out.push(e.payload?.stolen
+          ? { ...base, text: `Elder steal: ${who(e.actors?.killer)}`, sound: 'steal', slow: true, rank: 8 }
+          : { ...base, text: `Elder Dragon for ${side}`, sound: 'elderTaken', slow: true, rank: 7 });
+        break;
+      case 'DRAGON':
+        if (e.payload?.stolen) out.push({ ...base, text: `Dragon steal: ${who(e.actors?.killer)}`, sound: 'steal', slow: true, rank: 6 });
+        break;
+      case 'SOUL':
+        out.push({ ...base, text: `Dragon soul for ${side}`, sound: 'soulTaken', slow: false, rank: 5 });
+        break;
+      case 'NEXUS':
+        out.push({ ...base, text: `${side.charAt(0).toUpperCase()}${side.slice(1)} destroys the nexus`, sound: 'nexusFall', slow: true, rank: 9 });
+        break;
+      default:
+        break;
+    }
+  }
+  return out.sort((a, b) => a.t - b.t || a.seq - b.seq);
+});
+
+// A ReplayTransport in the controls slot eases a fast replay down to 8x around these.
+provide('matchMoments', computed(() => bigMoments.value.filter((m) => m.slow).map((m) => m.t)));
+
+const banner = ref<Big | null>(null);
+/** The polite live region's text: big moments only, never the play-by-play. */
+const announce = ref('');
+let bannerTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showBanner(m: Big) {
+  banner.value = m;
+  announce.value = m.text;
+  playMatchSound(m.sound);
+  if (bannerTimer) clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => { banner.value = null; }, 2400);
+}
+
+/**
+ * The "just happened" ring, in real time. Set when the clock moves forward over an event
+ * with a position and held for 700 ms of wall clock — 3 game seconds was 50 ms at 60x, which
+ * nobody could see. A paused or scrubbed clock shows the last event still instead.
+ */
+const liveFlash = ref<{ x: number; y: number; kind: string; at: number } | null>(null);
+let flashTimer: ReturnType<typeof setTimeout> | null = null;
+let lastForwardAt = 0;
+
 watch(() => props.clock, (now, before) => {
   if (!props.result?.events || before === undefined) return;
   const step = now - before;
   if (step <= 0 || step > 40) return;
+  lastForwardAt = performance.now();
+
   let loudest: 'kill' | 'objective' | 'baron' | null = null;
+  let ring: any = null;
   for (const e of props.result.events) {
     if (e.t <= before || e.t > now) continue;
     const s = SOUND_OF[e.type];
     if (s && (!loudest || RANK[s] > RANK[loudest])) loudest = s;
+    if (e.pos) ring = e;
   }
-  if (loudest) playSound(loudest);
+
+  let big: Big | null = null;
+  for (const m of bigMoments.value) {
+    if (m.t <= before || m.t > now) continue;
+    if (!big || m.rank >= big.rank) big = m;
+  }
+
+  if (big) showBanner(big);
+  else if (loudest) playSound(loudest);
+
+  if (ring) {
+    liveFlash.value = { ...ring.pos, kind: ring.type, at: performance.now() };
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { liveFlash.value = null; }, 720);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (bannerTimer) clearTimeout(bannerTimer);
+  if (flashTimer) clearTimeout(flashTimer);
 });
 
 const tracks = computed(() =>
@@ -79,21 +222,44 @@ const positions = computed(() => (tracks.value ? positionsAt(tracks.value, props
 const structures = computed(() => (props.result ? structuresAt(props.result, props.clock) : null));
 const score = computed(() => (props.result ? scoreAt(props.result, props.clock) : null));
 
+// --- the play-by-play ---------------------------------------------------------------
+
+/** Setup lines and scuttle crabs: true, but not what anyone is watching for. */
+const FILLER = new Set(['SETUP_WON', 'SCUTTLE']);
+const FEED_KEY = 'lom-feed-all';
+const showAll = ref(false);
+onMounted(() => {
+  try { showAll.value = window.localStorage.getItem(FEED_KEY) === '1'; } catch { /* default stands */ }
+});
+function toggleAll() {
+  showAll.value = !showAll.value;
+  try { window.localStorage.setItem(FEED_KEY, showAll.value ? '1' : '0'); } catch { /* fine */ }
+}
+
 /** Everything that has happened by now, newest first — the auto-scrolling ticker. */
 const ticker = computed(() => {
   if (!props.result) return [];
   return props.result.events
-    .filter((e: any) => e.t <= props.clock && e.narration)
+    .filter((e: any) => e.t <= props.clock && e.narration && (showAll.value || !FILLER.has(e.type)))
     .slice(-60)
     .reverse();
 });
 
-const recent = computed(() => {
+/** The events worth a highlight in the ticker: kills of note and the big objectives. */
+const LOUD = new Set(['FIRST_BLOOD', 'MULTIKILL', 'ACE', 'BARON', 'ELDER', 'SOUL', 'INHIBITOR', 'NEXUS']);
+
+const staticRecent = computed(() => {
   if (!props.result) return null;
   const hit = [...props.result.events]
     .reverse()
     .find((e: any) => e.pos && e.t <= props.clock && props.clock - e.t < 3);
   return hit ? { ...hit.pos, kind: hit.type } : null;
+});
+/** Playing: the real-time ring only. Paused or scrubbed: the still one. */
+const recent = computed(() => {
+  if (liveFlash.value) return liveFlash.value;
+  void props.clock;
+  return performance.now() - lastForwardAt < 250 ? null : staticRecent.value;
 });
 
 const clockText = (t: number) =>
@@ -111,7 +277,49 @@ const graph = computed(() => {
   }));
   const line = pts.map((p: any, i: number) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
   const area = `${line} L${pts[pts.length - 1].x.toFixed(2)},20 L${pts[0].x.toFixed(2)},20 Z`;
-  return { line, area, peak };
+
+  // The win-chance line: blue's chance, read off each sample by the engine's fitted model,
+  // drawn on the same even line (50% is the zero of the gold lead). The last sample is
+  // after the nexus has fallen, where the model has nothing to say.
+  const priors = winPriors(props.result);
+  const chances = samples.slice(0, -1).map((s: any) => ({ t: s.t, p: winChance(priors, s) }));
+  const win = chances.length >= 2
+    ? chances.map((c: any, i: number) => `${i === 0 ? 'M' : 'L'}${((c.t / (length.value || 1)) * 100).toFixed(2)},${(20 - (c.p - 0.5) * 36).toFixed(2)}`).join(' ')
+    : '';
+
+  // Text for the graph, which is otherwise a picture.
+  let best = { v: 0, t: 0 };
+  let worst = { v: 0, t: 0 };
+  for (const s of samples) {
+    if (s.goldDiff > best.v) best = { v: s.goldDiff, t: s.t };
+    if (s.goldDiff < worst.v) worst = { v: s.goldDiff, t: s.t };
+  }
+  const k = (v: number) => `${(Math.abs(v) / 1000).toFixed(1)}k`;
+  const parts = [];
+  if (best.v > 0) parts.push(`${props.blueName} led by up to ${k(best.v)} at ${clockText(best.t)}`);
+  if (worst.v < 0) parts.push(`${props.redName} led by up to ${k(worst.v)} at ${clockText(worst.t)}`);
+  const summary = `Gold lead over the match. ${parts.join('; ') || 'Even all game'}.`;
+
+  return { line, area, peak, win, chances, summary };
+});
+
+/** Blue's chance at the playhead, interpolated between the minute samples. */
+const liveChance = computed(() => {
+  const c = graph.value?.chances ?? [];
+  if (c.length < 2) return null;
+  const t = props.clock;
+  let i = c.findIndex((x: any) => x.t > t);
+  if (i === -1) return c[c.length - 1].p;
+  if (i === 0) return c[0].p;
+  const a = c[i - 1];
+  const b = c[i];
+  return a.p + (b.p - a.p) * ((t - a.t) / (b.t - a.t || 1));
+});
+const chanceText = computed(() => {
+  const p = liveChance.value;
+  if (p == null) return '';
+  const blue = p >= 0.5;
+  return `${blue ? props.blueName : props.redName} ${Math.round((blue ? p : 1 - p) * 100)}%`;
 });
 
 const liveGold = computed(() => score.value?.goldDiff ?? 0);
@@ -174,8 +382,9 @@ const yourBest = computed(() => {
  * firsts, the big neutral objectives and the aces. That is what a caster would replay.
  */
 const MOMENT: Record<string, { label: string; weight: number; once?: boolean }> = {
-  GANK: { label: 'First blood', weight: 2, once: true },
-  SKIRMISH: { label: 'First blood', weight: 2, once: true },
+  // Keyed on the event itself. It used to be the first gank or skirmish, which was often
+  // not where the first kill happened at all.
+  FIRST_BLOOD: { label: 'First blood', weight: 2, once: true },
   HERALD: { label: 'Herald', weight: 1, once: true },
   TOWER: { label: 'First tower', weight: 2, once: true },
   SOUL: { label: 'Dragon soul', weight: 4 },
@@ -196,7 +405,15 @@ const moments = computed(() => {
     const key = m.once ? m.label : `${m.label}-${e.seq}`;
     if (seen.has(m.label) && m.once) continue;
     seen.add(m.label);
-    out.push({ t: e.t, seq: e.seq ?? key, team: e.team, label: m.label, weight: m.weight, text: e.narration });
+    const label = e.payload?.stolen ? `${m.label} steal` : m.label;
+    out.push({ t: e.t, seq: e.seq ?? key, team: e.team, label, weight: m.weight + (e.payload?.stolen ? 1 : 0), text: e.narration });
+  }
+  // Triple kills and better, and the steals of a dragon, from the big-moment list.
+  for (const b of bigMoments.value) {
+    if ((b.kind === 'MULTIKILL' && b.rank >= 5) || (b.kind === 'DRAGON')) {
+      const [label, player] = b.text.split(': ');
+      out.push({ t: b.t, seq: `big-${b.seq}`, team: b.team, label, who: player, weight: b.rank >= 6 ? 4 : 3, text: b.text });
+    }
   }
   // Keep the heaviest seven, then show them in the order they happened.
   return out
@@ -216,6 +433,103 @@ const story = computed(() => {
   if (worst < -2500) return `Comeback from ${(worst / 1000).toFixed(1)}k gold down`;
   if (worst >= -300) return best > 8000 ? 'Led from start to finish' : 'Never behind';
   return best > 6000 ? `Peaked ${(best / 1000).toFixed(1)}k ahead` : 'Close all the way';
+});
+
+/**
+ * Why it went this way: two or three turning points, written from nothing but what the
+ * result holds. Each reason needs its own data and is simply left out when the result
+ * does not have it, so a duel stored by an older engine still gets the ones it can.
+ */
+const why = computed<string[]>(() => {
+  const r = props.result;
+  const winner = r?.winner;
+  if (!r || !winner) return [];
+  const loser = winner === 'BLUE' ? 'RED' : 'BLUE';
+  const W = teamName(winner);
+  const Wcap = W.charAt(0).toUpperCase() + W.slice(1);
+  const L = teamName(loser);
+  const events: any[] = r.events ?? [];
+  const rows: any[] = r.boxScore ?? [];
+  const sign = winner === 'BLUE' ? 1 : -1;
+  const lines: { text: string; weight: number }[] = [];
+
+  // The objective that opened the base.
+  const inhib = events.find((e) => e.type === 'INHIBITOR' && e.team === winner);
+  if (inhib) {
+    const lane = ({ TOP: 'top', MID: 'mid', BOT: 'bot' } as Record<string, string>)[laneOfEvent(inhib)];
+    const buff = [...events].reverse().find((e) =>
+      (e.type === 'BARON' || e.type === 'ELDER') && e.team === winner && e.t <= inhib.t && inhib.t - e.t <= 240);
+    if (buff) {
+      const what = buff.type === 'BARON' ? 'Baron' : 'Elder';
+      lines.push({ text: `${what} at ${clockText(buff.t)} opened the base: ${W} had the ${lane} inhibitor by ${clockText(inhib.t)}.`, weight: 5 });
+    } else {
+      lines.push({ text: `${Wcap} broke the ${lane} inhibitor at ${clockText(inhib.t)} and the base never closed again.`, weight: 3 });
+    }
+  }
+
+  // The biggest three-minute gold swing towards the winner, and the fight inside it.
+  const samples: any[] = r.timeline ?? [];
+  let swing = { v: 0, from: 0, to: 0 };
+  for (let i = 0; i + 3 < samples.length; i++) {
+    const v = (samples[i + 3].goldDiff - samples[i].goldDiff) * sign;
+    if (v > swing.v) swing = { v, from: samples[i].t, to: samples[i + 3].t };
+  }
+  if (swing.v >= 2500) {
+    const fight = events.filter((e) => e.type === 'TEAMFIGHT_END' && e.team === winner && e.t >= swing.from && e.t <= swing.to)
+      .sort((a, b) => (b.payload?.deaths?.loser ?? 0) - (a.payload?.deaths?.loser ?? 0))[0];
+    const k = (swing.v / 1000).toFixed(1);
+    lines.push({
+      text: fight
+        ? `The fight at ${clockText(fight.t)} started a ${k}k gold swing to ${W}.`
+        : `${Wcap} gained ${k}k gold between ${clockText(swing.from)} and ${clockText(swing.to)}.`,
+      weight: 4,
+    });
+  }
+
+  // The draft.
+  const comp = (side: string) => r.composition?.[side.toLowerCase()];
+  const cw = Number(comp(winner)?.modifier) || 1;
+  const cl = Number(comp(loser)?.modifier) || 1;
+  if (Math.abs(cw - cl) >= 0.015) {
+    const pctText = (x: number) => `${((x - 1) * 100 >= 0 ? '+' : '')}${((x - 1) * 100).toFixed(1)}%`;
+    if (cw > cl) {
+      const best = (comp(winner)?.factors ?? []).filter((f: any) => f.value > 0).sort((a: any, b: any) => b.value - a.value)[0];
+      lines.push({ text: `The draft favoured ${W}: their comp was worth ${pctText(cw)} in fights${best ? `, mostly ${String(best.name).toLowerCase()}` : ''}.`, weight: 3 + (cw - cl) * 40 });
+    } else {
+      lines.push({ text: `${Wcap} won despite the weaker draft (${L} had ${pctText(cl)}).`, weight: 3 + (cl - cw) * 40 });
+    }
+  }
+
+  // The squads on paper.
+  const mean = (side: string) => {
+    const s = rows.filter((x) => x.team === side && Number.isFinite(x.effRating));
+    return s.length ? s.reduce((n, x) => n + x.effRating, 0) / s.length : null;
+  };
+  const mw = mean(winner);
+  const ml = mean(loser);
+  if (mw != null && ml != null && ml - mw >= 3) {
+    lines.push({ text: `${Wcap} won as the weaker five on paper, ${Math.round(mw)} against ${Math.round(ml)} on average.`, weight: 4 });
+  }
+
+  // A card far from its best champion, when the result knows mastery; otherwise the
+  // weakest card on the map, if it was also the one that kept dying.
+  const offMain = rows.filter((x) => Number.isFinite(x.mastery) && x.mastery < 40)
+    .sort((a, b) => a.mastery - b.mastery)[0];
+  if (offMain) {
+    lines.push({
+      text: `${offMain.name} played ${offMain.champion || 'a champion'} at mastery ${offMain.mastery}, far from their best, and went ${offMain.kills}/${offMain.deaths}/${offMain.assists}.`,
+      weight: offMain.team === loser ? 3.5 : 2.5,
+    });
+  } else {
+    const losing = rows.filter((x) => x.team === loser && Number.isFinite(x.effRating));
+    const weakest = [...losing].sort((a, b) => a.effRating - b.effRating)[0];
+    const mostDeaths = Math.max(0, ...losing.map((x) => x.deaths));
+    if (weakest && weakest.deaths >= 5 && weakest.deaths === mostDeaths) {
+      lines.push({ text: `${weakest.name} was ${L}'s weakest card going in (${Math.round(weakest.effRating)}) and died ${weakest.deaths} times.`, weight: 2.5 });
+    }
+  }
+
+  return lines.sort((a, b) => b.weight - a.weight).slice(0, 3).map((l) => l.text);
 });
 
 /** The final score, whatever the clock says: a rewatch must not rewrite the verdict. */
@@ -275,15 +589,33 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
     <div class="stage">
       <div class="stage__map">
         <RiftMap :positions="positions" :structures="structures" :flash="recent" />
+        <!-- The big moment, over the map. Decorative: the live region below says it. -->
+        <Transition name="moment-banner">
+          <p
+            v-if="banner" :key="banner.seq + banner.kind"
+            class="banner" :class="`is-${banner.team.toLowerCase()}`" aria-hidden="true"
+          >
+            <span class="banner__text">{{ banner.text }}</span>
+          </p>
+        </Transition>
       </div>
+      <p class="sr-only" aria-live="polite" aria-atomic="true">{{ announce }}</p>
 
       <div class="feed">
-        <p class="feed__head">
+        <div class="feed__head">
           <span>Play by play</span>
-          <span class="tnum">{{ ticker.length }}</span>
-        </p>
+          <button
+            type="button" class="feed__all" :aria-pressed="showAll" data-sound="toggle"
+            @click="toggleAll"
+          >
+            {{ showAll ? 'Showing everything' : 'Show everything' }}
+          </button>
+        </div>
         <ul class="ticker" aria-live="off">
-          <li v-for="event in ticker" :key="event.seq" :class="`is-${(event.team || 'none').toLowerCase()}`">
+          <li
+            v-for="event in ticker" :key="event.seq"
+            :class="[`is-${(event.team || 'none').toLowerCase()}`, { 'is-loud': LOUD.has(event.type) || event.payload?.stolen }]"
+          >
             <span class="ticker__t tnum">{{ clockText(event.t) }}</span>
             <span class="ticker__text">{{ said(event.narration) }}</span>
           </li>
@@ -296,8 +628,13 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
     <figure v-if="graph" class="gold">
       <figcaption class="gold__cap">
         <span>Gold lead</span>
+        <span v-if="graph.win" class="gold__chance">
+          <i aria-hidden="true" class="gold__key" />Win chance
+          <b class="tnum">{{ chanceText }}</b>
+        </span>
         <span class="faint tnum">±{{ (graph.peak / 1000).toFixed(0) }}k</span>
       </figcaption>
+      <p class="sr-only">{{ graph.summary }}</p>
       <svg class="gold__svg" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <clipPath id="mw-top"><rect x="0" y="0" width="100" height="20" /></clipPath>
@@ -307,6 +644,7 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
         <path :d="graph.area" class="gold__area gold__area--red" clip-path="url(#mw-bot)" />
         <line x1="0" y1="20" x2="100" y2="20" class="gold__zero" />
         <path :d="graph.line" class="gold__line" />
+        <path v-if="graph.win" :d="graph.win" class="gold__win" />
         <line :x1="progress" y1="0" :x2="progress" y2="40" class="gold__head" />
       </svg>
     </figure>
@@ -315,7 +653,13 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
     <slot name="controls" />
 
     <!-- The result ------------------------------------------------------------ -->
-    <section v-if="showResult" class="result" aria-labelledby="mw-verdict">
+    <!-- Memoised: none of this moves with the clock, so it is not re-rendered every frame
+         the replay plays. -->
+    <template v-if="showResult">
+    <section
+      v-memo="[result, mySide, blueName, redName, seekable, resultFirst]"
+      class="result" aria-labelledby="mw-verdict"
+    >
       <header class="verdict" :class="won === true ? 'is-won' : won === false ? 'is-lost' : ''">
         <p class="verdict__eyebrow">
           {{ won === null ? 'Final' : won ? 'Victory' : 'Defeat' }}
@@ -362,6 +706,13 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
         </article>
       </div>
 
+      <section v-if="why.length" class="why" aria-labelledby="mw-why">
+        <h3 id="mw-why" class="section-label">Why it went this way</h3>
+        <ul class="why__list">
+          <li v-for="line in why" :key="line">{{ said(line) }}</li>
+        </ul>
+      </section>
+
       <section v-if="moments.length" class="moments" aria-labelledby="mw-moments">
         <h3 id="mw-moments" class="section-label">What decided it</h3>
         <ol class="moments__list">
@@ -376,7 +727,7 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
             >
               <span class="moment__t tnum">{{ clockText(m.t) }}</span>
               <span class="moment__label">{{ m.label }}</span>
-              <span class="moment__who">{{ nameOf(m.team) }}</span>
+              <span class="moment__who">{{ m.who || nameOf(m.team) }}</span>
               <span v-if="seekable" class="moment__go" aria-hidden="true">▶</span>
             </component>
           </li>
@@ -437,6 +788,7 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
         </div>
       </section>
     </section>
+    </template>
   </div>
 </template>
 
@@ -444,7 +796,7 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
 .watch { display: grid; gap: 14px; }
 /* Verdict, stars and moments lead; the box score stays below the map. */
 .watch--result-first .result { display: contents; }
-.watch--result-first .verdict, .watch--result-first .stars, .watch--result-first .moments { order: -1; }
+.watch--result-first .verdict, .watch--result-first .stars, .watch--result-first .why, .watch--result-first .moments { order: -1; }
 .watch--result-first .moments { margin-bottom: 6px; }
 .board { scroll-margin-top: 72px; }
 .is-blue { color: var(--blue); }
@@ -535,7 +887,9 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
   margin: 0;
   display: flex;
   justify-content: space-between;
-  padding: 10px 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 12px;
   border-bottom: 1px solid var(--line-1);
   font-size: 11px;
   font-weight: 760;
@@ -568,11 +922,103 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
 .ticker li.is-red .ticker__t { color: var(--red); }
 .ticker li:first-child .ticker__text { color: var(--ink-1); }
 .ticker__empty { color: var(--ink-3); display: block !important; }
+.ticker li.is-loud .ticker__text { color: var(--gold-1); font-weight: 680; }
+.feed__all {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 760;
+  font-stretch: 112%;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.feed__all[aria-pressed='true'] { color: var(--ink-1); }
+.feed__all:hover { color: var(--ink-1); }
+.feed__all:focus-visible { outline: 2px solid var(--gold-1); outline-offset: -2px; }
+
+/* --- the big-moment banner over the map ------------------------------------ */
+.stage__map { position: relative; }
+.banner {
+  position: absolute;
+  left: 50%;
+  top: 12%;
+  transform: translateX(-50%);
+  margin: 0;
+  max-width: calc(100% - 24px);
+  padding: 8px 22px;
+  background: linear-gradient(90deg, transparent, rgba(4, 7, 13, 0.92) 16%, rgba(4, 7, 13, 0.92) 84%, transparent);
+  text-align: center;
+  pointer-events: none;
+}
+.banner__text {
+  display: block;
+  font-stretch: 80%;
+  font-weight: 880;
+  font-size: clamp(18px, 4.2vw, 30px);
+  line-height: 1.05;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--gold-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.banner::before, .banner::after {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  height: 1px;
+  background: var(--gold-2);
+  opacity: 0.6;
+}
+.banner::before { top: 0; }
+.banner::after { bottom: 0; }
+.banner.is-blue .banner__text { text-shadow: 0 0 18px rgba(74, 144, 255, 0.55); }
+.banner.is-red .banner__text { text-shadow: 0 0 18px rgba(240, 80, 95, 0.55); }
+.moment-banner-enter-active { transition: opacity 160ms ease-out, transform 260ms cubic-bezier(.2, .9, .25, 1.2); }
+.moment-banner-leave-active { transition: opacity 320ms ease-in; }
+.moment-banner-enter-from { opacity: 0; transform: translateX(-50%) scale(1.15); }
+.moment-banner-leave-to { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .moment-banner-enter-active, .moment-banner-leave-active { transition: opacity 120ms linear; }
+  .moment-banner-enter-from { transform: translateX(-50%); }
+}
+
+/* --- why it went this way --------------------------------------------------- */
+.why__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.why__list li {
+  position: relative;
+  padding: 10px 12px 10px 30px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: 4px;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--ink-1);
+}
+.why__list li::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 17px;
+  width: 7px;
+  height: 7px;
+  background: var(--gold-2);
+  transform: rotate(45deg);
+}
 
 /* --- gold graph ----------------------------------------------------------- */
 .gold { margin: 0; display: grid; gap: 6px; }
 .gold__cap {
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
   justify-content: space-between;
   font-size: 11px;
   font-weight: 760;
@@ -587,6 +1033,10 @@ const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Mat
 .gold__zero { stroke: var(--line-2); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .gold__line { fill: none; stroke: var(--ink-2); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
 .gold__head { stroke: var(--gold-1); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.gold__win { fill: none; stroke: var(--gold-2); stroke-width: 1.4; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; opacity: 0.9; }
+.gold__chance { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px; }
+.gold__chance b { color: var(--ink-1); font-weight: 780; text-transform: none; letter-spacing: 0; }
+.gold__key { width: 14px; height: 0; border-top: 1.5px dashed var(--gold-2); }
 
 /* --- result --------------------------------------------------------------- */
 .result { display: grid; gap: 18px; margin-top: 6px; }

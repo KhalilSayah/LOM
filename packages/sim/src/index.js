@@ -26,9 +26,17 @@ export { configureChampionData } from './champions.js';
 export { BALANCE, RULES, SIM_VERSION } from './balance.js';
 export { effRating, masteryFactor, roleFit, rarityForOvr, gradeFor } from '../../core/src/index.js';
 
-export function simulate(input) {
-  const rng = createRng(input.seed ?? 'lom');
-  const state = buildState({ ...input, rules: input.rules || RULES.modern }, rng);
+/**
+ * `opts` is a test seam and nothing else: `opts.saySeed` reseeds the commentary stream,
+ * which is how the tests prove that the words cannot move the match.
+ */
+export function simulate(input, opts = {}) {
+  const seed = String(input.seed ?? 'lom');
+  const rng = createRng(seed);
+  const state = buildState({ ...input, rules: input.rules || RULES.modern }, rng, {
+    fx: createRng(`${seed}::fx`),
+    say: createRng(opts.saySeed ?? `${seed}::say`),
+  });
 
   scheduleObjectives(state);
   state.emit('GAME_START', { t: 0 });
@@ -99,7 +107,7 @@ function rollLateTeamfight(state) {
   const region = regionFor(state.rng, phase);
 
   runTeamfight(state, attacker, state.opponent(attacker), {
-    pos: jitter(state.rng, region),
+    pos: jitter(state.fx, region),
     region: region.name,
     highStakes: isGameEnding(state),
   });
