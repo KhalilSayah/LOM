@@ -55,6 +55,9 @@ const seconds = computed(() => Math.floor(elapsed.value));
 const pulse = computed(() => Math.floor(elapsed.value * 2) % 4);
 
 onMounted(() => { restore(); load(); });
+
+watch(searching, (on, was) => { if (on && !was) playSound('searchStart'); });
+watch(botOffered, (on) => { if (on) playSound('toggle'); });
 useHead({ title: 'Battle — LOM' });
 </script>
 

@@ -105,6 +105,7 @@ async function choose(role: string, entry: any | null) {
     }
   }
   data.value.roster[role] = entry;
+  playSound(entry ? 'slotIn' : 'back');
 
   saving.value = true;
   try {
@@ -148,6 +149,11 @@ const links = computed(() => {
     }
   }
   return out;
+});
+
+/** A chemistry bonus earned by a swap is worth hearing. */
+watch(() => chemistry.value.average, (now, before) => {
+  if (!loading.value && before !== undefined && now > before) setTimeout(() => playSound('chemistry'), 140);
 });
 
 useHead({ title: 'Team — LOM' });

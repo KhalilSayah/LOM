@@ -6,6 +6,7 @@ const route = useRoute();
 const { packReady } = usePackSignal();
 const { credits, start: startWallet } = useWallet();
 const focus = useFocusMode();
+const { enabled: soundOn, setEnabled: setSound } = useSound();
 
 // A challenge arrives without you doing anything, so the nav has to say so — and a room you
 // are already in has somebody on the other side of it, so the nav links straight back into it
@@ -40,6 +41,7 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 watch(unseenGifts, (list) => {
   if (toast.value || !list.length) return;
   toast.value = list[0]!;
+  playSound('gift');
   markSeen([list[0]!.id]);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.value = null; }, 12000);
@@ -93,6 +95,16 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
       </nav>
 
       <div class="appbar__end">
+        <ClientOnly>
+        <button
+          class="icon-btn appbar__sound" type="button" data-sound="none"
+          :aria-pressed="soundOn" :aria-label="soundOn ? 'Mute sounds' : 'Turn sounds on'"
+          @click="setSound(!soundOn)"
+        >
+          <svg v-if="soundOn" class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z M15.5 9a4 4 0 0 1 0 6 M18 6.5a7.5 7.5 0 0 1 0 11" /></svg>
+          <svg v-else class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z M16 9.5l5 5 M21 9.5l-5 5" /></svg>
+        </button>
+        </ClientOnly>
         <NuxtLink class="credits" to="/shop" :aria-label="`${credits ?? 0} credits, open the shop`">
           <i class="coin" aria-hidden="true" />{{ credits === null ? '—' : credits.toLocaleString('en') }}
         </NuxtLink>
@@ -179,6 +191,8 @@ const initial = computed(() => (user.value?.email || '?').slice(0, 1));
   font-size: 12.5px;
 }
 .gifttoast .icon-btn svg { width: 18px; height: 18px; }
+.appbar__sound { width: 40px; height: 40px; }
+.appbar__sound svg { width: 20px; height: 20px; }
 
 @media (min-width: 1024px) {
   .gifttoast { left: auto; right: 24px; bottom: 24px; }

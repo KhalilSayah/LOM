@@ -186,6 +186,40 @@ const watchAt = computed(() => {
   return matchClock.value;
 });
 
+// --- sound -------------------------------------------------------------------------
+// The room's moments, voiced. Driven by the shared state rather than by clicks, so both
+// players hear an action land when it lands, not when one of them pressed something.
+
+watch(phase, (now, before) => {
+  if (!before) {
+    if (now === 'LOBBY') playSound('matchFound');
+    return;
+  }
+  if (now === 'LOBBY') playSound('matchFound');
+  if (before === 'DRAFT' && (now === 'WATCH' || now === 'RESULT')) playSound('draftDone');
+  if (now === 'RESULT' && before === 'WATCH' && state.value?.result) {
+    playSound(state.value.result.winner === mySide.value ? 'victory' : 'defeat');
+  }
+});
+
+watch(() => state.value?.actions?.length ?? 0, (n, prev) => {
+  if (prev === undefined || n <= prev) return;
+  const last = state.value?.actions?.[n - 1];
+  if (!last) return;
+  if (last.side === mySide.value) playSound(last.kind === 'BAN' ? 'ban' : 'lockIn');
+  else playSound(last.kind === 'BAN' ? 'ban' : 'theirLock');
+});
+
+watch(() => state.value?.myTurn, (mine, was) => {
+  if (mine && !was && phase.value === 'DRAFT') playSound('yourTurn');
+});
+
+watch(secondsLeft, (s) => {
+  if (s === null || !state.value?.myTurn || phase.value !== 'DRAFT') return;
+  if (s <= 5 && s > 0) playSound('timerUrgent');
+  else if (s <= 10 && s > 0) playSound('timerTick');
+});
+
 /** The twenty steps as a rail: done, now, still to come — and whose each one is. */
 const seq = computed(() => DRAFT_ORDER.map((step, i) => ({
   i,
@@ -400,7 +434,7 @@ useHead(() => ({
               <span>Tap one, then lock it in</span>
             </template>
           </p>
-          <button class="btn lockbar__go" type="button" :disabled="!selected || busy" @click="lockIn">
+          <button class="btn lockbar__go" type="button" data-sound="none" :disabled="!selected || busy" @click="lockIn">
             {{ busy ? 'Locking' : isPick ? 'Lock in' : 'Ban' }}
           </button>
         </section>

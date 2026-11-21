@@ -31,6 +31,31 @@ const props = defineProps<{
 
 const length = computed(() => props.result?.gameLength ?? 0);
 
+/**
+ * The match makes noise as it is watched: a kill pings, a dragon or a tower sounds a horn,
+ * Baron and Elder land heavy. Only events crossed by the clock moving forward a little — a
+ * scrub or a jump to the end is silent, or the result screen would play the whole game at once.
+ */
+const SOUND_OF: Record<string, 'kill' | 'objective' | 'baron'> = {
+  KILL: 'kill', FIRST_BLOOD: 'kill', GANK: 'kill', SKIRMISH: 'kill', ACE: 'kill', TEAMFIGHT_END: 'kill',
+  DRAGON: 'objective', HERALD: 'objective', SOUL: 'objective', TOWER: 'objective', INHIBITOR: 'objective', NEXUS_TURRET: 'objective',
+  BARON: 'baron', ELDER: 'baron', NEXUS: 'baron',
+};
+const RANK = { kill: 1, objective: 2, baron: 3 } as const;
+
+watch(() => props.clock, (now, before) => {
+  if (!props.result?.events || before === undefined) return;
+  const step = now - before;
+  if (step <= 0 || step > 40) return;
+  let loudest: 'kill' | 'objective' | 'baron' | null = null;
+  for (const e of props.result.events) {
+    if (e.t <= before || e.t > now) continue;
+    const s = SOUND_OF[e.type];
+    if (s && (!loudest || RANK[s] > RANK[loudest])) loudest = s;
+  }
+  if (loudest) playSound(loudest);
+});
+
 const tracks = computed(() =>
   (props.result ? buildTracks(props.result, props.result.boxScore) : null));
 const positions = computed(() => (tracks.value ? positionsAt(tracks.value, props.clock) : []));

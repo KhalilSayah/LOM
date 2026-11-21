@@ -31,6 +31,8 @@ interface Shop {
 }
 
 useHead({ title: 'Shop — LOM' });
+
+
 const { credits: wallet } = useWallet();
 const BAND_LABEL: Record<string, string> = { COMMON: 'Common', RARE: 'Rare', EPIC: 'Epic', LEGENDARY: 'Legendary', ICON: 'Icon' };
 /** Each pack type is a palette on the same foil wrapper. */
@@ -112,6 +114,17 @@ const label = (pack: ShopPack) => {
 };
 
 onMounted(load);
+/** Cards out of a bought pack land with the stinger of the best one among them. */
+const ORDER = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON'];
+watch(opened, (o) => {
+  if (!o?.cards?.length) return;
+  const best = o.cards.reduce((top: string, c: any) => {
+    const r = c.card?.rarity || c.rarity || 'COMMON';
+    return ORDER.indexOf(r) > ORDER.indexOf(top) ? r : top;
+  }, 'COMMON');
+  setTimeout(() => playSound(revealSoundFor(best)), 150);
+  if (o.creditsEarned) setTimeout(() => playSound('coin'), 900);
+});
 </script>
 
 
@@ -159,7 +172,7 @@ onMounted(load);
             {{ g.packName }} · {{ g.onePerRole ? `${g.slots} cards, one per lane` : g.slots === 1 ? '1 card' : `${g.slots} cards` }}
           </p>
           <p v-if="g.body" class="offer__blurb">{{ g.body }}</p>
-          <button class="btn offer__cta" type="button" :disabled="openingGift !== null || buying !== null" @click="openGift(g)">
+          <button class="btn offer__cta" type="button" data-sound="gift" :disabled="openingGift !== null || buying !== null" @click="openGift(g)">
             {{ openingGift === g.id ? 'Opening' : 'Open gift' }}
           </button>
         </div>
@@ -193,6 +206,7 @@ onMounted(load);
           <div class="offer__foot">
             <button
               class="btn btn--gold offer__cta"
+              data-sound="coin"
               :class="{ 'btn--off': !pack.canBuy }"
               type="button"
               :disabled="!pack.canBuy || buying !== null"

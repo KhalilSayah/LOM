@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ROLES } from '~~/shared/roster';
+import type { SoundName } from '~/composables/useSound';
 
 interface PackStatus {
   packDay: string;
@@ -79,6 +80,18 @@ async function open() {
 /** The reveal owns the screen until the card is kept. */
 watch(freshPull, (pull) => { focus.value = !!pull; });
 onBeforeUnmount(() => { focus.value = false; });
+
+/** The reveal, voiced phase by phase; the stinger matches what came out. */
+const PHASE_SOUND: Record<string, SoundName> = { charge: 'packCharge', tear: 'packTear', rise: 'cardRise', flip: 'cardFlip' };
+function onPhase(phase: string) {
+  const s = PHASE_SOUND[phase];
+  if (s) playSound(s);
+}
+function onRevealed() {
+  revealed.value = true;
+  playSound(revealSoundFor(freshPull.value?.rarity ?? freshPull.value?.card?.rarity));
+  if (freshPull.value?.wasDuplicate) setTimeout(() => playSound('coin'), 700);
+}
 
 async function keep() {
   freshPull.value = null;
@@ -171,7 +184,8 @@ useHead({ title: 'Home — LOM' });
       :card="freshPull.card"
       label="Daily"
       auto-open
-      @revealed="revealed = true"
+      @phase="onPhase"
+      @revealed="onRevealed"
       @kept="keep"
     />
     <p v-if="revealed && freshPull.wasDuplicate" class="notice reveal-page__dupe">
@@ -220,7 +234,7 @@ useHead({ title: 'Home — LOM' });
               <p class="hero__state"><i aria-hidden="true" />Ready to open</p>
               <h1 class="hero__title">Today's pack</h1>
               <p class="hero__lede">One player card from any season. The next one lands tomorrow at {{ status.hour }}:00.</p>
-              <button class="btn btn--lg hero__cta" type="button" :disabled="opening" @click="open">
+              <button class="btn btn--lg hero__cta" type="button" data-sound="select" :disabled="opening" @click="open">
                 {{ opening ? 'Opening' : 'Open pack' }}
               </button>
             </template>
