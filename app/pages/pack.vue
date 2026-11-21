@@ -2,6 +2,18 @@
 import { ROLES } from '~~/shared/roster';
 import type { SoundName } from '~/composables/useSound';
 
+interface Pull {
+  rarity: string | null;
+  wasDuplicate: boolean;
+  xpAwarded: number;
+  creditsAwarded?: number;
+  creditsEarned?: number;
+  forcedBy?: string | null;
+  streakBonus?: boolean;
+  waiting?: number;
+  card: any;
+}
+
 interface PackStatus {
   packDay: string;
   nextOpensAt: string;
@@ -9,10 +21,17 @@ interface PackStatus {
   hour: number;
   timeZone: string;
   available: boolean;
+  waiting: number;
+  bankMax: number;
+  todayWaiting: boolean;
+  resume: boolean;
+  openedToday: number;
   catalogue: string | null;
   credits: number;
-  claim: null | { rarity: string; wasDuplicate: boolean; xpAwarded: number; card: any };
+  claim: null | Pull;
+  streak: { days: number; openedToday: boolean; day: number; length: number; nextIsBonus: boolean; bonusFloor: string };
   pity: { sinceLegendary: number; sinceIcon: number; packsOpened: number; legendaryIn: number; iconIn: number };
+  quests: { dailyDone: number; dailyTotal: number; claimable: number };
   collectionCount: number;
 }
 
@@ -25,7 +44,7 @@ interface PackStatus {
  * things is played with.
  */
 
-const { packReady } = usePackSignal();
+const { packReady, packsWaiting, questsReady } = usePackSignal();
 const { credits } = useWallet();
 const focus = useFocusMode();
 const { incoming: duelsIncoming, liveDuelId } = useDuelSignal();
@@ -43,13 +62,17 @@ const opening = ref(false);
 const error = ref('');
 
 /** The pack just opened in this session, so the scene plays. */
-const freshPull = ref<null | { rarity: string; wasDuplicate: boolean; xpAwarded: number; card: any }>(null);
+const freshPull = ref<null | Pull>(null);
+/** Counts the reveals in one sitting, so a run of banked packs reads "2 of 3". */
+const run = ref({ index: 0, total: 0 });
 const revealed = ref(false);
 
 async function load() {
   try {
     status.value = await $fetch<PackStatus>('/api/pack/status');
     packReady.value = status.value.available;
+    packsWaiting.value = status.value.waiting ?? 0;
+    questsReady.value = status.value.quests?.claimable ?? 0;
     credits.value = status.value.credits;
     // Server time wins; a phone with a wrong clock should still see the right countdown.
     drift = new Date(status.value.serverNow).getTime() - Date.now();
@@ -65,11 +88,17 @@ async function open() {
   if (!status.value?.available || opening.value) return;
   opening.value = true;
   error.value = '';
+  if (!freshPull.value) run.value = { index: 0, total: status.value.waiting || 1 };
   try {
     const result = await $fetch<any>('/api/pack/claim', { method: 'POST' });
+    run.value = { index: run.value.index + 1, total: Math.max(run.value.total, run.value.index + 1 + (result.waiting ?? 0)) };
     freshPull.value = result;
-    packReady.value = false;
+    credits.value = result.credits;
+    packsWaiting.value = result.waiting ?? 0;
+    packReady.value = (result.waiting ?? 0) > 0;
+    if (status.value) status.value = { ...status.value, waiting: result.waiting ?? 0, available: (result.waiting ?? 0) > 0 };
   } catch (e: any) {
+    freshPull.value = null;
     error.value = e?.data?.statusMessage || e?.message || 'The pack did not open. Try again.';
     await load();
   } finally {
@@ -101,9 +130,21 @@ function onRevealed() {
   if (freshPull.value?.wasDuplicate) setTimeout(() => playSound('coin'), 700);
 }
 
+/**
+ * Keep the card. With more packs banked, the next one opens straight away — that is the
+ * whole point of coming back to three — and leaving the screen at any moment keeps the
+ * rest waiting.
+ */
 async function keep() {
-  freshPull.value = null;
+  const more = (freshPull.value?.waiting ?? 0) > 0;
   revealed.value = false;
+  beatTimers.forEach(clearTimeout);
+  beatTimers = [];
+  if (more) {
+    await open();
+    if (freshPull.value) return;
+  }
+  freshPull.value = null;
   loading.value = true;
   await load();
 }
@@ -149,7 +190,61 @@ function tick() {
   remaining.value = `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 
-const alreadyOpened = computed(() => !freshPull.value && status.value?.claim);
+const alreadyOpened = computed(() => !freshPull.value && !status.value?.available && status.value?.claim);
+
+/**
+ * When the next pack lands, in the viewer's own clock: "today at 18:00", "tomorrow at
+ * 17:00". The pack day turns at a fixed hour in the league's timezone, so the word "today"
+ * or "tomorrow" has to be worked out from the instant, never assumed.
+ */
+const viewerZone = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; }
+})();
+
+function localDayKey(d: Date) {
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+const nextLands = computed(() => {
+  if (!status.value) return '';
+  const at = new Date(status.value.nextOpensAt);
+  const now = new Date(Date.now() + drift);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const time = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day = localDayKey(at) === localDayKey(now)
+    ? 'today'
+    : localDayKey(at) === localDayKey(tomorrow)
+      ? 'tomorrow'
+      : at.toLocaleDateString([], { weekday: 'long' });
+  return `${day} at ${time}`;
+});
+
+/** The league clock, only when it is not the viewer's own. */
+const leagueClock = computed(() => {
+  const s = status.value;
+  if (!s || !viewerZone || viewerZone === s.timeZone) return '';
+  const city = (s.timeZone.split('/').pop() || s.timeZone).replaceAll('_', ' ');
+  return `${String(s.hour).padStart(2, '0')}:00 in ${city}`;
+});
+
+const streakLine = computed(() => {
+  const st = status.value?.streak;
+  if (!st) return '';
+  const toGo = st.length - st.day;
+  if (st.nextIsBonus) return `Day ${st.length} of ${st.length}: this pack is ${bandName(st.bonusFloor)} or better.`;
+  if (st.openedToday) {
+    return toGo === 0
+      ? `Day ${st.length} of ${st.length} done. A new week of the streak starts tomorrow.`
+      : `Day ${st.day} of ${st.length}. ${toGo === 1 ? 'Tomorrow' : `Day ${st.length}`}, the first pack is ${bandName(st.bonusFloor)} or better.`;
+  }
+  if (st.days > 0) return `Day ${st.day} of ${st.length} if you open today. Day ${st.length}'s pack is ${bandName(st.bonusFloor)} or better.`;
+  return `Open a pack ${st.length} days in a row and the seventh is ${bandName(st.bonusFloor)} or better.`;
+});
+
+function bandName(b: string) {
+  return b ? b.charAt(0) + b.slice(1).toLowerCase() : '';
+}
 
 /** Pity as a share of the way there, so the meter and the number agree. */
 const legendaryShare = computed(() => {
@@ -211,21 +306,28 @@ useHead({ title: 'Home — LOM' });
   <!-- just opened: the reveal owns the screen -->
   <main v-if="freshPull" class="reveal-page">
     <PackScene
+      :key="run.index"
       :card="freshPull.card"
-      label="Daily"
+      :label="freshPull.streakBonus ? `Day ${status?.streak.length ?? 7}` : 'Daily'"
       auto-open
       @phase="onPhase"
       @revealed="onRevealed"
       @kept="keep"
     />
-    <div v-if="revealed && (freshPull.wasDuplicate || freshPull.forcedBy)" class="reveal-page__notes" aria-live="polite">
-      <p v-if="freshPull.forcedBy" class="reveal-page__note reveal-page__note--pity">
+    <div v-if="revealed && (freshPull.wasDuplicate || freshPull.forcedBy || freshPull.streakBonus || run.total > 1)" class="reveal-page__notes" aria-live="polite">
+      <p v-if="run.total > 1" class="reveal-page__note">
+        Pack {{ run.index }} of {{ run.total }}<template v-if="freshPull.waiting">. Keep it to open the next.</template><template v-else>. That was the last one waiting.</template>
+      </p>
+      <p v-if="freshPull.forcedBy === 'icon-pity' || freshPull.forcedBy === 'legendary-pity'" class="reveal-page__note reveal-page__note--pity">
         <span class="gem" :class="freshPull.forcedBy === 'icon-pity' ? 'gem--icon' : 'gem--legendary'" aria-hidden="true" />
         {{ freshPull.forcedBy === 'icon-pity' ? 'Icon' : 'Legendary' }} guarantee paid out. The meter starts again.
       </p>
+      <p v-else-if="freshPull.streakBonus" class="reveal-page__note reveal-page__note--pity">
+        Day {{ status?.streak.length ?? 7 }} of your streak: {{ bandName(status?.streak.bonusFloor ?? 'EPIC') }} or better, as promised.
+      </p>
       <p v-if="freshPull.wasDuplicate" class="reveal-page__note">
         Already yours. The copy became
-        <strong>+{{ freshPull.xpAwarded }} XP</strong><template v-if="freshPull.creditsEarned"> and <strong class="reveal-page__credits">+{{ freshPull.creditsEarned }} credits</strong></template>.
+        <template v-if="freshPull.xpAwarded"><strong>+{{ freshPull.xpAwarded }} XP</strong></template><template v-else>no XP (the card is at level 10)</template><template v-if="freshPull.creditsEarned"> and <strong class="reveal-page__credits">+{{ freshPull.creditsEarned }} credits</strong></template>.
       </p>
     </div>
   </main>
@@ -235,6 +337,8 @@ useHead({ title: 'Home — LOM' });
 
     <div class="home__grid">
       <div class="home__main">
+        <!-- first-run checklist slot: keep it directly above the daily pack hero -->
+
         <div v-if="loading" class="skeleton home__skeleton" />
 
         <!-- no cards loaded yet -->
@@ -251,59 +355,76 @@ useHead({ title: 'Home — LOM' });
           <span class="hero__tl" aria-hidden="true" /><span class="hero__br" aria-hidden="true" />
 
           <div class="hero__art">
-            <div v-if="alreadyOpened" class="hero__pull">
-              <LomCard :card="status.claim!.card" />
+            <div v-if="alreadyOpened && status.claim?.card" class="hero__pull">
+              <LomCard :card="status.claim.card" />
             </div>
-            <div v-else class="pack" aria-hidden="true">
+            <div v-else class="pack" :class="{ 'pack--stack': status.waiting > 1 }" aria-hidden="true">
               <span class="pack__seal pack__seal--top" /><span class="pack__seal pack__seal--bottom" />
               <span class="pack__tear" />
               <span class="pack__mark">
                 <svg viewBox="0 0 28 28"><path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="currentColor" stroke-width="1.2" /><path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="currentColor" /></svg>
               </span>
-              <span class="pack__name"><small>LOM</small><b>Daily</b></span>
-              <span class="pack__count">1 player card</span>
+              <span class="pack__name"><small>LOM</small><b>{{ status.available && status.streak.nextIsBonus ? `Day ${status.streak.length}` : 'Daily' }}</b></span>
+              <span class="pack__count">{{ status.waiting > 1 ? `${status.waiting} packs` : '1 player card' }}</span>
             </div>
           </div>
 
           <div class="hero__text">
             <template v-if="status.available">
-              <p class="hero__state"><i aria-hidden="true" />Ready to open</p>
-              <h1 class="hero__title">Today's pack</h1>
-              <p class="hero__lede">One player card from any season. The next one lands tomorrow at {{ status.hour }}:00.</p>
+              <p class="hero__state"><i aria-hidden="true" />{{ status.resume ? 'Not finished' : 'Ready to open' }}</p>
+              <h1 class="hero__title">{{ status.waiting > 1 ? `${status.waiting} packs waiting` : status.todayWaiting ? "Today's pack" : 'A pack is waiting' }}</h1>
+              <p class="hero__lede">
+                <template v-if="status.resume">This pack was started and never finished. Nothing was lost: open it again to finish.</template>
+                <template v-else-if="status.waiting > 1">One player card each, opened one after another. Unopened packs keep for three days.</template>
+                <template v-else-if="!status.todayWaiting">Banked from an earlier day. One player card.</template>
+                <template v-else>One player card from any season.</template>
+                <template v-if="status.streak.nextIsBonus"> Day {{ status.streak.length }} of your streak: the first one is {{ bandName(status.streak.bonusFloor) }} or better.</template>
+                <template v-if="status.todayWaiting || status.waiting > 1"> The next one lands {{ nextLands }}<template v-if="leagueClock"> ({{ leagueClock }})</template>.</template>
+              </p>
               <button class="btn btn--lg hero__cta" type="button" data-sound="select" :disabled="opening" @click="open">
-                {{ opening ? 'Opening' : 'Open pack' }}
+                {{ opening ? 'Opening' : status.resume ? 'Finish opening' : status.waiting > 1 ? `Open ${status.waiting} packs` : 'Open pack' }}
               </button>
             </template>
 
-            <template v-else-if="alreadyOpened">
-              <p class="hero__state hero__state--quiet">Today's pull</p>
-              <h1 class="hero__title">{{ status.claim!.card.playerName }} <span class="hero__year">{{ status.claim!.card.season }}</span></h1>
-              <p v-if="status.claim!.wasDuplicate" class="hero__lede">
-                A duplicate: it became +{{ status.claim!.xpAwarded }} XP on the card you hold.
+            <template v-else-if="alreadyOpened && status.claim">
+              <p class="hero__state hero__state--quiet">Today's pull<template v-if="status.openedToday > 1"> · {{ status.openedToday }} packs opened today</template></p>
+              <h1 v-if="status.claim.card" class="hero__title">{{ status.claim.card.playerName }} <span class="hero__year">{{ status.claim.card.season }}</span></h1>
+              <h1 v-else class="hero__title">Pack opened</h1>
+              <p v-if="!status.claim.card" class="hero__lede">The card is in your collection; it could not be shown here.</p>
+              <p v-if="status.claim.wasDuplicate" class="hero__lede">
+                A duplicate: it became
+                <template v-if="status.claim.xpAwarded">+{{ status.claim.xpAwarded }} XP on the card you hold</template><template v-else>no XP (the card you hold is at level 10)</template><template v-if="status.claim.creditsAwarded"> and paid <span class="hero__credits">{{ status.claim.creditsAwarded }} credits</span></template>.
               </p>
               <p class="hero__next">Next pack in <b class="num">{{ remaining }}</b></p>
-              <p class="faint hero__tz">{{ status.hour }}:00 {{ status.timeZone.replaceAll('_', ' ') }}</p>
+              <p class="faint hero__tz">Lands {{ nextLands }}<template v-if="leagueClock"> · {{ leagueClock }}</template></p>
             </template>
 
             <template v-else>
               <p class="hero__state hero__state--quiet">Daily pack</p>
               <h1 class="hero__title">Next pack</h1>
               <p class="hero__next"><b class="num">{{ remaining }}</b></p>
-              <p class="faint hero__tz">{{ status.hour }}:00 {{ status.timeZone.replaceAll('_', ' ') }}</p>
+              <p class="faint hero__tz">Lands {{ nextLands }}<template v-if="leagueClock"> · {{ leagueClock }}</template></p>
             </template>
 
+            <p v-if="streakLine" class="hero__streak">
+              <span class="hero__streakdays" aria-hidden="true">
+                <i v-for="n in status.streak.length" :key="n" :class="{ 'is-on': n < status.streak.day || (n === status.streak.day && status.streak.openedToday), 'is-seven': n === status.streak.length }" />
+              </span>
+              <span>{{ streakLine }}</span>
+            </p>
           </div>
 
           <!-- pity, always visible: hidden pity is just anxiety -->
           <div class="pity">
             <div>
-              <p><span>Legendary within</span><b class="tnum">{{ status.pity.legendaryIn }}</b></p>
+              <p><span>Legendary within</span><b class="tnum">{{ status.pity.legendaryIn }} {{ status.pity.legendaryIn === 1 ? 'card' : 'cards' }}</b></p>
               <div class="meter"><i :style="{ width: `${legendaryShare}%` }" /></div>
             </div>
             <div>
-              <p><span>Icon within</span><b class="tnum">{{ status.pity.iconIn }}</b></p>
+              <p><span>Icon within</span><b class="tnum">{{ status.pity.iconIn }} {{ status.pity.iconIn === 1 ? 'card' : 'cards' }}</b></p>
               <div class="meter meter--prism"><i :style="{ width: `${iconShare}%` }" /></div>
             </div>
+            <NuxtLink class="pity__odds" to="/odds">How odds and pity work</NuxtLink>
           </div>
         </section>
 
@@ -360,12 +481,29 @@ useHead({ title: 'Home — LOM' });
           </div>
         </section>
 
+        <section v-if="status && status.quests.dailyTotal">
+          <div class="sect"><h2>Quests</h2><NuxtLink class="sect__link" to="/quests">All quests</NuxtLink></div>
+          <NuxtLink class="shopline questline" to="/quests">
+            <span>
+              <b>{{ status.quests.dailyDone }} of {{ status.quests.dailyTotal }} dailies done</b>
+              <span class="faint">{{ status.quests.claimable ? `${status.quests.claimable} ready to collect` : 'Credits for playing the way you already play' }}</span>
+            </span>
+            <span class="questline__pips" aria-hidden="true">
+              <i v-for="n in status.quests.dailyTotal" :key="n" :class="{ 'is-on': n <= status.quests.dailyDone }" />
+            </span>
+          </NuxtLink>
+        </section>
+
         <section>
           <div class="sect"><h2>Shop</h2><NuxtLink class="sect__link" to="/shop">All packs</NuxtLink></div>
           <NuxtLink class="shopline" to="/shop">
             <span><b>More packs</b><span class="faint">Squad packs, and better odds for a price</span></span>
             <span class="credits"><i class="coin" aria-hidden="true" />{{ (status?.credits ?? credits ?? 0).toLocaleString('en') }}</span>
           </NuxtLink>
+          <p class="shoplinks">
+            <NuxtLink to="/wallet">Wallet and history</NuxtLink>
+            <NuxtLink to="/odds">Odds and pity</NuxtLink>
+          </p>
         </section>
       </aside>
     </div>
@@ -407,12 +545,20 @@ useHead({ title: 'Home — LOM' });
 .hero__next { margin: 6px 0 0; font-size: 13.5px; color: var(--ink-2); }
 .hero__next .num { display: block; font-size: 40px; color: var(--ink-1); margin-top: 4px; }
 .hero__tz { margin: 4px 0 0; font-size: 12px; }
+.hero__credits { color: var(--gold-1); font-weight: 650; }
+.hero__streak { display: flex; align-items: center; gap: 10px; margin: 14px 0 0; font-size: 12.5px; color: var(--ink-3); }
+.hero__streakdays { display: inline-flex; gap: 4px; flex: none; }
+.hero__streakdays i { width: 8px; height: 8px; transform: rotate(45deg); box-shadow: inset 0 0 0 1px var(--line-3); }
+.hero__streakdays i.is-seven { box-shadow: inset 0 0 0 1px var(--gold-2); }
+.hero__streakdays i.is-on { background: var(--gold-2); box-shadow: none; }
 
 .hero__art { grid-area: art; }
 .hero__text { grid-area: text; }
 .pity { grid-area: pity; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding-top: 16px; margin-top: 2px; border-top: 1px solid var(--line-1); }
 .pity p { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px; font-size: 12px; color: var(--ink-3); }
 .pity b { font-size: 13px; color: var(--ink-1); }
+.pity__odds { grid-column: 1 / -1; justify-self: start; font-size: 12px; color: var(--ink-3); text-decoration: underline; text-underline-offset: 3px; padding: 6px 0; }
+.pity__odds:hover { color: var(--ink-1); }
 
 /* the pack, drawn: foil stock, crimped seals, the mark */
 .pack {
@@ -424,6 +570,8 @@ useHead({ title: 'Home — LOM' });
   background: radial-gradient(120% 70% at 50% 36%, rgba(216, 176, 100, 0.2), transparent 62%), linear-gradient(165deg, #26365a 0%, #0a101c 80%);
   filter: drop-shadow(0 1.2em 1.2em rgba(0, 0, 0, 0.55));
 }
+/* More than one waiting: the packs behind show as edges. */
+.pack--stack { box-shadow: 0.5em -0.5em 0 -0.1em #1b2740, 1em -1em 0 -0.2em #121b2d; overflow: visible; }
 .pack::after { content: ''; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.14) 42%, rgba(255, 255, 255, 0.03) 50%, transparent 58%); }
 .pack__seal { position: absolute; left: 0; right: 0; height: 8%; background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.15) 0 1px, transparent 1px 4px), linear-gradient(180deg, #34456a, #0a101c); }
 .pack__seal--top { top: 0; }
@@ -477,6 +625,12 @@ useHead({ title: 'Home — LOM' });
 .shopline { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: var(--bg-2); border: 1px solid var(--line-1); border-radius: var(--radius); }
 .shopline b { display: block; font-weight: 680; }
 .shopline .faint { display: block; font-size: 12.5px; margin-top: 2px; }
+.questline__pips { display: inline-flex; gap: 6px; flex: none; }
+.questline__pips i { width: 10px; height: 10px; transform: rotate(45deg); box-shadow: inset 0 0 0 1px var(--line-3); }
+.questline__pips i.is-on { background: var(--gold-2); box-shadow: none; }
+.shoplinks { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 8px 0 0; font-size: 13px; }
+.shoplinks a { color: var(--ink-3); padding: 10px 0; }
+.shoplinks a:hover { color: var(--ink-1); }
 
 .empty code { font-family: ui-monospace, monospace; font-size: 0.86em; padding: 0.12em 0.4em; border-radius: 2px; background: var(--bg-3); color: var(--ink-1); }
 
