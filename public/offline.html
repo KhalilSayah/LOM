@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#04070d">
+  <title>Offline — LOM</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid; place-items: center; padding: 24px 16px;
+      background: linear-gradient(180deg, #0a0f1a 0, #070b14 420px, #04070d 100%);
+      background-color: #070b14;
+      color: #f2ebdd;
+      font-family: 'Mona Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      text-align: center; -webkit-font-smoothing: antialiased;
+    }
+    main { max-width: 420px; display: grid; gap: 14px; justify-items: center; }
+    svg { width: 44px; height: 44px; }
+    h1 { margin: 6px 0 0; font-size: 30px; line-height: 1.05; font-weight: 820; font-stretch: 80%; }
+    p { margin: 0; color: #a9b0c0; font-size: 15px; line-height: 1.55; }
+    button {
+      margin-top: 8px; min-height: 48px; padding: 0 24px; border: 0; cursor: pointer;
+      background: #1fcfc1; color: #021816; font: inherit; font-size: 13px; font-weight: 760;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+    }
+    button:focus-visible { outline: 2px solid #f2ebdd; outline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main>
+    <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="#d8b064" stroke-width="1.6"/><path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="#d8b064"/></svg>
+    <h1>You are offline</h1>
+    <p>LOM needs a connection to open packs and play matches. Your cards are safe; they will be here when you are back.</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </main>
+</body>
+</html>
