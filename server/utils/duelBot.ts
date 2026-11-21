@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SLOTS, type Slot } from '~~/shared/draft';
 import { CARD_SELECT, toCard } from '~~/shared/cardShape';
-import type { DuelCard, Lineup } from './duel';
+import type { Difficulty } from '~~/shared/duelRoom';
+import { agentProfile, type DuelCard, type Lineup } from './duel';
 
 /**
  * A five for the agent to field when nobody else is searching.
@@ -34,11 +35,18 @@ export async function botLineup(
   catalogueVersionId: string,
   against: Lineup,
   seed: string,
+  /**
+   * Practice only. Moves the band a few OVR either side of the player's average, because a
+   * harder agent drafting well with a weaker five is still a soft match (AGENT_PROFILES).
+   * Left out, the band sits on the player's average exactly as it always has.
+   */
+  difficulty?: Difficulty,
 ): Promise<Lineup> {
   const filled = SLOTS.map((s) => against[s]).filter(Boolean) as DuelCard[];
-  const target = filled.length
+  const shift = difficulty ? agentProfile(difficulty).ovrShift : 0;
+  const target = (filled.length
     ? Math.round(filled.reduce((sum, c) => sum + c.ovr, 0) / filled.length)
-    : 70;
+    : 70) + shift;
 
   const rand = seeded(seed);
   const out = {} as Lineup;

@@ -2,6 +2,8 @@ import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { stepAt, DRAFT_ORDER, DRAFT_LENGTH } from '~~/shared/draft';
 import { loadActions, catchUp, draftPool, sideOf, botActsAt } from '~~/server/utils/duelRun';
+import { compositionView } from '~~/server/utils/duel';
+import { championRoles } from '~~/server/utils/championRoles';
 import { rewardFor } from '~~/server/utils/rewards';
 
 /**
@@ -25,6 +27,9 @@ import { rewardFor } from '~~/server/utils/rewards';
  *
  * The champion pool is only sent when asked for. It is ~172 entries that never change during
  * a draft, and shipping it on every resync would be silly.
+ *
+ * The seed is never sent, and since migration 0015 a client cannot read it either: it
+ * decides the agent's picks and the match, so knowing it is knowing the result.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -50,6 +55,7 @@ export default defineEventHandler(async (event) => {
 
   const side = sideOf(duel, profileId);
   const step = duel.status === 'DRAFTING' ? stepAt(duel.turn) : null;
+  const theirSide = side === 'BLUE' ? 'RED' : side === 'RED' ? 'BLUE' : null;
 
   /**
    * Who the opponent is, or that there is not one.
@@ -64,6 +70,31 @@ export default defineEventHandler(async (event) => {
     ? await db.from('profiles').select('handle, display_name').eq('id', otherId).maybeSingle()
     : { data: null };
 
+  /**
+   * The pool, with where each champion is played. The roles are what lets the screen put an
+   * off-pool champion in the lane it belongs to rather than the first open slot.
+   */
+  let pool: Array<{ key: string; name: string; roles: string[] }> | undefined;
+  if (wantPool && duel.catalogue_version_id) {
+    const [champions, roles] = await Promise.all([
+      draftPool(db, duel.catalogue_version_id),
+      championRoles(db, duel.catalogue_version_id),
+    ]);
+    pool = champions.map((c) => {
+      const r = roles.get(c.key);
+      return {
+        ...c,
+        roles: r ? [r.primary, ...[...r.flex].filter((s) => s !== r.primary)] : [],
+      };
+    });
+  }
+
+  // My own selection on the clock, so a reload mid-turn puts it back in my hand.
+  const hover = duel.hover as any;
+  const myHover = hover && side && hover.side === side && hover.turn === duel.turn && duel.status === 'DRAFTING'
+    ? { championKey: hover.championKey, championName: hover.championName, slot: hover.slot ?? null }
+    : null;
+
   return {
     id: duel.id,
     status: duel.status,
@@ -73,8 +104,11 @@ export default defineEventHandler(async (event) => {
       ? 'The agent'
       : other?.display_name || other?.handle || 'Unknown manager',
     opponentHandle: other?.handle ?? null,
+    // For a rematch. Null for the agent, which is nobody to challenge.
+    opponentId: duel.bot_side ? null : otherId ?? null,
     isBot: Boolean(duel.bot_side),
     botSide: duel.bot_side ?? null,
+    difficulty: duel.difficulty ?? null,
     iChallenged: duel.challenger_id === profileId,
 
     turn: duel.turn,
@@ -90,7 +124,14 @@ export default defineEventHandler(async (event) => {
     watchStartAt: duel.watch_start_at ?? null,
     watchSpeed: duel.watch_speed ?? 60,
     serverNow: new Date().toISOString(),
+    /**
+     * The row's own write stamp. A realtime push carrying the same stamp changed nothing a
+     * screen draws — a selection being saved, which deliberately does not bump it — and the
+     * client skips the resync.
+     */
+    updatedAt: duel.updated_at ?? null,
     bonus: duel.bonus,
+    myHover,
 
     actions,
     // Both lineups and both champion pools are open from the first ban. docs/05 section 2:
@@ -98,9 +139,16 @@ export default defineEventHandler(async (event) => {
     blueLineup: duel.blue_lineup,
     redLineup: duel.red_lineup,
 
-    pool: wantPool && duel.catalogue_version_id
-      ? await draftPool(db, duel.catalogue_version_id)
-      : undefined,
+    /**
+     * The composition as the engine will read it, for the panel beside the draft. Mine with
+     * the modifier once it is complete; theirs as tags only — what they have picked is public,
+     * the number the engine puts on it is not mine to be told.
+     */
+    composition: side && theirSide
+      ? { mine: compositionView(actions, side, true), theirs: compositionView(actions, theirSide, false) }
+      : null,
+
+    pool,
 
     /**
      * The result travels with the room from the moment the draft ends, because the shared

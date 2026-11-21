@@ -76,6 +76,21 @@ export const RESULT_GRACE_SECONDS = 20;
 export const BOT_THINK_MIN = 2;
 export const BOT_THINK_MAX = 6;
 
+/**
+ * How hard the agent tries, on a practice duel.
+ *
+ * Only practice has a choice. The agent standing in for somebody who walked away, and the
+ * agent the queue offers after an empty search, both play NORMAL — the docs/05 section 4
+ * "reasonable friend who is not paying full attention". Practice is where a person asks for
+ * something else, and nothing played there counts anywhere, so it can be as soft or as sharp
+ * as they like.
+ */
+export type Difficulty = 'EASY' | 'NORMAL' | 'HARD';
+export const DIFFICULTIES: Difficulty[] = ['EASY', 'NORMAL', 'HARD'];
+export const DIFFICULTY_LABEL: Record<Difficulty, string> = { EASY: 'Easy', NORMAL: 'Normal', HARD: 'Hard' };
+export const asDifficulty = (v: unknown): Difficulty =>
+  (DIFFICULTIES as string[]).includes(String(v).toUpperCase()) ? (String(v).toUpperCase() as Difficulty) : 'NORMAL';
+
 /** Deterministic think time for one action, so every client agrees when the bot will move. */
 export function botThinkSeconds(seed: string, turn: number): number {
   let h = 2166136261;
@@ -93,8 +108,92 @@ export interface RoomTiming {
   startsAt: string | null;
   watchStartAt: string | null;
   watchSpeed: number;
-  /** Seconds of simulated match, from the result. Null until there is one. */
+  /**
+   * Seconds of simulated match until the last thing on screen happens. Null until there is
+   * a result. Build it with matchEnd(result), never with `result.gameLength` alone.
+   */
   gameLength: number | null;
+}
+
+/**
+ * When a simulated match really ends, in match seconds.
+ *
+ * The engine nudges events that share a tick a second apart so the play-by-play keeps its
+ * order, and in a busy ending (the Baron fight, the push, the nexus) that carries the last
+ * events up to a minute past `gameLength`. A clock that stops at `gameLength` never shows the
+ * nexus falling, and a screen that turns over at `gameLength` cuts away before it does. Every
+ * clock and every phase boundary in a duel room is measured against this instead.
+ *
+ * Same rule as app/utils/matchEnd.ts, kept here as well because the server decides when a
+ * room is over and cannot import from the app.
+ */
+export function matchEnd(result: any): number {
+  if (!result) return 0;
+  const events = Array.isArray(result.events) ? result.events : [];
+  const last = events.length ? Number(events[events.length - 1]?.t ?? 0) : 0;
+  return Math.max(Number(result.gameLength ?? 0), Number.isFinite(last) ? last : 0);
+}
+
+/** A duel row (snake_case, as the database has it) as phaseOf() wants to read it. */
+export function timingOfRow(duel: {
+  status: string;
+  starts_at?: string | null;
+  watch_start_at?: string | null;
+  watch_speed?: number | null;
+  result?: any;
+}): RoomTiming {
+  return {
+    status: duel.status,
+    startsAt: duel.starts_at ?? null,
+    watchStartAt: duel.watch_start_at ?? null,
+    watchSpeed: duel.watch_speed ?? WATCH_SPEED,
+    gameLength: duel.result ? matchEnd(duel.result) : null,
+  };
+}
+
+/**
+ * The draft clock as a person should read it: the action's own thirty seconds, then the
+ * side's bonus pool, as one countdown that never jumps.
+ *
+ * The server stakes the whole bonus pool the moment the thirty seconds run out and pushes
+ * the deadline out by that much (server/utils/duelRun.ts). Rendered raw, that is a clock
+ * that hits zero, sits there for the length of a round trip, and then leaps to sixty — which
+ * reads as a bug, and to the person whose turn it is reads as "I have more time than I
+ * thought" only after they have already panicked. So the bonus is predicted here from the
+ * same numbers the server will use, and shown as what it is.
+ */
+export interface DraftClock {
+  /** Seconds of the action's own timer left. 0 once it has run out. */
+  main: number;
+  /** Seconds of bonus time this side has left: the pool before it is touched, then what remains of it. */
+  bonus: number;
+  /** True once the action timer is spent and the side is thinking on bonus time. */
+  inBonus: boolean;
+  /** The one number to put on screen. */
+  shown: number;
+}
+
+export function draftClock(input: {
+  deadlineAt: string | null;
+  /** duels.bonus: `{ BLUE, RED, staked: { side, amount } | null }`. */
+  bonus: Record<string, any> | null | undefined;
+  side: 'BLUE' | 'RED' | null | undefined;
+  /** The agent never spends bonus time on a side it is playing on purpose. */
+  botSide?: string | null;
+  now: number;
+}): DraftClock | null {
+  if (!input.deadlineAt || !input.side) return null;
+  const bonus = input.bonus || {};
+  const staked = bonus.staked && bonus.staked.side === input.side ? Number(bonus.staked.amount) || 0 : 0;
+  const pool = input.botSide === input.side ? 0 : staked || Number(bonus[input.side] ?? 0) || 0;
+  // Once staked, deadline_at already has the pool in it; the action's own timer ended `staked` earlier.
+  const base = new Date(input.deadlineAt).getTime() - staked * 1000;
+  const main = Math.max(0, Math.ceil((base - input.now) / 1000));
+  if (input.now < base || pool <= 0) {
+    return { main, bonus: pool, inBonus: false, shown: main };
+  }
+  const left = Math.max(0, Math.ceil((base + pool * 1000 - input.now) / 1000));
+  return { main: 0, bonus: left, inBonus: true, shown: left };
 }
 
 /**
@@ -111,6 +210,7 @@ export function phaseOf(room: RoomTiming, now: number): RoomPhase {
       return 'PENDING';
     case 'DECLINED':
     case 'CANCELLED':
+    case 'EXPIRED':
       return 'DEAD';
     case 'DRAFTING':
       if (room.startsAt && now < new Date(room.startsAt).getTime()) return 'LOBBY';

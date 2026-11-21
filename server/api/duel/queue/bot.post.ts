@@ -1,30 +1,37 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { entryFor, liveDuelFor, createBotDuel } from '~~/server/utils/duelQueue';
+import { asDifficulty } from '~~/shared/duelRoom';
 
 /**
- * Play the agent, because nobody is searching.
+ * Play the agent.
  *
- * Offered by the client after about twenty seconds of an empty queue, and never forced: it
- * is a button, and the search carries on behind it until the player takes it. The duel it
- * builds is a normal duel in every respect that the draft screen can see — the only marks on
- * it are `source = 'BOT'` and `bot_side`, which exist so that these games can be told apart
- * later, in a leaderboard that does not exist yet.
+ * Two ways in. The queue offers it after about twenty seconds of nobody, as a button, with
+ * the search carrying on behind it; that game is against the agent at NORMAL. The Battle
+ * screen also has a direct "Practice vs the agent" with a difficulty, for somebody who wants
+ * to try a draft without waiting for anyone — that one sends `difficulty`.
  *
- * This endpoint is why the empty-queue case is not a dead end. A game with no players is the
- * normal state of a new game, and a Battle button that leads to a spinner is a Battle button
- * nobody presses twice.
+ * Either way the duel is a normal duel in every respect the draft screen can see. The marks
+ * on it are `source = 'BOT'`, `bot_side` and (practice) `difficulty`, and none of it counts
+ * anywhere: no ladder, no standings, no record that is not labelled practice.
+ *
+ * The live-room check below is a fast path, not the guarantee. createBotDuel checks again
+ * after its insert, and migration 0015's index refuses a second practice draft outright,
+ * because a check followed by an insert is exactly the window two taps fall into.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
   const db = serverSupabaseServiceRole(event);
   const profileId = await ensureProfile(db, manager);
 
+  const body = await readBody<{ difficulty?: string } | null>(event).catch(() => null);
+  const difficulty = body?.difficulty ? asDifficulty(body.difficulty) : null;
+
   const live = await liveDuelFor(db, profileId);
   if (live) return { duelId: live, resumed: true };
 
   const entry = await entryFor(db, profileId);
-  const duelId = await createBotDuel(db, profileId, entry);
+  const duelId = await createBotDuel(db, profileId, entry, difficulty);
 
   return { duelId, resumed: false };
 });

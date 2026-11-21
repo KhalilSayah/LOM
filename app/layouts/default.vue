@@ -238,6 +238,8 @@ async function leave() {
     <!-- Always present, so the gift is announced when its text arrives. -->
     <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ announcement }}</div>
 
+    <ClientOnly><DuelToast /></ClientOnly>
+
     <!-- A gift arrived. Said once, politely, wherever the manager happens to be. -->
     <Transition name="gift">
       <aside v-if="toast && !isFocus" class="gifttoast" aria-label="Gift">
