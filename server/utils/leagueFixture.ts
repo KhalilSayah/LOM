@@ -4,6 +4,7 @@ import { botLineup } from './duelBot';
 import { ACTION_SECONDS, BONUS_SECONDS } from '~~/shared/draft';
 import { LOBBY_SECONDS, WATCH_SPEED } from '~~/shared/duelRoom';
 import { fixtureWindow } from '~~/shared/league';
+import { afterFixtureFinal, isPlayoffStage } from './leaguePlayoffs';
 import type { LeagueRow, MemberRow } from './league';
 
 /**
@@ -28,7 +29,9 @@ export interface FixtureRow {
   id: string;
   league_id: string;
   day_index: number;
-  stage: 'REGULAR' | 'GHOST' | 'REST';
+  stage: 'REGULAR' | 'GHOST' | 'REST' | 'SEMI' | 'GRAND_FINAL';
+  /** 'SF1' | 'SF2' | 'FINAL' on a playoff row, null on everything else (migration 0013). */
+  bracket_key?: string | null;
   blue_member_id: string | null;
   red_member_id: string | null;
   scheduled_at: string | null;
@@ -58,6 +61,22 @@ export async function openFixture(
   }
   if (fixture.status === 'VOID') {
     throw createError({ statusCode: 409, statusMessage: 'That fixture was voided.' });
+  }
+
+  /**
+   * A playoff fixture whose sides are not both known yet.
+   *
+   * The final exists as a row from the moment the bracket is drawn, with a date on it, and
+   * fills its sides in as the semis resolve (migration 0013 relaxed the sides constraint for
+   * exactly that). So it has to be refused here, and refused *before* the Ghost branch
+   * below — which would otherwise read the pending red side as "no opponent" and hand the
+   * grand final to the auto-draft agent.
+   */
+  if (isPlayoffStage(fixture.stage) && !(fixture.blue_member_id && fixture.red_member_id)) {
+    throw createError({
+      statusCode: 409,
+      statusMessage: 'That match is still waiting on a semi-final.',
+    });
   }
 
   const byId = new Map(members.map((m) => [m.id, m]));
@@ -228,7 +247,7 @@ export async function recordFixtureResult(
   try {
     const { data: fixture } = await db
       .from('league_fixtures')
-      .select('id, stage, blue_member_id, red_member_id, status')
+      .select('id, league_id, stage, bracket_key, blue_member_id, red_member_id, status')
       .eq('duel_id', duelId)
       .maybeSingle();
 
@@ -253,6 +272,21 @@ export async function recordFixtureResult(
       red_kills: kills('RED'),
       played_at: new Date().toISOString(),
     }).eq('id', fixture.id);
+
+    /**
+     * And then: does this result end something?
+     *
+     * The last regular fixture draws the bracket; a semi fills in a side of the final; the
+     * final crowns a champion and pays the placings (docs/01 section 7). All of it from
+     * here, because this is the single place a fixture becomes FINAL, and docs/01 section 8
+     * is explicit that the season must not wait on anybody opening the app — see
+     * server/utils/leaguePlayoffs.ts for the longer version of that argument.
+     *
+     * `.eq('status', ...)` is not needed to make this safe: the early return above means
+     * only the call that actually flipped this fixture to FINAL gets here, and everything
+     * afterFixtureFinal does is idempotent anyway.
+     */
+    await afterFixtureFinal(db, fixture.league_id, fixture.stage);
   } catch (e: any) {
     console.warn(`[league] fixture result for duel ${duelId}: ${e?.message || e}`);
   }

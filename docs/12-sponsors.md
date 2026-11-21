@@ -124,9 +124,14 @@ design rather than a balance dial, and a second pack table for one row would be 
 
 ## 7. Not built
 
-- **Season payouts.** The 1500 / 900 / 500 / 250 row of [01 section 5](01-game-loop.md) needs
-  a season that finishes, and a league currently has no finish: there are no playoffs and
-  nothing marks a season done (see the README). The faucet is specified and unwired.
+**Season payouts are built now**, and they used to be the first entry here. The 1500 / 900 /
+500 / 250 row of [01 section 5](01-game-loop.md) needed a season that finishes, and a league
+has one: a top-four bracket drawn off the final table, a grand final that sets the league
+FINISHED with a champion on it, and one `season_rewards` row per manager per season to pay
+against. They are not sponsor money — a placing is paid by the league, not by a brand — but
+they were listed here because this document was written the week the second faucet landed and
+the third one was the obvious hole left in [01 section 5](01-game-loop.md). It is filled.
+
 - **A weekly retainer.** Tempting, and it needs either a scheduler the app does not have or a
   lazy claim surface with its own week window. Per-match money plus the signing bonus covers
   the same ground without inventing either.

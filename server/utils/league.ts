@@ -17,9 +17,10 @@ import { localNow, addDays, zonedToUtc } from './packDay';
  * read through the same tables their own screens read.
  */
 
-const LEAGUE_SELECT = `
+export const LEAGUE_SELECT = `
   id, name, owner_id, invite_code, timezone, match_hour, season_length_days,
-  status, starts_on, created_at, started_at, catalogue_version_id
+  status, starts_on, created_at, started_at, catalogue_version_id,
+  season, champion_member_id
 `;
 
 export interface LeagueRow {
@@ -35,6 +36,10 @@ export interface LeagueRow {
   created_at: string;
   started_at: string | null;
   catalogue_version_id: string | null;
+  /** Which season of this league is being played. 1 until a reset exists (docs/01 section 7). */
+  season: number;
+  /** Who won the grand final. Set at the same moment status becomes FINISHED. */
+  champion_member_id: string | null;
 }
 
 export interface MemberRow {
@@ -247,6 +252,13 @@ export const shapeLeague = (league: LeagueRow, members: MemberRow[], profileId: 
   id: league.id,
   name: league.name,
   status: league.status,
+  season: league.season ?? 1,
+  finished: league.status === 'FINISHED',
+  /**
+   * The honours board's one entry. A member id, resolved to a team name by the caller,
+   * which already has the members to hand.
+   */
+  championMemberId: league.champion_member_id ?? null,
   timezone: league.timezone,
   matchHour: formatMatchHour(league.match_hour),
   seasonLengthDays: league.season_length_days,

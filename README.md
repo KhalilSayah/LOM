@@ -33,6 +33,9 @@ npm run dev              # http://localhost:3000
    fixture open a draft room and keep its result; without them the League tab loads nothing.
    `0011_match_rewards.sql` makes a finished match pay, and `0012_sponsors.sql` adds the
    sponsor book — without them matches pay nothing and the Sponsors tab loads nothing.
+   `0013_playoffs.sql` gives a season an end: the two playoff stages, a champion on the
+   league, and the ledger the placings are paid through. Without it the last regular fixture
+   of a season is the last thing that happens.
 3. **Authentication → Providers → Email**: on, and turn **Confirm email off**. Signing up
    then signs you straight in. The built-in SMTP is capped at a few messages an hour, so a
    confirmation step on a friends-only league buys nothing and gives `email rate limit
@@ -138,16 +141,35 @@ on a manager who will not open the app. The table is three points a win, then he
 wins quickly, then kills, then a coin seeded from the league id so a drawn table never
 reshuffles itself. Ghost fixtures are played and rewatchable but do not count.
 
-Three things are deliberately not there yet. **No forfeits** — a fixture nobody opens stays
+### How a season ends
+
+The bracket is drawn the moment the last regular fixture is decided — on the server, in the
+same call that writes the result, because a season that waits on somebody opening the app is
+a season that can be held hostage. Top four off the final table: first plays fourth, second
+plays third, a day off, then the final, all of them ordinary fixtures played in the same duel
+room as everything else. The higher seed drafts first in every round, which is the one place
+in the calendar where side assignment is earned rather than rotated. A league of three gives
+its top seed a bye straight to the final; a league of two just plays the final.
+
+Winning the final sets the league FINISHED with a champion on it and pays the placings: 1500
+/ 900 / 500 / 250 for first, second, the two beaten semi-finalists, and everybody else. Who
+finished where comes from the bracket rather than the table, so a first seed that loses the
+final is paid as the runner-up — which is what it is. One `season_rewards` row per manager
+per season, claimed before a single Credit moves, so a season that settles twice pays once.
+Collections are kept in full; nothing is wiped and card levels persist.
+
+Two things are deliberately not there yet. **No forfeits** — a fixture nobody opens stays
 scheduled, and its button keeps working tomorrow, because a league of friends misses evenings
 and a missed evening is a worse game than a forfeit nobody chose; real absence handling is
-[docs/05 section 7](docs/05-draft-and-live-session.md). **No playoffs** — days 12-14 need a
-bracket built from the final table, and without a season that finishes there is nothing to
-pay the season placings in [docs/01 section 5](docs/01-game-loop.md) against either. And
-**a league does not own cards**: [docs/07](docs/07-data-model.md) gives each membership its
-own collection, while here a manager brings the one collection they have — noted in
+[docs/05 section 7](docs/05-draft-and-live-session.md). And **a league does not own cards**:
+[docs/07](docs/07-data-model.md) gives each membership its own collection, while here a
+manager brings the one collection they have — noted in
 `supabase/migrations/0009_leagues.sql`, which is also where the schema for the per-league
 version is already laid out.
+
+Starting a *second* season in the same league is also unbuilt. `leagues.season` exists, and
+the payout lock is already keyed on it so season 2 can pay; what is missing is what happens
+to season 1's fixtures ([docs/01 section 7](docs/01-game-loop.md)).
 
 ### How a match pays
 
