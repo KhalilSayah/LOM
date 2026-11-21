@@ -24,6 +24,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rngFor } from '../packages/card-engine/src/rng.js';
 import { rarityForOvr } from '../packages/card-engine/src/rarity.js';
+import { championKey } from '../packages/card-engine/src/assets.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -115,7 +116,9 @@ function championPool(keys, ovr, rng) {
     const games = Math.max(3, Math.round((27 - decay * 0.85) * rng.range(0.75, 1.15)));
     const winrate = clamp(0.5 + (ovr - 76) / 160 + rng.range(-0.08, 0.1), 0.3, 0.85);
     return {
-      championKey: key,
+      // The hand-written keys in the table above are mostly Data Dragon ids already, but
+      // a couple ("RenataGlasc") are not, and a wrong one shows a card with no picture.
+      championKey: championKey(key),
       championName: champName(key),
       games,
       winrate: Number(winrate.toFixed(3)),

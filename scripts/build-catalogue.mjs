@@ -40,6 +40,7 @@ import { createHash } from 'node:crypto';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rarityForOvr } from '../packages/card-engine/src/rarity.js';
+import { championKey } from '../packages/card-engine/src/assets.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -92,7 +93,10 @@ const num = (v) => {
 const present = (v) => v !== '' && v != null && Number.isFinite(Number(v)) && Number(v) !== 0;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-const champKey = (name) => String(name || '').replace(/[^A-Za-z0-9]/g, '');
+// Riot's own id for the champion, which is what the art CDN files pictures under. Nine
+// of them are not the display name with the punctuation removed, so this cannot be a
+// regex here; the art layer owns the list. See packages/card-engine/src/assets.js.
+const champKey = championKey;
 const bump = (map, key, by = 1) => map.set(key, (map.get(key) || 0) + by);
 const modal = (map) => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);

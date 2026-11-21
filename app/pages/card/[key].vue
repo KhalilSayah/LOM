@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { squareUrl } from '@lom/card-engine';
 import { toCard } from '~~/shared/cardShape';
 
 const route = useRoute();
@@ -18,8 +19,6 @@ const SELECT = `
     pool:card_champion_pool ( champion_key, champion_name, games, winrate, mastery, slot )
   )
 `;
-
-const DDRAGON = 'https://ddragon.leagueoflegends.com/cdn/16.22.1/img/champion';
 
 const ACCOLADES: Record<string, string> = {
   WORLDS_WINNER: 'World champion',
@@ -150,7 +149,7 @@ useHead(() => ({
           <h2 class="sect">Champion pool<span class="faint">mastery · games</span></h2>
           <ul class="pool">
             <li v-for="p in deep" :key="p.key">
-              <img :src="`${DDRAGON}/${p.key}.png`" alt="" width="34" height="34" loading="lazy">
+              <img :src="squareUrl(p.key)" alt="" width="34" height="34" loading="lazy">
               <span class="pool__name">{{ p.champion }}<small>{{ p.games }} games<template v-if="p.winrate"> · {{ Math.round(Number(p.winrate) * 100) }}% wins</template></small></span>
               <span class="meter"><i :style="{ width: `${p.mastery}%` }" /></span>
               <b class="tnum">{{ p.mastery }}</b>
@@ -160,7 +159,7 @@ useHead(() => ({
             <p class="cutline">Below 70 · a penalty in the draft</p>
             <ul class="pool pool--low">
               <li v-for="p in shallow" :key="p.key">
-                <img :src="`${DDRAGON}/${p.key}.png`" alt="" width="34" height="34" loading="lazy">
+                <img :src="squareUrl(p.key)" alt="" width="34" height="34" loading="lazy">
                 <span class="pool__name">{{ p.champion }}<small>{{ p.games }} games</small></span>
                 <span class="meter"><i :style="{ width: `${p.mastery}%` }" /></span>
                 <b class="tnum">{{ p.mastery }}</b>
