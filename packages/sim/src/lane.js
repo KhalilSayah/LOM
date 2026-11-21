@@ -10,7 +10,7 @@
 import { BALANCE, phaseAt } from './balance.js';
 import { economyAwardPlate, economyAwardTower } from './structures.js';
 import { contestPower, resolve } from './power.js';
-import { aliveOf, meanConsistency, assignDeaths } from './combat.js';
+import { aliveOf, meanConsistency, assignDeaths, newFight, emitMultikills } from './combat.js';
 import { jitter, LANE_ANCHOR } from './map.js';
 
 const LANE_SLOTS = { TOP: ['TOP'], MID: ['MID'], BOT: ['BOT', 'SUP'] };
@@ -105,8 +105,9 @@ function rollGank(state, lane, blue, red) {
     if (!state.rng.chance(Math.max(0, p))) continue;
 
     const attackers = [jungler, ...mates];
-    const defenders = [...victims, ...enemy.players.filter((p) => p.slot === 'JNG' && p.alive)];
-    const pos = jitter(state.rng, LANE_ANCHOR[enemy.name][victims[0].slot], 900);
+    const counterJungler = enemy.players.find((p) => p.slot === 'JNG' && p.alive);
+    const defenders = [...victims, ...(counterJungler ? [counterJungler] : [])];
+    const pos = jitter(state.fx, LANE_ANCHOR[enemy.name][victims[0].slot], 900);
 
     const a = contestPower(side, 'GANK', phase, attackers, state.t);
     const d = contestPower(enemy, 'GANK', phase, defenders, state.t);
@@ -116,22 +117,34 @@ function rollGank(state, lane, blue, red) {
       team: side.name,
       killer: jungler.name,
       lane,
+      won: outcome.won,
+      victim: victims[0].name,
+      laner: mates[0]?.name,
+      counter: Boolean(counterJungler),
       pos,
       actors: { participants: [...attackers, ...defenders].map((p2) => p2.pid) },
+      payload: { lane, won: outcome.won },
     });
+
+    // Everyone in the gank, both sides: victims come from one side of it and killers
+    // from the other, so a failed gank is punished by the laner who read it and not by
+    // whoever on that team happened to be strongest.
+    const inGank = [...attackers, ...defenders];
+    const fight = newFight('GANK', { lane, failed: !outcome.won });
 
     if (outcome.won) {
       const taken = state.rng.chance(0.25 + Math.abs(outcome.margin)) ? 2 : 1;
-      assignDeaths(state, enemy, taken, phase, pos, defenders);
+      assignDeaths(state, enemy, taken, phase, pos, inGank, fight);
       bumpLaneMomentum(side, enemy);
       state.lanePressure[lane] += -sign * BALANCE.lane.gankPressure * taken;
     } else {
       // A failed gank is a free kill for the lane that read it, and the single most
       // satisfying thing a vision stat can buy.
-      assignDeaths(state, side, 1, phase, pos, attackers);
+      assignDeaths(state, side, 1, phase, pos, inGank, fight);
       bumpLaneMomentum(enemy, side);
       state.lanePressure[lane] += sign * BALANCE.lane.gankPressure;
     }
+    emitMultikills(state, fight);
   }
 }
 

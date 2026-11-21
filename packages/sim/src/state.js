@@ -16,8 +16,13 @@ const LANES = ['TOP', 'MID', 'BOT'];
 /** Structures fall outside in: three turrets, then the inhibitor (docs/04 6.5). */
 const freshLane = () => ({ towers: 3, inhibitor: true, plates: 0 });
 
-export function buildState(input, rng) {
+export function buildState(input, rng, streams = {}) {
   const rules = input.rules || RULES.modern;
+  // Two more streams beside the one that decides the match. `fx` scatters timestamps
+  // and positions, `say` picks the words. Neither feeds back into an outcome, so a new
+  // line of commentary or a different scatter can never change who wins.
+  const fx = streams.fx || rng;
+  const say = streams.say || rng;
 
   const all = [];
   const sides = {};
@@ -32,6 +37,12 @@ export function buildState(input, rng) {
       slot: p.slot,
       champion: p.champion,
       effRating: p.effRating,
+      // Echoed into the box score when the caller knows them, so the result screen can
+      // say a card was played far from its best champion. Never read by the engine.
+      ...(Number.isFinite(p.ovr) ? { ovr: p.ovr } : {}),
+      ...(Number.isFinite(p.mastery) ? { mastery: p.mastery } : {}),
+      cs: 0,
+      streak: 0,
       chemistry: p.chemistry || 0,
       subStats: p.subStats || {},
       gold: 500,
@@ -91,6 +102,8 @@ export function buildState(input, rng) {
 
   const state = {
     rng,
+    fx,
+    say,
     rules,
     t: 0,
     seq: 0,
@@ -101,6 +114,7 @@ export function buildState(input, rng) {
     winner: null,
     endReason: null,
     firstBlood: false,
+    firstTower: false,
     nextObjective: {},
   };
 
@@ -113,7 +127,7 @@ export function buildState(input, rng) {
     // Sub-tick jitter keeps the replay from looking metronomic (docs/04 section 3),
     // but `t` must be non-decreasing or the ticker plays events out of order and the
     // invariant tests fail. Within a tick, order of emission wins over jitter.
-    const jittered = Math.round(ctx.t ?? state.t + rng.int(0, BALANCE.tick - 1));
+    const jittered = Math.round(ctx.t ?? state.t + fx.int(0, BALANCE.tick - 1));
     const last = state.events.length ? state.events[state.events.length - 1].t : 0;
 
     const event = {
@@ -128,7 +142,7 @@ export function buildState(input, rng) {
       ...(ctx.actors ? { actors: ctx.actors } : {}),
       ...(ctx.pos ? { pos: ctx.pos } : {}),
       ...(ctx.payload ? { payload: ctx.payload } : {}),
-      narration: narrate(rng, type, ctx),
+      narration: narrate(say, type, ctx),
     };
     state.events.push(event);
     return event;

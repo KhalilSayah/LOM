@@ -11,7 +11,7 @@
  * time. No canvas, no DOM, no clock — the renderer owns all three.
  */
 
-import { LANE_ANCHOR, REGIONS } from './map.js';
+import { LANE_ANCHOR, REGIONS, MAP_MAX } from './map.js';
 import { BALANCE, phaseAt } from './balance.js';
 import { respawnTime } from './economy.js';
 
@@ -41,6 +41,21 @@ function anchorFor(player, t) {
  * Build one track per player: a sorted list of (t, pos) the renderer interpolates
  * through, plus the windows where that player is dead.
  */
+const SLOT_ORDER = ['TOP', 'JNG', 'MID', 'BOT', 'SUP'];
+
+/**
+ * A small fixed offset per player, so five people standing at one event's position
+ * read as a group of five dots rather than one. Presentation only: the same for a
+ * player all game, and nothing in the engine sees it.
+ */
+function spreadFor(player) {
+  const i = Math.max(0, SLOT_ORDER.indexOf(player.slot));
+  const angle = (i / 5) * Math.PI * 2 + (player.team === 'RED' ? Math.PI / 5 : 0);
+  return { x: Math.cos(angle) * 320, y: Math.sin(angle) * 320 };
+}
+
+const clampMap = (v) => Math.max(0, Math.min(MAP_MAX, v));
+
 export function buildTracks(result, roster) {
   const tracks = new Map();
 
@@ -61,14 +76,18 @@ export function buildTracks(result, roster) {
     for (const pid of new Set(mentioned)) {
       const track = tracks.get(pid);
       if (!track) continue;
-      track.keys.push({ t: event.t, pos: event.pos });
+      const off = spreadFor(track.player);
+      track.keys.push({ t: event.t, pos: { x: clampMap(event.pos.x + off.x), y: clampMap(event.pos.y + off.y) } });
     }
 
     // A death is a hole in the track: the dot goes to base and stops being a threat
-    // on the map, which is the single most readable thing in a replay.
+    // on the map, which is the single most readable thing in a replay. The engine
+    // says when the player came back; a result from before it did is estimated.
     if (event.actors.victim && (event.type === 'KILL' || event.type === 'FIRST_BLOOD')) {
       const track = tracks.get(event.actors.victim);
-      if (track) track.dead.push({ from: event.t, to: event.t + respawnTime(event.t) });
+      const back = event.payload?.respawnAt;
+      const to = Number.isFinite(back) ? Math.max(back, event.t + 2) : event.t + respawnTime(event.t);
+      if (track) track.dead.push({ from: event.t, to });
     }
   }
 
@@ -142,20 +161,100 @@ export function structuresAt(result, t) {
     RED: { TOP: { towers: 3, inhibitor: true }, MID: { towers: 3, inhibitor: true }, BOT: { towers: 3, inhibitor: true }, nexusTurrets: 2, nexus: true },
   };
 
-  const laneOf = (narration) =>
-    narration.includes('TOP') ? 'TOP' : narration.includes('BOT') ? 'BOT' : 'MID';
-
   for (const event of result.events) {
     if (event.t > t || !event.team) continue;
     const defender = event.team === 'BLUE' ? 'RED' : 'BLUE';
+    const side = state[defender];
 
-    if (event.type === 'TOWER') state[defender][laneOf(event.narration)].towers -= 1;
-    if (event.type === 'INHIBITOR') state[defender][laneOf(event.narration)].inhibitor = false;
-    if (event.type === 'NEXUS_TURRET') state[defender].nexusTurrets -= 1;
-    if (event.type === 'NEXUS') state[defender].nexus = false;
+    if (event.type === 'TOWER') {
+      const lane = side[laneOfEvent(event)];
+      lane.towers = Math.max(0, lane.towers - 1);
+    }
+    if (event.type === 'INHIBITOR') side[laneOfEvent(event)].inhibitor = false;
+    if (event.type === 'NEXUS_TURRET') side.nexusTurrets = Math.max(0, side.nexusTurrets - 1);
+    if (event.type === 'NEXUS') side.nexus = false;
   }
 
   return state;
+}
+
+/**
+ * The lane a structure event happened in. Read off the event since 1.1.0; a result
+ * from before then only says it in its commentary ("... in TOP"), so that is the
+ * fallback, and never the other way round.
+ */
+export function laneOfEvent(event) {
+  const lane = event.payload?.lane;
+  if (lane === 'TOP' || lane === 'MID' || lane === 'BOT') return lane;
+  const text = String(event.narration || '');
+  return /\bTOP\b/.test(text) ? 'TOP' : /\bBOT\b/.test(text) ? 'BOT' : 'MID';
+}
+
+/**
+ * The chance blue wins from here, read off one timeline sample.
+ *
+ * Not a guess and not the engine's own state: a logistic fitted to tens of thousands
+ * of finished matches from this engine (packages/sim/fit-winchance.mjs), on what every
+ * result has carried since 1.0.0 — the gold lead, the structures still standing, and
+ * the two squads' ratings and drafts — so it draws for old results too. The weight of a
+ * gold lead and of a fallen turret both change over a game; they are interpolated
+ * between fitted knots in minutes.
+ */
+export const WIN_MODEL = {
+  // Fitted on 10000 matches of sim 1.1.0; calibrated within two points in every decile
+  // from 10% to 90%. Past twenty minutes the turrets carry what the gold lead says.
+  knots: [0, 10, 20, 30, 40, 55],
+  rating: 0.022,
+  comp: 0.0229,
+  gold: [0.0919, 0.0648, 0, 0, 0, 0.2106],
+  structures: [0.1755, 0.1182, 0.2702, 0.2806, 0.2551, 0.028],
+};
+
+const knotWeights = (minutes) => {
+  const k = WIN_MODEL.knots;
+  const w = k.map(() => 0);
+  if (minutes <= k[0]) { w[0] = 1; return w; }
+  for (let i = 1; i < k.length; i++) {
+    if (minutes <= k[i]) {
+      const f = (minutes - k[i - 1]) / (k[i] - k[i - 1]);
+      w[i - 1] = 1 - f;
+      w[i] = f;
+      return w;
+    }
+  }
+  w[k.length - 1] = 1;
+  return w;
+};
+
+/** The features the model reads from a result as a whole: the squads going in. */
+export function winPriors(result) {
+  const rows = result?.boxScore || [];
+  const mean = (team) => {
+    const side = rows.filter((r) => r.team === team && Number.isFinite(r.effRating));
+    return side.length ? side.reduce((n, r) => n + r.effRating, 0) / side.length : 0;
+  };
+  const comp = (team) => Number(result?.composition?.[team]?.modifier) || 1;
+  return {
+    rating: mean('BLUE') - mean('RED'),
+    comp: (comp('blue') - comp('red')) * 100,
+  };
+}
+
+/** The feature vector for one sample; shared by the screen and the fitting script. */
+export function winFeatures(priors, sample) {
+  const minutes = (sample?.t || 0) / 60;
+  const w = knotWeights(minutes);
+  const gold = (sample?.goldDiff || 0) / 1000;
+  const s = sample?.structures;
+  const structures = s ? (s.blue ?? 0) - (s.red ?? 0) : 0;
+  return [priors.rating, priors.comp, ...w.map((x) => x * gold), ...w.map((x) => x * structures)];
+}
+
+export function winChance(priors, sample, model = WIN_MODEL) {
+  const f = winFeatures(priors, sample);
+  const coef = [model.rating, model.comp, ...model.gold, ...model.structures];
+  const z = f.reduce((n, x, i) => n + x * (coef[i] || 0), 0);
+  return 1 / (1 + Math.exp(-z));
 }
 
 /** The score, gold difference and live buffs at time t, for the scoreboard. */
