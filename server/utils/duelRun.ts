@@ -520,6 +520,9 @@ async function finish(db: SupabaseClient, duel: any, actions: LockedAction[]) {
           effRating: ratingFor(card, championKey, slot, roles),
           chemistry: chem.byRole?.[slot]?.bonus ?? 0,
           subStats: card?.subStats ?? {},
+          // Carried into the box score so the result can say who played far off their pool.
+          ovr: card?.ovr ?? null,
+          mastery: card ? (card.pool?.[championKey] ?? 0) : null,
         };
       }),
     };
