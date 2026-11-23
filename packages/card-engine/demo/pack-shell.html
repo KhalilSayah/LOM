@@ -81,7 +81,8 @@ body::before {
   color: var(--accent);
 }
 
-.scene-host { margin: 0 -8px; }
+.scene-host { margin: 0 -8px; height: min(86vh, 760px); position: relative; }
+.scene-host .lom-pack-scene { position: absolute; }
 
 /* the phase rail: what the state machine is doing, as it does it */
 .rail {
@@ -182,7 +183,7 @@ body::before {
 <script>
 //@ENGINE@
 
-const PHASES = ['idle', 'armed', 'charge', 'tear', 'rise', 'flip', 'done'];
+const PHASES = ['drop', 'armed', 'tearing', 'out', 'tell', 'flip', 'done'];
 
 const rail = document.getElementById('rail');
 rail.innerHTML = PHASES.map((p) => `<span data-p="${p}">${p}</span>`).join('');
@@ -208,9 +209,9 @@ function say(text) {
 const card = SAMPLE_CARDS.find((c) => c.cardKey === 'faker-2016') || SAMPLE_CARDS[0];
 
 const pack = mountPack(document.getElementById('scene'), card, {
-  label: 'Icon pack',
+  packType: 'LEGACY',
   onPhase: paintRail,
-  onKeep: (c) => say(`${c.playerName} ${c.season} added`),
+  onKeep: ([c]) => say(`${c.playerName} ${c.season} added`),
 });
 
 paintRail(pack.phase);

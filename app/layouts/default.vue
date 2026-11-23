@@ -72,7 +72,7 @@ watch(unseenGifts, (list) => {
   playSound('gift');
   markSeen([list[0]!.id]);
   announcement.value = '';
-  nextTick(() => { announcement.value = `Gift: ${list[0]!.title}. Open it from Home or the shop.`; });
+  nextTick(() => { announcement.value = `Gift: ${list[0]!.title}. Open it from the shop.`; });
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.value = null; }, 12000);
 }, { immediate: true });
@@ -81,7 +81,8 @@ onBeforeUnmount(() => clearTimeout(toastTimer));
 
 const battleTo = computed(() => (liveDuelId.value ? `/duel/${liveDuelId.value}` : '/duels'));
 const battleCount = computed(() => incoming.value || drafting.value || 0);
-const homeDot = computed(() => packReady.value || giftsWaiting.value > 0 || questsReady.value > 0);
+// Home shows the daily pack and the way to the shop, where gifts open. Quests live in the menu.
+const homeDot = computed(() => packReady.value || giftsWaiting.value > 0);
 
 /** A duel room is a full-screen place with its own way out; so is a reveal in progress. */
 const isFocus = computed(() => focus.value || route.path.startsWith('/duel/'));
@@ -162,8 +163,8 @@ async function leave() {
     </svg>
 
     <header v-if="user && !isFocus" class="appbar">
-      <NuxtLink class="logo" to="/pack" aria-label="LOM home">
-        <svg aria-hidden="true"><use href="#lom-logo" /></svg><b>LOM</b>
+      <NuxtLink class="logo" to="/pack" aria-label="LOM, League of Managers, home">
+        <svg aria-hidden="true"><use href="#lom-logo" /></svg><span class="logo__txt"><b>LOM</b><small>League of Managers</small></span>
       </NuxtLink>
 
       <nav class="deskNav" aria-label="Main">
@@ -205,7 +206,7 @@ async function leave() {
             aria-haspopup="true" :aria-expanded="menuOpen" aria-controls="navmenu"
             aria-label="Your account and more"
             @click="toggleMenu" @keydown="onMenuKey"
-          >{{ initial }}</button>
+          >{{ initial }}<span v-if="questsReady" class="avatar__dot" aria-hidden="true" /><span v-if="questsReady" class="sr-only">, quests ready to collect</span></button>
 
           <Transition name="menu">
             <nav
@@ -218,7 +219,7 @@ async function leave() {
               <ul>
                 <li v-for="item in MENU" :key="item.to">
                   <NuxtLink :to="item.to" @click="closeMenu()">
-                    <span>{{ item.label }}</span><small class="faint">{{ item.hint }}</small>
+                    <span>{{ item.label }}<i v-if="item.to === '/quests' && questsReady" class="count navmenu__count">{{ questsReady }}</i></span><small class="faint">{{ item.hint }}</small>
                   </NuxtLink>
                 </li>
               </ul>
@@ -360,6 +361,8 @@ button.avatar[aria-expanded='true'] { box-shadow: inset 0 0 0 1.5px var(--gold-2
   background: var(--bg-3);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
+.avatar__dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--gold-2); box-shadow: 0 0 0 2px var(--bg-0); }
+.navmenu__count { margin-left: 8px; font-style: normal; }
 .navmenu__who { display: grid; gap: 1px; margin: 0; padding: 10px 12px 12px; border-bottom: 1px solid var(--line-1); }
 .navmenu__who b { font-size: 15px; font-weight: 720; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navmenu__who span { font-size: 12.5px; }

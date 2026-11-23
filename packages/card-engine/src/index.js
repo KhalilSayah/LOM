@@ -18,3 +18,5 @@ export {
   FILTER_DEFAULTS, readFilters, filtersToQuery, activeFilterCount, applyFilters, filterOptions,
 } from './collection.js';
 export { createPack, mountPack } from './pack.js';
+export { PACK_THEMES, packTheme } from './pack-art.js';
+export { packCover, COVER_SIZE } from './pack-foil.js';
