@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Slot } from '~~/shared/draft';
+import { championKey as canonicalKey } from '~~/packages/card-engine/src/champions.js';
 
 /**
  * Which lane each champion actually belongs to, derived from the catalogue.
@@ -12,6 +13,10 @@ import type { Slot } from '~~/shared/draft';
  * docs/03 section 7 already specifies the rule: a champion is flex in a role when at least
  * 10% of professional games on it were played there. That is what this computes, over every
  * card in the pinned catalogue version.
+ *
+ * Keys are canonical Data Dragon ids (champions.js), so the old seed's "Wukong" and
+ * "MonkeyKing" — one champion stored under two keys — are counted as the one champion they
+ * are, and a lookup by either finds it.
  *
  * Cached per catalogue version in module scope. A catalogue is immutable once published
  * (docs/03 section 9), so there is nothing to invalidate.
@@ -44,6 +49,9 @@ export async function championRoles(
       .from('card_champion_pool')
       .select('champion_key, games, card_definitions!inner(role, catalogue_version_id)')
       .eq('card_definitions.catalogue_version_id', catalogueVersionId)
+      // A stable order, or pages can repeat rows and skip others.
+      .order('card_definition_id')
+      .order('champion_key')
       .range(from, from + 999);
 
     if (error) throw error;
@@ -52,8 +60,10 @@ export async function championRoles(
     for (const row of data as any[]) {
       const role = row.card_definitions?.role as Slot | null;
       if (!role) continue;
-      if (!totals.has(row.champion_key)) totals.set(row.champion_key, new Map());
-      const byRole = totals.get(row.champion_key)!;
+      const key = canonicalKey(row.champion_key);
+      if (!key) continue;
+      if (!totals.has(key)) totals.set(key, new Map());
+      const byRole = totals.get(key)!;
       byRole.set(role, (byRole.get(role) || 0) + (Number(row.games) || 0));
     }
     if (data.length < 1000) break;
@@ -89,7 +99,7 @@ export async function championRoles(
  * landing on the player, and docs/03 is consistent that unmeasured must not mean bad.
  */
 export function roleForFit(roles: Map<string, ChampionRoles>, championKey: string, slot: Slot): Slot {
-  const entry = roles.get(championKey);
+  const entry = roles.get(canonicalKey(championKey));
   if (!entry) return slot;
   return entry.flex.has(slot) ? slot : entry.primary;
 }

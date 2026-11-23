@@ -6,20 +6,37 @@ const emit = defineEmits<{ (e: 'revealed'): void; (e: 'kept'): void; (e: 'phase'
 
 const host = ref<HTMLElement | null>(null);
 let pack: any = null;
+let autoTimer: ReturnType<typeof setTimeout> | undefined;
 
+/**
+ * Auto-open waits for the scene to say it is armed, rather than guessing a delay.
+ *
+ * The scene arms itself two animation frames after it is built, and animation frames do not
+ * run in a background tab while timers still do. A fixed timer could therefore fire first,
+ * find the pack not yet armed, do nothing, and leave the reveal waiting for a tap nobody was
+ * told to make. Opening off the `armed` phase cannot lose that race.
+ */
 onMounted(() => {
   if (!host.value) return;
   pack = createPack(props.card, {
     label: props.label || 'Daily pack',
-    onPhase: (phase: string) => emit('phase', phase),
+    onPhase: (phase: string) => {
+      emit('phase', phase);
+      if (phase === 'armed' && props.autoOpen) {
+        clearTimeout(autoTimer);
+        autoTimer = setTimeout(() => pack?.open(), 260);
+      }
+    },
     onReveal: () => emit('revealed'),
     onKeep: () => emit('kept'),
   });
   host.value.appendChild(pack.el);
-  if (props.autoOpen) requestAnimationFrame(() => setTimeout(() => pack.open(), 260));
 });
 
-onBeforeUnmount(() => pack?.destroy?.());
+onBeforeUnmount(() => {
+  clearTimeout(autoTimer);
+  pack?.destroy?.();
+});
 
 defineExpose({ open: () => pack?.open() });
 </script>

@@ -1,7 +1,9 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { leagueByCode, membersOf, shapeLeague } from '~~/server/utils/league';
-import { MAX_MANAGERS } from '~~/shared/league';
+import {
+  leagueByCode, membersOf, shapeLeague, assertLeagueRoom, defaultTeamName,
+} from '~~/server/utils/league';
+import { MAX_MANAGERS, cleanTeamName } from '~~/shared/league';
 
 /**
  * Join a league with an invite code.
@@ -10,9 +12,11 @@ import { MAX_MANAGERS } from '~~/shared/league';
  * a way in the moment the season starts: a league that has begun playing cannot take
  * a seventh manager on day 4 without invalidating every fixture already generated.
  *
- * The count check here is for the message. The rule is the trigger in
- * supabase/migrations/0009_leagues.sql, because two people tapping the same invite
- * link at the same moment would both read a count of five.
+ * The checks here are for the message. The rules are the trigger in
+ * supabase/migrations/0016_league_fair_play.sql, which takes a lock on the league row
+ * before it counts: two people tapping the same invite link at the same moment would
+ * both read a count of five, and a join racing the owner's Start season would both see
+ * FORMING. The trigger sees them in order.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -42,11 +46,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: `${league.name} is full (${MAX_MANAGERS} managers).` });
   }
 
-  const { data: profile } = await db
-    .from('profiles').select('handle, display_name').eq('id', profileId).maybeSingle();
+  // The same cap as hosting: a league you join is as many evenings as one you host.
+  await assertLeagueRoom(db, profileId);
 
-  const asked = String(body?.teamName ?? '').trim();
-  const teamName = (asked || profile?.display_name || profile?.handle || 'Manager').slice(0, 24);
+  // Typed, else the profile's own team name, display name, then handle.
+  const teamName = cleanTeamName(body?.teamName) ?? await defaultTeamName(db, profileId);
 
   const { error } = await db.from('league_members').insert({
     league_id: league.id,
@@ -55,10 +59,13 @@ export default defineEventHandler(async (event) => {
   });
 
   if (error) {
-    // The cap trigger raises check_violation with this message; the unique index on
+    // The trigger raises check_violation with these messages; the unique index on
     // (league_id, profile_id) is 23505 and means somebody double-tapped.
     if (error.message?.includes('league_full')) {
       throw createError({ statusCode: 409, statusMessage: `${league.name} filled up while you were joining.` });
+    }
+    if (error.message?.includes('league_closed')) {
+      throw createError({ statusCode: 409, statusMessage: `${league.name} started its season while you were joining.` });
     }
     if (error.code !== '23505') {
       throw createError({ statusCode: 500, statusMessage: error.message });

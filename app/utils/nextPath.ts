@@ -17,8 +17,8 @@ export function safeNext(raw: unknown, fallback = '/pack'): string {
 
   if (!path.startsWith('/')) return fallback;
   if (path.startsWith('//') || path.startsWith('/\\')) return fallback;
-  // The door itself, and the confirm screen, would bounce straight back here.
-  if (path === '/' || path.startsWith('/confirm')) return fallback;
+  // The door itself, and the confirm and reset screens, would bounce straight back here.
+  if (path === '/' || path.startsWith('/?') || path.startsWith('/confirm') || path.startsWith('/reset')) return fallback;
 
   return path;
 }

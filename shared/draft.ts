@@ -145,3 +145,40 @@ export const bansOf = (actions: LockedAction[], side: Side): LockedAction[] =>
 
 export const picksOf = (actions: LockedAction[], side: Side): LockedAction[] =>
   actions.filter((a) => a.side === side && a.kind === 'PICK');
+
+/**
+ * What comes after the current step, said the way a caster would say it.
+ *
+ * The 20-step order is the one thing in a draft a newcomer cannot see coming — red picks
+ * twice in a row, blue gets two at the end of the first round — and a bar of coloured ticks
+ * does not tell you that. This turns the order into "Next: Red ×2" and "your next action is
+ * in 3 steps", which is what you actually plan around.
+ */
+export interface Upcoming {
+  /** The run of steps right after the current one: same side, same kind. */
+  next: { side: Side; kind: ActionKind; count: number } | null;
+  /** Steps from the current one to this side's next action. 0 when it is this side's turn now. */
+  stepsUntilMine: number | null;
+}
+
+export function upcoming(turn: number, side: Side | null | undefined): Upcoming {
+  const after = DRAFT_ORDER.slice(turn + 1);
+  let next: Upcoming['next'] = null;
+  if (after.length) {
+    const head = after[0]!;
+    let count = 0;
+    for (const s of after) {
+      if (s.side !== head.side || s.kind !== head.kind) break;
+      count++;
+    }
+    next = { side: head.side, kind: head.kind, count };
+  }
+
+  let stepsUntilMine: number | null = null;
+  if (side) {
+    for (let i = turn; i < DRAFT_LENGTH; i++) {
+      if (DRAFT_ORDER[i]!.side === side) { stepsUntilMine = i - turn; break; }
+    }
+  }
+  return { next, stepsUntilMine };
+}

@@ -17,6 +17,8 @@
  * See docs/11-card-assets-and-caching.md for the sizes and the storage layout.
  */
 
+// The one place the app names a Data Dragon version. Only the square icons are versioned;
+// pages ask squareUrl() for them rather than building the URL, so a patch bump is one edit.
 export const DDRAGON_VERSION = { current: '16.22.1' };
 
 /**
@@ -32,45 +34,13 @@ export const ART_VARIANTS = {
 };
 
 /**
- * Data Dragon ids that stripping punctuation off the display name does NOT produce.
- *
- * Every image on the CDN is filed under Riot's champion `id`, and for 164 of the 173
- * champions that id is just the display name with the spaces and punctuation taken out:
- * "Lee Sin" -> "LeeSin", "Rek'Sai" -> "RekSai", "K'Sante" -> "KSante". For the nine below
- * it is not. Riot folded the letter after the apostrophe back to lower case in some names
- * and kept it capital in others, with no rule behind which — so "Kha'Zix" is `Khazix`
- * while "Kog'Maw" is `KogMaw`. Three more are renames the ids never followed.
- *
- * Getting this wrong is silent: the URL is well formed, the CDN answers 403, and the card
- * falls back to generated art, so the champion simply never shows a picture. Keyed lower case so
- * the lookup catches both the display name ("Cho'Gath") and any key already derived from
- * it the old way ("ChoGath"), which is what makes rows already in the database render.
+ * Champion ids live in champions.js, which the pipeline scripts and the server import too:
+ * one table for "Kai'Sa" -> Kaisa, "Wukong" -> MonkeyKing and back. Re-exported here
+ * because this is where callers have always found championKey().
  */
-export const DDRAGON_IDS = {
-  belveth: 'Belveth',        // Bel'Veth
-  chogath: 'Chogath',        // Cho'Gath
-  kaisa: 'Kaisa',            // Kai'Sa
-  khazix: 'Khazix',          // Kha'Zix
-  velkoz: 'Velkoz',          // Vel'Koz
-  leblanc: 'Leblanc',        // LeBlanc — the capital B is in the name, not the id
-  wukong: 'MonkeyKing',      // renamed in 2011; the id never was
-  monkeyking: 'MonkeyKing',
-  nunuwillump: 'Nunu',       // "Nunu & Willump" since 2018
-  nunu: 'Nunu',
-  renataglasc: 'Renata',     // shipped as "Renata", named "Renata Glasc"
-  renata: 'Renata',
-};
+import { championKey, DDRAGON_IDS } from './champions.js';
 
-/**
- * Display name or loose key -> the Data Dragon id the CDN files art under.
- * "Lee Sin" -> "LeeSin", "Kai'Sa" -> "Kaisa". Idempotent, so passing an id through again
- * is safe: everything the pipeline, the database and the asset layer hand around is run
- * through this, and the only names that change are the nine in DDRAGON_IDS.
- */
-export function championKey(name) {
-  const stripped = String(name || '').replace(/[^A-Za-z0-9]/g, '');
-  return DDRAGON_IDS[stripped.toLowerCase()] || stripped;
-}
+export { championKey, DDRAGON_IDS };
 
 const ddragon = {
   /**

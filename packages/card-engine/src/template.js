@@ -41,7 +41,7 @@ function champIcon(c, cls) {
   if (!url) {
     return `<span class="${cls} ${cls}--letter">${esc(c.champion.slice(0, 1))}</span>`;
   }
-  return `<span class="${cls}"><img src="${esc(url)}" alt="" loading="lazy" decoding="async"></span>`;
+  return `<span class="${cls}"><img src="${esc(url)}" alt="" loading="lazy" decoding="async" data-champion="${esc(c.champion)}"></span>`;
 }
 
 /** Front pool entry: the champion square with its mastery in the corner. */
@@ -89,18 +89,22 @@ function artLayers(card, variant) {
 
 /**
  * @param {object} card
- * @param {{compact?:boolean}} [opts] compact drops the meters, pool and footer for the
- *   collection grid, where below ~150px they are noise. Same markup, same code path.
+ * @param {{compact?:boolean, lite?:boolean, interactive?:boolean}} [opts]
+ *   compact drops the meters, pool and footer for the collection grid, where below ~150px
+ *   they are noise — they are left out of the markup, not just hidden.
+ *   lite also leaves out the back face and the foil, sparkle and glare layers: a grid tile
+ *   nobody can turn over or tilt does not need to carry them. See createCard().
  * @returns {string}
  */
 export function cardHtml(card, opts = {}) {
   const theme = RARITY_THEMES[card.rarity] || RARITY_THEMES.COMMON;
   const pool = card.championPool || [];
   const compact = opts.compact === true;
+  const lite = opts.lite === true;
   const art = artLayers(card, compact ? 'thumb' : 'card');
 
   // Two columns of six: label, value, and a meter rule that encodes the same number.
-  const stats = SUB_STATS.map(([key, label, short]) => `
+  const stats = compact ? '' : SUB_STATS.map(([key, label, short]) => `
     <li class="lom-stat">
       <span class="lom-stat__label" title="${label}">${short}</span>
       <span class="lom-stat__val">${card.subStats[key]}</span>
@@ -109,7 +113,7 @@ export function cardHtml(card, opts = {}) {
 
   // The back is for reading, so it carries less and carries it large: the four champions
   // that make the card, as bars you can read across a table, and four season numbers.
-  const backPool = pool.slice(0, 4).map((c) => `
+  const backPool = lite ? '' : pool.slice(0, 4).map((c) => `
     <li class="lom-back__pool-row">
       ${champIcon(c, 'lom-back__icon')}
       <span class="lom-back__pool-name">${esc(c.champion)}<small>${c.games} games</small></span>
@@ -124,7 +128,50 @@ export function cardHtml(card, opts = {}) {
     ? `<span class="lom-art__champ">${esc(card.artChampion)}</span>`
     : '';
 
-  return `<article class="lom-card${compact ? ' lom-card--compact' : ''}" data-rarity="${card.rarity}" data-foil="${theme.foil}"
+  const detail = compact ? '' : `
+          <ul class="lom-stats">${stats}</ul>
+
+          <ul class="lom-pool">${pool.slice(0, 4).map(poolTile).join('')}</ul>
+
+          <footer class="lom-foot">
+            <span class="lom-foot__rarity"><span class="lom-gem lom-gem--${String(card.rarity).toLowerCase()}" aria-hidden="true"></span>${theme.label}</span>
+            <span class="lom-foot__key">${esc(card.cardKey)}</span>
+            <span class="lom-foot__mark">LOM</span>
+          </footer>`;
+
+  const effects = lite ? '' : `
+      <div class="lom-card__foil" aria-hidden="true"></div>
+      <div class="lom-card__sparkle" aria-hidden="true"></div>
+      <div class="lom-card__glare" aria-hidden="true"></div>`;
+
+  const back = lite ? '' : `
+    <div class="lom-card__face lom-card__face--back">
+      <div class="lom-card__plate"></div>
+      <div class="lom-back">
+        <header class="lom-back__head">
+          <div>
+            <h3 class="lom-back__title">${esc(card.playerName)}</h3>
+            <p class="lom-back__sub">${esc(card.team)} · ${esc(card.region)}</p>
+          </div>
+          <span class="lom-back__year">${card.season}</span>
+        </header>
+
+        <div class="lom-back__row">
+          <span class="lom-back__ovr"><b>${card.ovr}</b><i>${esc(card.role)}</i></span>
+          <span class="lom-back__depth"><b>${deepCount}</b><i>champions<br>at 70+</i></span>
+        </div>
+
+        <h4 class="lom-back__h">Signature pool</h4>
+        <ul class="lom-back__pool">${backPool}</ul>
+
+        <dl class="lom-back__grid">${backSeason}</dl>
+
+        <p class="lom-back__prov">${esc(card.provenance || '')}</p>
+      </div>
+      <div class="lom-card__glare" aria-hidden="true"></div>
+    </div>`;
+
+  return `<article class="lom-card${compact ? ' lom-card--compact' : ''}${lite ? ' lom-card--lite' : ''}" data-rarity="${card.rarity}" data-foil="${theme.foil}"
     style="${themeVars(card.rarity)}"${opts.interactive === false ? '' : ' tabindex="0"'}
     aria-label="${esc(card.playerName)} ${card.season}, ${theme.label} card, overall ${card.ovr}">
   <div class="lom-card__inner">
@@ -152,50 +199,13 @@ export function cardHtml(card, opts = {}) {
             <span class="lom-season">${card.season}</span>
           </div>
 
-          <ul class="lom-stats">${stats}</ul>
-
-          <ul class="lom-pool">${pool.slice(0, 4).map(poolTile).join('')}</ul>
-
-          <footer class="lom-foot">
-            <span class="lom-foot__rarity"><span class="lom-gem lom-gem--${String(card.rarity).toLowerCase()}" aria-hidden="true"></span>${theme.label}</span>
-            <span class="lom-foot__key">${esc(card.cardKey)}</span>
-            <span class="lom-foot__mark">LOM</span>
-          </footer>
+${detail}
         </div>
 
       </div>
-
-      <div class="lom-card__foil" aria-hidden="true"></div>
-      <div class="lom-card__sparkle" aria-hidden="true"></div>
-      <div class="lom-card__glare" aria-hidden="true"></div>
+${effects}
     </div>
-
-    <div class="lom-card__face lom-card__face--back">
-      <div class="lom-card__plate"></div>
-      <div class="lom-back">
-        <header class="lom-back__head">
-          <div>
-            <h3 class="lom-back__title">${esc(card.playerName)}</h3>
-            <p class="lom-back__sub">${esc(card.team)} · ${esc(card.region)}</p>
-          </div>
-          <span class="lom-back__year">${card.season}</span>
-        </header>
-
-        <div class="lom-back__row">
-          <span class="lom-back__ovr"><b>${card.ovr}</b><i>${esc(card.role)}</i></span>
-          <span class="lom-back__depth"><b>${deepCount}</b><i>champions<br>at 70+</i></span>
-        </div>
-
-        <h4 class="lom-back__h">Signature pool</h4>
-        <ul class="lom-back__pool">${backPool}</ul>
-
-        <dl class="lom-back__grid">${backSeason}</dl>
-
-        <p class="lom-back__prov">${esc(card.provenance || '')}</p>
-      </div>
-      <div class="lom-card__glare" aria-hidden="true"></div>
-    </div>
-
+${back}
   </div>
 </article>`;
 }

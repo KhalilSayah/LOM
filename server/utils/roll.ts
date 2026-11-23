@@ -33,6 +33,12 @@ export const BAND_WEIGHTS: Array<[Rarity, number]> = [
 /** Pity thresholds, per docs/02 section 5.2. */
 export const PITY = { legendary: 40, icon: 150 };
 
+/** When the Legendary guarantee pays out, the share of the time it pays an Icon instead. */
+export const PITY_ICON_SHARE = 0.12;
+
+/** The share of slots (outside one-per-lane packs) aimed at the manager's thinnest role. */
+export const ROLE_BIAS = 0.3;
+
 const ORDER: Rarity[] = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON'];
 const ROLES = ['TOP', 'JNG', 'MID', 'BOT', 'SUP'];
 
@@ -43,7 +49,7 @@ export function rollBand(rng: () => number, pity: { since_legendary: number; sin
   if (pity.since_icon >= PITY.icon - 1) return { band: 'ICON', forcedBy: 'icon-pity' };
   if (pity.since_legendary >= PITY.legendary - 1) {
     // Guaranteed Legendary *or better*, which is what "Legendary+" means.
-    return { band: rng() < 0.12 ? 'ICON' : 'LEGENDARY', forcedBy: 'legendary-pity' };
+    return { band: rng() < PITY_ICON_SHARE ? 'ICON' : 'LEGENDARY', forcedBy: 'legendary-pity' };
   }
 
   const total = BAND_WEIGHTS.reduce((n, [, w]) => n + w, 0);
@@ -189,7 +195,7 @@ export async function rollOpening(opts: {
   for (let slot = 0; slot < pack.slots; slot++) {
     const role = pack.one_per_role
       ? (ROLES[slot % ROLES.length] ?? null)
-      : (rng() < 0.3 ? thinnestRole(owned.map((o) => ({ role: o.card_definitions?.role ?? null }))) : null);
+      : (rng() < ROLE_BIAS ? thinnestRole(owned.map((o) => ({ role: o.card_definitions?.role ?? null }))) : null);
 
     let forcedBy: Pick['forcedBy'] = null;
     let band: Rarity;
@@ -200,7 +206,7 @@ export async function rollOpening(opts: {
       band = 'ICON';
       forcedBy = 'icon-pity';
     } else if (pity.since_legendary >= PITY.legendary - 1) {
-      band = rng() < 0.12 ? 'ICON' : 'LEGENDARY';
+      band = rng() < PITY_ICON_SHARE ? 'ICON' : 'LEGENDARY';
       forcedBy = 'legendary-pity';
     } else {
       band = bandFromWeights(rng, pack.weights, pack.max_band);

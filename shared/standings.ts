@@ -192,3 +192,111 @@ export function standings(
   out.forEach((row, n) => { row.position = n + 1; });
   return out;
 }
+
+// --- reading one manager's season --------------------------------------------
+
+/**
+ * A decided fixture, as the per-manager readings below want it.
+ *
+ * `blueMemberId` and `redMemberId` are the sides as drafted — on a Ghost fixture the
+ * Ghost's side is null whichever it is (migration 0016 lets it be blue) — so "did they
+ * win" is a comparison of sides and nothing has to know the storage convention.
+ */
+export interface ResultFixture {
+  id: string;
+  stage: string;
+  status: string;
+  blueMemberId: string | null;
+  redMemberId: string | null;
+  winnerMemberId: string | null;
+  winnerSide: 'BLUE' | 'RED' | null;
+  /** When the engine ran. Falls back to the kick-off for rows from before 0010. */
+  playedAt: string | null;
+  scheduledAt: string | null;
+}
+
+export interface ManagerResult {
+  fixture: ResultFixture;
+  won: boolean;
+  side: 'BLUE' | 'RED';
+  /** Null against a Ghost. */
+  opponentId: string | null;
+}
+
+/** Stages that are a result between two managers: the table's, and the bracket's. */
+const RESULT_STAGES = new Set(['REGULAR', 'SEMI', 'GRAND_FINAL']);
+
+const playedTime = (f: ResultFixture) => f.playedAt || f.scheduledAt || '';
+
+/**
+ * Every decided match this manager played against another manager, newest first.
+ *
+ * Ghosts are left out for the same reason the table leaves them out (docs/01 section
+ * 6): a bye is not a result against anybody, and "form" that counts wins over the
+ * agent would flatter whoever drew the most of them.
+ */
+export function resultsFor(memberId: string, fixtures: ResultFixture[]): ManagerResult[] {
+  const out: ManagerResult[] = [];
+
+  for (const f of fixtures) {
+    if (f.status !== 'FINAL' || !RESULT_STAGES.has(f.stage) || !f.winnerSide) continue;
+    const side = f.blueMemberId === memberId ? 'BLUE' : f.redMemberId === memberId ? 'RED' : null;
+    if (!side) continue;
+    const opponentId = side === 'BLUE' ? f.redMemberId : f.blueMemberId;
+    if (!opponentId) continue;
+    out.push({ fixture: f, won: f.winnerSide === side, side, opponentId });
+  }
+
+  return out.sort((a, b) => playedTime(b.fixture).localeCompare(playedTime(a.fixture)));
+}
+
+/** The last `n` results as W and L, oldest first — the way form is read, left to right. */
+export function formOf(memberId: string, fixtures: ResultFixture[], n = 5): Array<'W' | 'L'> {
+  return resultsFor(memberId, fixtures).slice(0, n).reverse().map((r) => (r.won ? 'W' : 'L'));
+}
+
+/** Wins and losses for `a` against `b`, playoffs included. */
+export function headToHead(a: string, b: string, fixtures: ResultFixture[]) {
+  const games = resultsFor(a, fixtures).filter((r) => r.opponentId === b);
+  return {
+    played: games.length,
+    won: games.filter((r) => r.won).length,
+    lost: games.filter((r) => !r.won).length,
+  };
+}
+
+/**
+ * The results nobody saw coming.
+ *
+ * Regular season: the loser went in at least two wins clear of the winner, reading
+ * the table as it stood *before* that evening — "fifth beat first" is a story, and a
+ * story is about what everybody expected at the time, not what the final table says.
+ * One win is not enough: on day 2 half the league is a win behind somebody.
+ *
+ * Playoffs: the lower seed won. The better seed always drafts blue in the bracket
+ * (docs/01 section 3), so that is simply red winning.
+ */
+export function upsetIds(fixtures: ResultFixture[]): Set<string> {
+  const out = new Set<string>();
+  const points = new Map<string, number>();
+  const at = (id: string) => points.get(id) ?? 0;
+
+  const decided = fixtures
+    .filter((f) => f.status === 'FINAL' && f.winnerSide && f.blueMemberId && f.redMemberId)
+    .sort((a, b) => playedTime(a).localeCompare(playedTime(b)));
+
+  for (const f of decided) {
+    const winner = f.winnerSide === 'BLUE' ? f.blueMemberId! : f.redMemberId!;
+    const loser = f.winnerSide === 'BLUE' ? f.redMemberId! : f.blueMemberId!;
+
+    if (f.stage === 'REGULAR') {
+      if (at(loser) - at(winner) >= 2 * WIN_POINTS) out.add(f.id);
+      points.set(winner, at(winner) + WIN_POINTS);
+      points.set(loser, at(loser) + LOSS_POINTS);
+    } else if (f.stage === 'SEMI' || f.stage === 'GRAND_FINAL') {
+      if (f.winnerSide === 'RED') out.add(f.id);
+    }
+  }
+
+  return out;
+}

@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normaliseLeagueCode, roundRobin, seasonSchedule, matchDayCount,
-  MAX_MANAGERS,
+  normaliseLeagueCode, roundRobin, seasonSchedule, matchDayCount, seasonShape,
+  fixtureWindow, kickOffText, dayWord, dateLabel, cleanTeamName,
+  MAX_MANAGERS, FIXTURE_LOBBY_LEAD_SECONDS, FIXTURE_AUTOPLAY_AFTER_SECONDS,
 } from '../league.ts';
 
 /**
@@ -131,10 +132,51 @@ test('day indexes are 1..n with no gaps', () => {
   days.forEach((d, i) => assert.equal(d.dayIndex, i + 1));
 });
 
-test('a short season is truncated, not stretched', () => {
-  const days = seasonSchedule(ids(6), 4);
-  assert.equal(days.length, 4);
-  assert.equal(days[days.length - 1]!.rest, false);
+test('every size plays everyone at least twice, once from each side', () => {
+  // The season-length setting used to cut this off; now nothing can.
+  for (let n = 2; n <= MAX_MANAGERS; n++) {
+    const blueOf = new Map<string, number>();
+    for (const day of seasonSchedule(ids(n))) {
+      for (const p of day.pairings) {
+        if (!p.red) continue;
+        const key = `${p.blue}>${p.red}`;
+        blueOf.set(key, (blueOf.get(key) ?? 0) + 1);
+      }
+    }
+    for (const a of ids(n)) {
+      for (const b of ids(n)) {
+        if (a === b) continue;
+        assert.ok((blueOf.get(`${a}>${b}`) ?? 0) >= 1, `${n} managers: ${a} never had blue against ${b}`);
+      }
+    }
+  }
+});
+
+test('the Ghost does not always hand the manager first pick', () => {
+  for (const n of [3, 5]) {
+    const sides = new Map<string, { blue: number; red: number }>();
+    for (const day of seasonSchedule(ids(n))) {
+      for (const p of day.pairings) {
+        if (p.red) continue;
+        const s = sides.get(p.blue) ?? { blue: 0, red: 0 };
+        // ghostSide RED means the manager is blue.
+        if (p.ghostSide === 'BLUE') s.red += 1; else s.blue += 1;
+        sides.set(p.blue, s);
+      }
+    }
+    for (const [id, s] of sides) {
+      assert.ok(Math.abs(s.blue - s.red) <= 1, `${n} managers: ${id} Ghost sides ${s.blue}/${s.red}`);
+      assert.ok(s.red > 0, `${n} managers: ${id} always drafted first against the Ghost`);
+    }
+  }
+});
+
+test('the season shape is what the lobby promises', () => {
+  const six = seasonShape(6);
+  assert.equal(six.matchDays, 10);
+  assert.equal(six.totalDays, 14);
+  assert.equal(seasonShape(2).playoffDays, 1);
+  for (let n = 2; n <= MAX_MANAGERS; n++) assert.ok(seasonShape(n).meetings >= 2);
 });
 
 test('a league outside the size band is refused', () => {
@@ -146,8 +188,8 @@ test('a league outside the size band is refused', () => {
 
 test('a second season is the same calendar again, from day 1', () => {
   const ids = ['a', 'b', 'c', 'd'];
-  const first = seasonSchedule(ids, 14);
-  const second = seasonSchedule(ids, 14);
+  const first = seasonSchedule(ids);
+  const second = seasonSchedule(ids);
 
   /**
    * The same members get the same calendar, counted from day 1 — the generator has no
@@ -165,11 +207,55 @@ test('a second season is the same calendar again, from day 1', () => {
 
 test('a second season of a league that lost a manager is a smaller season, not a broken one', () => {
   // Somebody leaves between seasons. The calendar regenerates around who is left.
-  const before = seasonSchedule(['a', 'b', 'c', 'd'], 14);
-  const after = seasonSchedule(['a', 'b', 'c'], 14);
+  const before = seasonSchedule(['a', 'b', 'c', 'd']);
+  const after = seasonSchedule(['a', 'b', 'c']);
 
   assert.ok(matchDayCount(after) > 0);
   assert.notDeepEqual(before, after);
   // Three managers means a Ghost every round, and every one of them is somebody's fixture.
   assert.ok(after.filter((d) => !d.rest).every((d) => d.pairings.length > 0));
+});
+
+// --- kick-off ----------------------------------------------------------------
+
+test('the lobby opens early, the draft is held to kick-off, and a day late is overdue', () => {
+  const kick = Date.UTC(2026, 10, 21, 19, 30);
+  const iso = new Date(kick).toISOString();
+  assert.equal(fixtureWindow(iso, kick - FIXTURE_LOBBY_LEAD_SECONDS * 1000 - 1000).open, false);
+  const lobby = fixtureWindow(iso, kick - 60_000);
+  assert.equal(lobby.open, true);
+  assert.equal(lobby.started, false);
+  assert.equal(fixtureWindow(iso, kick + 1000).started, true);
+  assert.equal(fixtureWindow(iso, kick + FIXTURE_AUTOPLAY_AFTER_SECONDS * 1000 - 1).overdue, false);
+  assert.equal(fixtureWindow(iso, kick + FIXTURE_AUTOPLAY_AFTER_SECONDS * 1000).overdue, true);
+});
+
+test('a kick-off reads Today / Tomorrow on a 24-hour clock, never "tonight"', () => {
+  const now = Date.UTC(2026, 10, 21, 10, 0);
+  const noon = kickOffText(new Date(Date.UTC(2026, 10, 21, 11, 9)).toISOString(), { now, viewerTz: 'Europe/Paris', leagueTz: 'Europe/Paris' });
+  assert.equal(noon.text, 'Today 12:09');
+  assert.equal(noon.league, '');
+  const tomorrow = kickOffText(new Date(Date.UTC(2026, 10, 22, 19, 30)).toISOString(), { now, viewerTz: 'Europe/Paris' });
+  assert.equal(tomorrow.text, 'Tomorrow 20:30');
+});
+
+test('a viewer in another zone is shown the league clock too', () => {
+  const now = Date.UTC(2026, 10, 21, 10, 0);
+  const t = kickOffText(new Date(Date.UTC(2026, 10, 21, 19, 30)).toISOString(), {
+    now, viewerTz: 'America/Montreal', leagueTz: 'Europe/Paris',
+  });
+  assert.equal(t.text, 'Today 14:30');
+  assert.equal(t.league, '20:30 Paris time');
+});
+
+test('dates read like dates', () => {
+  const now = Date.UTC(2026, 10, 21, 10, 0);
+  assert.equal(dateLabel('2026-11-21', now), 'Sat 21 Nov');
+  assert.equal(dayWord(Date.UTC(2026, 10, 24, 19), now, 'UTC'), 'Tuesday');
+});
+
+test('team names are tidied', () => {
+  assert.equal(cleanTeamName('  T1   Fanclub '), 'T1 Fanclub');
+  assert.equal(cleanTeamName('   '), null);
+  assert.equal(cleanTeamName('x'.repeat(40))!.length, 24);
 });

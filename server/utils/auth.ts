@@ -36,11 +36,11 @@ export async function requireManager(event: H3Event): Promise<Manager> {
   return { id, email: claims?.email ?? null };
 }
 
-const handleBase = (email: string | null) => {
-  const local = (email || '').split('@')[0] || '';
-  const cleaned = local.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16);
-  return cleaned.length >= 3 ? cleaned : 'manager';
-};
+// Never the email: a handle is shown to everyone the manager plays, and the local part of an
+// address is often a full name. Same neutral placeholder as the 0020 signup trigger; the
+// manager picks a real name in the step after sign-up or in Settings.
+const handleBase = (_email: string | null) =>
+  `manager${String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')}`;
 
 /** Returns the profile id, creating the row if the signup trigger never ran for it. */
 export async function ensureProfile(db: SupabaseClient, manager: Manager): Promise<string> {
@@ -54,7 +54,7 @@ export async function ensureProfile(db: SupabaseClient, manager: Manager): Promi
 
   const base = handleBase(manager.email);
   for (let n = 0; n < 25; n++) {
-    const handle = n === 0 ? base : `${base.slice(0, 16)}${n}`;
+    const handle = n === 0 ? base : handleBase(null);
     const { error } = await db
       .from('profiles')
       .insert({ id: manager.id, handle, display_name: handle });
@@ -67,11 +67,12 @@ export async function ensureProfile(db: SupabaseClient, manager: Manager): Promi
     // 23505 is a unique violation: either the handle is taken, or the row appeared
     // underneath us from a concurrent request. Only the first is worth retrying.
     if (error.code !== '23505') {
-      throw createError({ statusCode: 500, statusMessage: `profile: ${error.message}` });
+      console.error(`[auth] could not create profile: ${error.message}`);
+      throw createError({ statusCode: 500, statusMessage: 'Your account could not be set up just now. Try again.' });
     }
     const { data: now } = await db.from('profiles').select('id').eq('id', manager.id).maybeSingle();
     if (now) return now.id;
   }
 
-  throw createError({ statusCode: 500, statusMessage: 'Could not allocate a handle' });
+  throw createError({ statusCode: 500, statusMessage: 'Your account could not be set up just now. Try again.' });
 }

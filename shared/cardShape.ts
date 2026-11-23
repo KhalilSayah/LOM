@@ -35,7 +35,12 @@ export interface CardRow {
   pool?: PoolRow[] | null;
 }
 
-export function toCard(row: CardRow) {
+/**
+ * `level` is the owned copy's, not the definition's: pass it wherever the card is a held
+ * one (roster, sandbox), so anything rating the card through @lom/core sees the same level the
+ * match does. A definition on its own is level 1.
+ */
+export function toCard(row: CardRow, level = 1) {
   const pool = (row.card_champion_pool || row.pool || [])
     .slice()
     .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
@@ -48,6 +53,7 @@ export function toCard(row: CardRow) {
     region: row.region ?? undefined,
     role: row.role ?? 'MID',
     ovr: row.ovr,
+    level: Math.max(1, Number(level) || 1),
     rarity: row.rarity,
     accolades: row.accolades || [],
     subStats: row.sub_stats,

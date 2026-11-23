@@ -27,7 +27,7 @@ const clock = (t) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Ma
 
 /** Events worth narrating at a glance, when --quiet trims the chatter. */
 const HEADLINE = new Set([
-  'FIRST_BLOOD', 'ACE', 'TOWER', 'INHIBITOR', 'NEXUS_TURRET', 'NEXUS',
+  'FIRST_BLOOD', 'MULTIKILL', 'ACE', 'TOWER', 'INHIBITOR', 'NEXUS_TURRET', 'NEXUS',
   'DRAGON', 'SOUL', 'ELDER', 'BARON', 'HERALD', 'TEAMFIGHT_END', 'SUDDEN_DEATH', 'GAME_END',
 ]);
 

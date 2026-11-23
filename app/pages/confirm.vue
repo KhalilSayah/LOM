@@ -24,9 +24,12 @@ function urlError(): string | null {
   const description = (q.error_description || hash.get('error_description')) as string | null;
   if (!code) return null;
   if (/expired/i.test(`${code} ${description}`)) {
-    return 'That link has expired. Sign in to have a new one sent.';
+    return 'That link has expired. Try signing in: if the account still needs confirming, '
+      + 'the sign-in screen will offer to send a fresh link.';
   }
-  return description ? String(description).replace(/\+/g, ' ') : 'That link could not be used.';
+  // Supabase's own description is written for developers ("Email link is invalid or has
+  // expired", "otp_expired"), so it is not shown as-is.
+  return 'That link could not be used. It may already have been used, or belong to an older email. Try signing in.';
 }
 
 // Where they were going before the sign-up detour — an invite link, usually. safeNext
@@ -48,7 +51,10 @@ onMounted(() => {
   // already used or belongs to another browser.
   setTimeout(() => { slow.value = true; }, 2500);
   setTimeout(() => {
-    if (!user.value) failed.value = 'This link did not sign you in. It may already have been used.';
+    if (!user.value) {
+      failed.value = 'This link did not sign you in. It may already have been used, or been '
+        + 'opened in a different browser from the one you signed up in. Try signing in.';
+    }
   }, 7000);
 });
 

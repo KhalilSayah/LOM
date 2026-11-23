@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rarityForOvr } from '../packages/card-engine/src/rarity.js';
-import { championKey } from '../packages/card-engine/src/assets.js';
+import { championKey, championName } from '../packages/card-engine/src/champions.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -95,7 +95,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 // Riot's own id for the champion, which is what the art CDN files pictures under. Nine
 // of them are not the display name with the punctuation removed, so this cannot be a
-// regex here; the art layer owns the list. See packages/card-engine/src/assets.js.
+// regex here; the card engine owns the list. See packages/card-engine/src/champions.js.
 const champKey = championKey;
 const bump = (map, key, by = 1) => map.set(key, (map.get(key) || 0) + by);
 const modal = (map) => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
@@ -1053,19 +1053,35 @@ function championPool(a) {
   const seasonMean = a.composites.length ? sum(a.composites) / a.composites.length : 0;
   const seasonSd = stdev(a.composites);
 
-  return [...a.champs.entries()]
+  // One champion, one row. A source can spell a champion two ways across a season
+  // ("Nunu" and "Nunu & Willump"), and two rows under one key would collide on the pool's
+  // primary key when the catalogue is pushed. Merge on the canonical id first.
+  const merged = new Map();
+  for (const [name, c] of a.champs) {
+    const key = champKey(name);
+    if (!key) continue;
+    const m = merged.get(key) || { name: championName(name), games: 0, wins: 0, composites: [] };
+    m.games += c.games;
+    m.wins += c.wins;
+    m.composites.push(...c.composites);
+    merged.set(key, m);
+  }
+
+  return [...merged.entries()]
     .filter(([, c]) => c.games >= 2)
     .sort((x, y) => y[1].games - x[1].games || x[0].localeCompare(y[0]))
     .slice(0, 15)
-    .map(([name, c], slot) => {
+    .map(([key, c], slot) => {
       const winrate = c.wins / c.games;
       const base = 100 * c.games / (c.games + 6);
       const wrAdj = (winrate - 0.5) * 40;
       const champMean = c.composites.length ? sum(c.composites) / c.composites.length : seasonMean;
       const perfAdj = seasonSd > 1e-9 ? clamp(((champMean - seasonMean) / seasonSd) * 8, -12, 12) : 0;
       return {
-        championKey: champKey(name),
-        championName: name,
+        championKey: key,
+        // The name as the same table spells it, so a source that writes "Nunu" or
+        // "Renata" still prints "Nunu & Willump" and "Renata Glasc" like everything else.
+        championName: c.name,
         games: c.games,
         winrate: Number(winrate.toFixed(3)),
         mastery: Math.round(clamp(base + wrAdj + perfAdj, 10, 100)),

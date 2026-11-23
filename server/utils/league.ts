@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { normaliseLeagueCode, seasonSchedule, MAX_MANAGERS, MIN_MANAGERS } from '~~/shared/league';
+import {
+  normaliseLeagueCode, seasonSchedule, seasonShape, cleanTeamName, MAX_MANAGERS, MIN_MANAGERS, MAX_LIVE_LEAGUES,
+  type DraftSide,
+} from '~~/shared/league';
 import { ROLES } from '~~/shared/roster';
 import { localNow, addDays, zonedToUtc } from './packDay';
 
@@ -152,6 +155,8 @@ export interface FixtureInsert {
   blue_member_id: string | null;
   red_member_id: string | null;
   scheduled_at: string | null;
+  /** GHOST rows only: which side the Ghost drafts from (migration 0016). */
+  ghost_side?: DraftSide | null;
 }
 
 /**
@@ -171,7 +176,7 @@ export function buildFixtures(
   members: MemberRow[],
   now = new Date(),
 ): FixtureInsert[] {
-  const days = seasonSchedule(members.map((m) => m.id), league.season_length_days);
+  const days = seasonSchedule(members.map((m) => m.id));
   const startsOn = firstMatchDate(league, now);
   const season = league.season ?? 1;
   const { hour, minute } = matchHourParts(league.match_hour);
@@ -206,6 +211,7 @@ export function buildFixtures(
         blue_member_id: pairing.blue,
         red_member_id: pairing.red,
         scheduled_at: at,
+        ...(pairing.red ? {} : { ghost_side: pairing.ghostSide ?? 'RED' }),
       });
     }
   }
@@ -272,7 +278,13 @@ export const shapeLeague = (league: LeagueRow, members: MemberRow[], profileId: 
   championMemberId: league.champion_member_id ?? null,
   timezone: league.timezone,
   matchHour: formatMatchHour(league.match_hour),
-  seasonLengthDays: league.season_length_days,
+  /**
+   * How long the season runs, from the number of managers (shared/league.ts
+   * `seasonShape`). The stored `season_length_days` is no longer read: a length
+   * setting that could cut a season short broke "everyone against everyone twice".
+   */
+  shape: seasonShape(members.length),
+  seasonLengthDays: seasonShape(members.length).totalDays,
   startsOn: league.starts_on,
   createdAt: league.created_at,
   startedAt: league.started_at,
@@ -286,3 +298,111 @@ export const shapeLeague = (league: LeagueRow, members: MemberRow[], profileId: 
    */
   inviteCode: league.status === 'FORMING' ? league.invite_code : null,
 });
+
+// --- the rules a form has to pass --------------------------------------------
+
+/** A timezone the runtime actually knows. An unknown one would throw at kick-off. */
+export function validTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** '20:30', or a 400 that says what one looks like. */
+export function requireMatchHour(raw: unknown): string {
+  const matchHour = String(raw ?? '').trim();
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(matchHour)) {
+    throw createError({ statusCode: 400, statusMessage: 'The match hour looks like 20:30.' });
+  }
+  return matchHour;
+}
+
+export function requireTimezone(raw: unknown, fallback = 'Europe/Paris'): string {
+  const timezone = String(raw ?? '').trim() || fallback;
+  if (!validTimezone(timezone)) {
+    throw createError({ statusCode: 400, statusMessage: `${timezone} is not a timezone this app knows.` });
+  }
+  return timezone;
+}
+
+/**
+ * How many leagues this manager is in that still ask something of them.
+ *
+ * Finished leagues do not count. The cap exists so nobody is committed to more
+ * evenings than a week has, and a finished league commits nobody to anything — it is
+ * an honours board. Counting it meant a manager who had won eight leagues could never
+ * join a ninth without leaving one they won.
+ */
+export async function liveLeagueCount(db: SupabaseClient, profileId: string): Promise<number> {
+  const { data, error } = await db
+    .from('league_members')
+    // The hint is load-bearing: two foreign keys join these tables (see list.get.ts).
+    .select('id, leagues!league_id ( status )')
+    .eq('profile_id', profileId);
+
+  if (error) throw createError({ statusCode: 500, statusMessage: error.message });
+  return ((data || []) as any[]).filter((row) => row.leagues && row.leagues.status !== 'FINISHED').length;
+}
+
+/** The hosting and joining cap, in the words a manager needs to hear. */
+export async function assertLeagueRoom(db: SupabaseClient, profileId: string) {
+  const live = await liveLeagueCount(db, profileId);
+  if (live >= MAX_LIVE_LEAGUES) {
+    throw createError({
+      statusCode: 409,
+      statusMessage: `You are in ${live} leagues that are still running. Finish or leave one first.`,
+    });
+  }
+}
+
+/**
+ * The seat name a manager gets when they did not type one.
+ *
+ * Their profile's own team name first (`profiles.team_name`, added by another
+ * migration that may not have been run yet), then their display name, then their
+ * handle. Read defensively: if the column does not exist the select fails, and the
+ * fallback asks again without it rather than failing a join over a nicety.
+ */
+export async function defaultTeamName(db: SupabaseClient, profileId: string): Promise<string> {
+  let profile: any = null;
+  const withTeam = await db
+    .from('profiles').select('handle, display_name, team_name').eq('id', profileId).maybeSingle();
+
+  if (withTeam.error) {
+    const plain = await db
+      .from('profiles').select('handle, display_name').eq('id', profileId).maybeSingle();
+    profile = plain.data;
+  } else {
+    profile = withTeam.data;
+  }
+
+  return cleanTeamName(profile?.team_name)
+    ?? cleanTeamName(profile?.display_name)
+    ?? cleanTeamName(profile?.handle)
+    ?? 'Manager';
+}
+
+// --- reading a fixture's sides -----------------------------------------------
+
+/**
+ * The two sides of a fixture as they are drafted, with the Ghost as null.
+ *
+ * A Ghost fixture stores its one manager in `blue_member_id` whichever side they draft
+ * from (0009's constraint), and `ghost_side` says where the Ghost actually sits
+ * (0016). Everything that asks "whose side is blue" — the calendar, a result, the
+ * room itself — reads it through here rather than learning the storage convention.
+ */
+export function draftedSides(f: {
+  stage: string;
+  blue_member_id: string | null;
+  red_member_id: string | null;
+  ghost_side?: string | null;
+}): { blue: string | null; red: string | null } {
+  if (f.stage === 'GHOST' && f.ghost_side === 'BLUE') {
+    return { blue: null, red: f.blue_member_id };
+  }
+  return { blue: f.blue_member_id, red: f.red_member_id };
+}

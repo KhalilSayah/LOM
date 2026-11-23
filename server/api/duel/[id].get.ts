@@ -2,6 +2,8 @@ import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
 import { stepAt, DRAFT_ORDER, DRAFT_LENGTH } from '~~/shared/draft';
 import { loadActions, catchUp, draftPool, sideOf, botActsAt } from '~~/server/utils/duelRun';
+import { compositionView } from '~~/server/utils/duel';
+import { championRoles } from '~~/server/utils/championRoles';
 import { rewardFor } from '~~/server/utils/rewards';
 
 /**
@@ -25,6 +27,9 @@ import { rewardFor } from '~~/server/utils/rewards';
  *
  * The champion pool is only sent when asked for. It is ~172 entries that never change during
  * a draft, and shipping it on every resync would be silly.
+ *
+ * The seed is never sent, and since migration 0015 a client cannot read it either: it
+ * decides the agent's picks and the match, so knowing it is knowing the result.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -41,7 +46,48 @@ export default defineEventHandler(async (event) => {
     .maybeSingle();
 
   if (!duel) throw createError({ statusCode: 404, statusMessage: 'No such duel.' });
-  if (duel.challenger_id !== profileId && duel.opponent_id !== profileId) {
+  const isParticipant = duel.challenger_id === profileId || duel.opponent_id === profileId;
+
+  /**
+   * A league fixture belongs to the league, not only to the two managers in it. Its team
+   * names come from the seats, and once the match has been played any member of that league
+   * may watch it — a table you cannot click through to the games is a table of rumours.
+   * A draft in progress stays private to the two managers.
+   */
+  let fixture: { id: string; leagueId: string; blueReady: boolean; redReady: boolean } | null = null;
+  let teamNames: { BLUE: string; RED: string } | null = null;
+  let spectating = false;
+  if (duel.source === 'LEAGUE') {
+    let fx: any = null;
+    const withReady = await db.from('league_fixtures')
+      .select('id, league_id, blue_member_id, red_member_id, blue_ready_at, red_ready_at')
+      .eq('duel_id', duel.id).maybeSingle();
+    if (withReady.error) {
+      // Migration 0016 not run yet: the ready columns do not exist.
+      const plain = await db.from('league_fixtures')
+        .select('id, league_id, blue_member_id, red_member_id')
+        .eq('duel_id', duel.id).maybeSingle();
+      fx = plain.data;
+    } else {
+      fx = withReady.data;
+    }
+    if (fx) {
+      const seatIds = [fx.blue_member_id, fx.red_member_id].filter(Boolean);
+      const [{ data: seats }, { data: mine }] = await Promise.all([
+        seatIds.length
+          ? db.from('league_members').select('id, team_name').in('id', seatIds)
+          : Promise.resolve({ data: [] as any[] }),
+        db.from('league_members').select('id').eq('league_id', fx.league_id).eq('profile_id', profileId).maybeSingle(),
+      ]);
+      const seatName = (memberId: string | null) =>
+        (seats || []).find((m: any) => m.id === memberId)?.team_name ?? 'The agent';
+      teamNames = { BLUE: seatName(fx.blue_member_id), RED: seatName(fx.red_member_id) };
+      fixture = { id: fx.id, leagueId: fx.league_id, blueReady: Boolean(fx.blue_ready_at), redReady: Boolean(fx.red_ready_at) };
+      spectating = !isParticipant && Boolean(mine) && (duel.status === 'WATCHING' || duel.status === 'COMPLETE');
+    }
+  }
+
+  if (!isParticipant && !spectating) {
     throw createError({ statusCode: 403, statusMessage: 'That duel is not yours.' });
   }
 
@@ -50,6 +96,7 @@ export default defineEventHandler(async (event) => {
 
   const side = sideOf(duel, profileId);
   const step = duel.status === 'DRAFTING' ? stepAt(duel.turn) : null;
+  const theirSide = side === 'BLUE' ? 'RED' : side === 'RED' ? 'BLUE' : null;
 
   /**
    * Who the opponent is, or that there is not one.
@@ -64,17 +111,48 @@ export default defineEventHandler(async (event) => {
     ? await db.from('profiles').select('handle, display_name').eq('id', otherId).maybeSingle()
     : { data: null };
 
+  /**
+   * The pool, with where each champion is played. The roles are what lets the screen put an
+   * off-pool champion in the lane it belongs to rather than the first open slot.
+   */
+  let pool: Array<{ key: string; name: string; roles: string[] }> | undefined;
+  if (wantPool && duel.catalogue_version_id) {
+    const [champions, roles] = await Promise.all([
+      draftPool(db, duel.catalogue_version_id),
+      championRoles(db, duel.catalogue_version_id),
+    ]);
+    pool = champions.map((c) => {
+      const r = roles.get(c.key);
+      return {
+        ...c,
+        roles: r ? [r.primary, ...[...r.flex].filter((s) => s !== r.primary)] : [],
+      };
+    });
+  }
+
+  // My own selection on the clock, so a reload mid-turn puts it back in my hand.
+  const hover = duel.hover as any;
+  const myHover = hover && side && hover.side === side && hover.turn === duel.turn && duel.status === 'DRAFTING'
+    ? { championKey: hover.championKey, championName: hover.championName, slot: hover.slot ?? null }
+    : null;
+
   return {
     id: duel.id,
     status: duel.status,
     source: duel.source ?? 'CHALLENGE',
     side,
+    spectating,
+    teamNames,
+    fixture,
     opponent: duel.bot_side
       ? 'The agent'
       : other?.display_name || other?.handle || 'Unknown manager',
     opponentHandle: other?.handle ?? null,
+    // For a rematch. Null for the agent, which is nobody to challenge.
+    opponentId: duel.bot_side ? null : otherId ?? null,
     isBot: Boolean(duel.bot_side),
     botSide: duel.bot_side ?? null,
+    difficulty: duel.difficulty ?? null,
     iChallenged: duel.challenger_id === profileId,
 
     turn: duel.turn,
@@ -90,7 +168,14 @@ export default defineEventHandler(async (event) => {
     watchStartAt: duel.watch_start_at ?? null,
     watchSpeed: duel.watch_speed ?? 60,
     serverNow: new Date().toISOString(),
+    /**
+     * The row's own write stamp. A realtime push carrying the same stamp changed nothing a
+     * screen draws — a selection being saved, which deliberately does not bump it — and the
+     * client skips the resync.
+     */
+    updatedAt: duel.updated_at ?? null,
     bonus: duel.bonus,
+    myHover,
 
     actions,
     // Both lineups and both champion pools are open from the first ban. docs/05 section 2:
@@ -98,9 +183,16 @@ export default defineEventHandler(async (event) => {
     blueLineup: duel.blue_lineup,
     redLineup: duel.red_lineup,
 
-    pool: wantPool && duel.catalogue_version_id
-      ? await draftPool(db, duel.catalogue_version_id)
-      : undefined,
+    /**
+     * The composition as the engine will read it, for the panel beside the draft. Mine with
+     * the modifier once it is complete; theirs as tags only — what they have picked is public,
+     * the number the engine puts on it is not mine to be told.
+     */
+    composition: side && theirSide
+      ? { mine: compositionView(actions, side, true), theirs: compositionView(actions, theirSide, false) }
+      : null,
+
+    pool,
 
     /**
      * The result travels with the room from the moment the draft ends, because the shared

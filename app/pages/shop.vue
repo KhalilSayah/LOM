@@ -27,8 +27,12 @@ interface ShopPack {
 
 interface Shop {
   credits: number;
+  pity: { legendaryIn: number; iconIn: number; legendaryEvery: number; iconEvery: number };
   packs: ShopPack[];
 }
+
+/** Purchases at or above this price ask once before spending. */
+const CONFIRM_AT = 1000;
 
 useHead({ title: 'Shop — LOM' });
 
@@ -62,6 +66,19 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+/** The pack waiting on "are you sure", for the expensive ones. */
+const confirming = ref<string | null>(null);
+
+function askOrBuy(pack: ShopPack) {
+  if (!pack.canBuy || buying.value) return;
+  if (pack.price >= CONFIRM_AT && confirming.value !== pack.key) {
+    confirming.value = pack.key;
+    return;
+  }
+  confirming.value = null;
+  buy(pack);
 }
 
 async function buy(pack: ShopPack) {
@@ -170,7 +187,10 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
   <main class="page page--wide shop">
     <header class="topbar">
       <h1>Shop</h1>
-      <span class="topbar__meta">Credits come from matches, sponsors and duplicates</span>
+      <span class="topbar__meta">
+        <NuxtLink to="/wallet">Wallet</NuxtLink>
+        <NuxtLink to="/odds">Odds and pity</NuxtLink>
+      </span>
     </header>
 
     <p v-if="error" class="notice notice--bad">{{ error }}</p>
@@ -227,6 +247,19 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
     </section>
 
     <template v-else>
+      <!-- pity is shared by every pack, so it sits above all of them -->
+      <section v-if="shop?.pity" class="pitybar" aria-label="Your pity counters">
+        <div>
+          <p><span>Legendary within</span><b class="tnum">{{ shop.pity.legendaryIn }} {{ shop.pity.legendaryIn === 1 ? 'card' : 'cards' }}</b></p>
+          <div class="meter"><i :style="{ width: `${Math.round(((shop.pity.legendaryEvery - shop.pity.legendaryIn) / shop.pity.legendaryEvery) * 100)}%` }" /></div>
+        </div>
+        <div>
+          <p><span>Icon within</span><b class="tnum">{{ shop.pity.iconIn }} {{ shop.pity.iconIn === 1 ? 'card' : 'cards' }}</b></p>
+          <div class="meter meter--prism"><i :style="{ width: `${Math.round(((shop.pity.iconEvery - shop.pity.iconIn) / shop.pity.iconEvery) * 100)}%` }" /></div>
+        </div>
+        <p class="pitybar__note">Every card from every pack counts. When a guarantee comes due it overrides the pack's own odds, ceiling included.</p>
+      </section>
+
       <!-- gifts first: they are free, and they are the reason most people are on this screen -->
       <section v-for="g in gifts" :key="g.id" class="offer offer--gift">
         <div class="offer__art"><div class="pk" :data-kind="kindOf(g.packType)" aria-hidden="true"><span class="pk__seal" /><span class="pk__mark" /><b class="pk__name">{{ g.packName.replace(' pack', '') }}</b></div></div>
@@ -266,23 +299,29 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
           </ul>
 
           <p v-if="pack.floor_band" class="offer__note">One card is {{ BAND_LABEL[pack.floor_band] }} or better.</p>
-          <p v-else-if="pack.max_band" class="offer__note">Nothing above {{ BAND_LABEL[pack.max_band] }}.</p>
+          <p v-else-if="pack.max_band" class="offer__note">Nothing above {{ BAND_LABEL[pack.max_band] }}, unless a pity guarantee is due.</p>
+          <p class="offer__note offer__note--fine">Odds per card. A due pity guarantee overrides them. <NuxtLink to="/odds">How it works</NuxtLink></p>
 
           <div class="offer__foot">
             <button
               class="btn btn--gold offer__cta"
-              data-sound="coin"
+              :data-sound="confirming === pack.key || pack.price < CONFIRM_AT ? 'coin' : 'select'"
               :class="{ 'btn--off': !pack.canBuy }"
               type="button"
               :disabled="!pack.canBuy || buying !== null"
-              @click="buy(pack)"
+              @click="askOrBuy(pack)"
             >
               <template v-if="buying === pack.key">Opening</template>
               <template v-else-if="pack.remainingToday === 0">None left today</template>
               <template v-else-if="!pack.affordable">Need {{ (pack.price - (shop?.credits ?? 0)).toLocaleString('en') }} more</template>
+              <template v-else-if="confirming === pack.key">Spend {{ pack.price.toLocaleString('en') }} credits</template>
               <template v-else>Buy · {{ pack.price.toLocaleString('en') }}</template>
             </button>
-            <p v-if="pack.daily_limit" class="offer__note">{{ pack.remainingToday }} of {{ pack.daily_limit }} left today</p>
+            <button v-if="confirming === pack.key && buying === null" class="btn btn--quiet offer__cancel" type="button" @click="confirming = null">Cancel</button>
+            <p v-if="confirming === pack.key && buying === null" class="offer__note" role="status">
+              You will have {{ ((shop?.credits ?? 0) - pack.price).toLocaleString('en') }} left.
+            </p>
+            <p v-else-if="pack.daily_limit" class="offer__note">{{ pack.remainingToday }} of {{ pack.daily_limit }} left today</p>
           </div>
         </div>
       </section>
@@ -300,11 +339,16 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
         </div>
       </section>
 
-      <p class="shop__foot faint">
-        Credits come from playing matches, from the sponsors you have signed, and from
-        duplicate pulls. Every card from every pack counts toward the same Legendary and Icon
-        guarantee as the daily one.
-      </p>
+      <section class="earn" aria-labelledby="earn-title">
+        <h2 id="earn-title" class="earn__title">Where Credits come from</h2>
+        <ul class="earn__list">
+          <li><b>Matches</b><span>Every match pays for playing, more for a win, more again for each starter graded S.</span></li>
+          <li><b>Sponsors</b><span>A signed contract pays on every match, and pays more when your five meets its terms.</span></li>
+          <li><b>Quests</b><span>Three dailies and three weeklies, collected from <NuxtLink to="/quests">Quests</NuxtLink>.</span></li>
+          <li><b>Duplicates</b><span>A card you already hold turns into XP on it and Credits by rarity.</span></li>
+        </ul>
+        <p class="faint earn__foot"><NuxtLink to="/wallet">See every Credit in and out</NuxtLink></p>
+      </section>
     </template>
   </main>
 </template>
@@ -331,6 +375,33 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
 .offer__blurb { margin: 10px 0 0; font-size: 13.5px; color: var(--ink-2); }
 .offer__price { display: inline-flex; align-items: center; gap: 6px; font-stretch: 80%; font-weight: 820; font-size: 22px; color: var(--gold-1); white-space: nowrap; }
 .offer__note { margin: 8px 0 0; font-size: 12.5px; color: var(--ink-3); }
+.offer__note--fine { font-size: 12px; }
+.offer__note a, .earn a, .topbar__meta a { text-decoration: underline; text-underline-offset: 3px; }
+.offer__cancel { margin-left: 4px; }
+.topbar__meta { display: inline-flex; gap: 16px; }
+.topbar__meta a { color: var(--ink-2); padding: 10px 0; }
+
+.pitybar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+  padding: 14px 18px;
+  margin-bottom: 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+}
+.pitybar p { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px; font-size: 12px; color: var(--ink-3); }
+.pitybar b { font-size: 13px; color: var(--ink-1); }
+.pitybar__note { grid-column: 1 / -1; margin: 2px 0 0 !important; display: block !important; font-size: 12px; }
+
+.earn { margin: 20px 0 8px; padding: 18px; border: 1px solid var(--line-1); border-radius: var(--radius); }
+.earn__title { font-size: 17px; font-stretch: 92%; font-weight: 720; margin: 0 0 10px; }
+.earn__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.earn__list li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; font-size: 13.5px; }
+.earn__list b { font-weight: 680; }
+.earn__list span { color: var(--ink-2); }
+.earn__foot { margin: 12px 0 0; font-size: 13px; }
 .offer__foot { margin-top: 14px; }
 .offer__cta { margin-top: 14px; }
 .offer__foot .offer__cta { margin-top: 0; }
@@ -448,7 +519,6 @@ onBeforeUnmount(() => revealTimers.forEach(clearTimeout));
   .facedown, .opened__face { animation: none !important; }
 }
 
-.shop__foot { font-size: 12.5px; text-align: center; margin: 20px 0 8px; }
 
 @media (min-width: 720px) {
   .offer { grid-template-columns: 140px minmax(0, 1fr); gap: 26px; padding: 22px; }

@@ -1,33 +1,25 @@
 <script setup lang="ts">
 /**
- * A leaguemate's team and cards.
+ * A leaguemate, as an opponent sees them: their season, not their cards.
  *
- * Their five first, then everything they own. That order is the whole point: in a
- * league you want to know what you are up against before you want to browse, and
- * the five they field is the answer to that question. The collection underneath is
- * the bragging.
+ * This screen used to show their whole collection and the exact five they field. docs/01
+ * section 4 says the full collection is never visible to an opponent, and docs/05 section
+ * 2 reveals the starting five at draft start — knowing it the evening before is the whole
+ * of banning. So it shows what sharing a league does earn you: where they sit, how they
+ * are playing, how they do against you, and their last three results.
  *
- * Reached by membership, not by a share code — /m/:code is the version of this
- * screen for somebody you met outside a league. Cards are not links here for the
- * same reason they are not there: the card detail page reads your own collection,
- * so tapping through would land on "you do not have this card".
+ * On your own page the same numbers, plus the way to your roster.
  */
+import { dateLabel, ymdIn } from '~~/shared/league';
 
 const route = useRoute();
 const leagueId = computed(() => String(route.params.id || ''));
 const memberId = computed(() => String(route.params.memberId || ''));
 
-const ROLES = ['TOP', 'JNG', 'MID', 'BOT', 'SUP'];
-const BANDS = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ICON'];
-
 const data = ref<any>(null);
 const loading = ref(true);
 const error = ref('');
 const note = ref('');
-
-const role = ref<string | null>(null);
-const band = ref<string | null>(null);
-const search = ref('');
 
 const message = (e: any, fallback: string) =>
   e?.statusMessage || e?.data?.statusMessage || e?.data?.message || fallback;
@@ -46,28 +38,26 @@ async function load() {
 
 watch([leagueId, memberId], load, { immediate: true });
 
-const cards = computed<any[]>(() => data.value?.cards ?? []);
 const member = computed<any>(() => data.value?.member ?? null);
+const record = computed<any>(() => data.value?.record ?? null);
+const h2h = computed<any>(() => data.value?.headToHead ?? null);
+const recent = computed<any[]>(() => data.value?.recent ?? []);
+const form = computed<string[]>(() => data.value?.form ?? []);
 
-const byBand = computed(() => {
-  const counts: Record<string, number> = {};
-  for (const c of cards.value) counts[c.card.rarity] = (counts[c.card.rarity] || 0) + 1;
-  return counts;
-});
+const ordinal = (n: number) => {
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return n + 'th';
+  return n + (n % 10 < 4 ? ['th', 'st', 'nd', 'rd'][n % 10] : 'th');
+};
 
-const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  return cards.value
-    .filter((c) => !role.value || c.card.role === role.value)
-    .filter((c) => !band.value || c.card.rarity === band.value)
-    .filter((c) => {
-      if (!q) return true;
-      const hay = `${c.card.playerName} ${c.card.team} ${c.card.season} `
-        + c.card.championPool.map((p: any) => p.champion).join(' ');
-      return hay.toLowerCase().includes(q);
-    })
-    .sort((a, b) => b.card.ovr - a.card.ovr);
-});
+const clock = (seconds: number | null) => {
+  if (!seconds) return '';
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+};
+
+const when = (iso: string | null) => (iso ? dateLabel(ymdIn(iso)) : '');
+
+const STAGE: Record<string, string> = { SEMI: 'Semi-final', GRAND_FINAL: 'Final' };
 
 // --- a friendly, from here ---------------------------------------------------
 
@@ -90,26 +80,16 @@ async function friendly() {
   }
 }
 
-const BAND_LABEL: Record<string, string> = { COMMON: 'Common', RARE: 'Rare', EPIC: 'Epic', LEGENDARY: 'Legendary', ICON: 'Icon' };
-// Rarest first, as on your own Cards screen.
-const BANDS_DESC = [...BANDS].reverse();
-
-function clearFilters() {
-  role.value = null;
-  band.value = null;
-  search.value = '';
-}
-
 useHead(() => ({
   title: member.value ? `${member.value.teamName} — LOM` : 'Team — LOM',
 }));
 </script>
 
 <template>
-  <main class="page page--wide">
+  <main class="page">
     <header class="topbar">
       <NuxtLink class="backlink" :to="`/leagues/${leagueId}`"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>{{ data?.league?.name || 'League' }}</NuxtLink>
-      <span v-if="data" class="topbar__meta tnum">Team {{ data.rosterFilled }}/5</span>
+      <span v-if="data" class="topbar__meta tnum">Season {{ data.league.season }}</span>
     </header>
 
     <p v-if="error" class="notice notice--bad" role="alert">{{ error }}</p>
@@ -121,95 +101,97 @@ useHead(() => ({
       <section class="who">
         <h1 class="who__name">
           {{ member.teamName }}
-          <span v-if="member.isMe" class="tag">You</span>
+          <span v-if="member.isOwner" class="tag">host</span>
+          <span v-if="member.isMe" class="tag tag--me">you</span>
         </h1>
-        <p v-if="member.handle" class="muted who__handle">@{{ member.handle }}</p>
-        <p class="who__total">
-          <span class="num who__n">{{ data.collection.total }}</span>
-          <span class="who__unit">{{ data.collection.total === 1 ? 'card' : 'cards' }}</span>
-        </p>
-        <p v-if="data.collection.best" class="muted who__best">
-          Best: {{ data.collection.best.playerName }}
-          <template v-if="data.collection.best.season">{{ data.collection.best.season }}</template>
-          · <span class="tnum">{{ data.collection.best.ovr }}</span> OVR
-        </p>
-
-        <button
-          v-if="!member.isMe" class="btn who__act" type="button"
-          :disabled="challenging || data.rosterFilled < 5" @click="friendly"
-        >
-          {{ challenging ? 'Sending' : data.rosterFilled < 5 ? 'No full team yet' : 'Friendly' }}
-        </button>
-        <p v-if="!member.isMe" class="faint who__hint">
-          A friendly does not count in the table.
+        <p class="muted who__handle">
+          {{ member.displayName }}<template v-if="member.handle"> · @{{ member.handle }}</template>
         </p>
       </section>
 
-      <!-- The team. What you are actually up against. -->
+      <!-- The season in four numbers. -->
+      <section class="stats">
+        <div class="stat">
+          <span class="label">Table</span>
+          <span class="stat__n num">{{ record && record.played ? ordinal(record.position) : '–' }}</span>
+          <span class="faint stat__sub">{{ record && record.played ? `of ${record.of}` : 'not played yet' }}</span>
+        </div>
+        <div class="stat">
+          <span class="label">Record</span>
+          <span class="stat__n num">{{ record ? `${record.won}–${record.lost}` : '0–0' }}</span>
+          <span class="faint stat__sub tnum">{{ record ? `${record.points} pts` : '' }}</span>
+        </div>
+        <div class="stat stat--wide">
+          <span class="label">Form</span>
+          <span v-if="form.length" class="form" :aria-label="`Last ${form.length}: ${form.join(' ')}`">
+            <span v-for="(r, i) in form" :key="i" class="form__pip" :class="r === 'W' ? 'is-w' : 'is-l'">{{ r }}</span>
+          </span>
+          <span v-else class="faint stat__sub">No results yet</span>
+          <span v-if="form.length" class="faint stat__sub">oldest to latest</span>
+        </div>
+      </section>
+
+      <!-- Against you. -->
+      <section v-if="h2h" class="block">
+        <h2 class="sect">Against you</h2>
+        <p v-if="!h2h.played" class="muted blurb">You have not played each other yet this season.</p>
+        <p v-else class="h2h">
+          <span class="num h2h__n">{{ h2h.won }}–{{ h2h.lost }}</span>
+          <span class="muted">
+            {{ h2h.won > h2h.lost ? `${member.teamName} lead` : h2h.won < h2h.lost ? 'You lead' : 'Level' }}
+            over {{ h2h.played }} {{ h2h.played === 1 ? 'match' : 'matches' }}
+          </span>
+        </p>
+      </section>
+
+      <!-- The last three. -->
       <section class="block">
-        <h2 class="sect">Team</h2>
-        <ul class="five">
-          <li v-for="r in ROLES" :key="r" class="five__slot">
-            <span class="five__role">{{ r }}</span>
-            <LomCard v-if="data.roster[r]" :card="data.roster[r].card" compact />
-            <div v-else class="five__empty">Empty</div>
+        <h2 class="sect">Last results</h2>
+        <p v-if="!recent.length" class="muted blurb">Nothing decided yet.</p>
+        <ul v-else class="results">
+          <li v-for="r in recent" :key="r.fixtureId" class="result">
+            <span class="result__wl" :class="r.won ? 'is-w' : 'is-l'">{{ r.won ? 'Won' : 'Lost' }}</span>
+            <span class="result__what">
+              vs <strong>{{ r.opponent }}</strong>
+              <span v-if="STAGE[r.stage]" class="tag">{{ STAGE[r.stage] }}</span>
+              <span v-if="r.upset" class="tag tag--new">Upset</span>
+              <span class="faint result__meta tnum">
+                {{ r.kills.mine }}–{{ r.kills.theirs }}<template v-if="r.gameLength"> · {{ clock(r.gameLength) }}</template>
+                · {{ r.dayIndex ? `Day ${r.dayIndex}, ` : '' }}{{ when(r.playedAt) }}
+                <template v-if="r.autoPlayed"> · played by the agent</template>
+              </span>
+            </span>
+            <NuxtLink v-if="r.duelId" class="btn btn--quiet btn--sm result__watch" :to="`/duel/${r.duelId}`">Watch</NuxtLink>
           </li>
         </ul>
+        <p v-if="recent.length && recent.some((r) => !r.duelId)" class="faint hint">
+          A replay can be watched by the two managers who played it.
+        </p>
       </section>
 
+      <!-- Their five: whether it is complete, never what is in it. -->
       <section class="block">
-        <h2 class="sect">Cards</h2>
+        <h2 class="sect">Team</h2>
+        <p class="muted blurb">
+          <template v-if="member.isMe">
+            Your five is {{ data.rosterFilled }}/{{ data.rosterSlots }}.
+            <NuxtLink to="/roster">Open your roster</NuxtLink>.
+          </template>
+          <template v-else>
+            {{ data.rosterFilled === data.rosterSlots ? 'A full five is set.' : `${data.rosterFilled}/${data.rosterSlots} roster slots filled.` }}
+            Their lineup is revealed when the draft starts, and their collection stays theirs.
+          </template>
+        </p>
 
-        <div class="cards__layout">
-          <aside v-if="cards.length" class="filters">
-            <input
-              v-model="search" class="input filters__search" type="search"
-              placeholder="Player, team or champion" aria-label="Search these cards"
-            >
-            <div class="seg filters__roles" role="group" aria-label="Role">
-              <button type="button" :aria-pressed="role === null" @click="role = null">All</button>
-              <button
-                v-for="r in ROLES" :key="r" type="button"
-                :aria-pressed="role === r" @click="role = role === r ? null : r"
-              >{{ r }}</button>
-            </div>
-            <div class="filters__bands" role="group" aria-label="Rarity">
-              <button
-                v-for="b in BANDS_DESC" :key="b" class="chip" type="button"
-                :aria-pressed="band === b" :disabled="!byBand[b]"
-                @click="band = band === b ? null : b"
-              >
-                <i class="gem" :class="`gem--${b.toLowerCase()}`" aria-hidden="true" />
-                {{ BAND_LABEL[b] }}<span class="chip__n">{{ byBand[b] || 0 }}</span>
-              </button>
-            </div>
-          </aside>
-
-          <div class="cards__main">
-            <p v-if="cards.length" class="cards__count faint">
-              {{ filtered.length }} shown · highest rating first
-            </p>
-
-            <div v-if="!cards.length" class="empty">
-              <h2>Nothing here yet</h2>
-              <p>{{ member.teamName }} has not opened a pack.</p>
-            </div>
-
-            <div v-else-if="!filtered.length" class="empty">
-              <h2>No match</h2>
-              <p>None of these cards fit those filters.</p>
-              <button class="btn btn--ghost" type="button" @click="clearFilters">Clear filters</button>
-            </div>
-
-            <div v-else class="card-grid">
-              <div v-for="item in filtered" :key="item.id" class="card-grid__item">
-                <LomCard :card="item.card" compact />
-                <span v-if="item.level > 1" class="card-grid__badge">Lv {{ item.level }}</span>
-                <span v-if="item.copies > 1" class="card-grid__dupes">×{{ item.copies }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <template v-if="!member.isMe">
+          <button
+            class="btn btn--ghost who__act" type="button"
+            :disabled="challenging || data.rosterFilled < data.rosterSlots" @click="friendly"
+          >
+            {{ challenging ? 'Sending' : data.rosterFilled < data.rosterSlots ? 'No full team yet' : 'Send a friendly' }}
+          </button>
+          <p class="faint hint">A friendly does not count in the table.</p>
+        </template>
       </section>
     </template>
   </main>
@@ -222,59 +204,64 @@ useHead(() => ({
 
 .head-skeleton { height: 28vh; }
 
-.who__name { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: clamp(30px, 7vw, 44px); line-height: 0.95; margin: 4px 0 0; }
-.who__handle { font-size: 13.5px; margin: 6px 0 0; }
-.who__total { display: flex; align-items: baseline; gap: 7px; margin: 14px 0 0; }
-.who__n { font-size: 30px; }
-.who__unit { font-size: 13px; font-weight: 600; color: var(--ink-3); }
-.who__best { font-size: 13.5px; margin: 6px 0 0; }
-.who__act { margin-top: 16px; }
-.who__hint { font-size: 12px; margin: 8px 0 0; }
+.who__name { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: clamp(30px, 7vw, 44px); line-height: 0.95; margin: 4px 0 0; overflow-wrap: anywhere; }
+.who__handle { font-size: 13.5px; margin: 8px 0 0; }
+.who__act { margin-top: 4px; min-height: 44px; }
 
-.block { margin-top: 28px; }
-.sect { margin: 0 0 12px; font-stretch: 92%; font-weight: 720; font-size: 17px; }
-
-/* Five across on a phone: the roles are the point, so they stay in one row and the
-   cards get narrow rather than wrapping into a shape nobody can read as a team. */
-.five { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
-.five__slot { display: grid; gap: 6px; align-content: start; min-width: 0; }
-.five__role {
-  font-stretch: 114%;
-  font-size: 10.5px;
-  font-weight: 760;
-  letter-spacing: 0.12em;
-  text-align: center;
-  color: var(--ink-3);
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin-top: 22px;
+  border: 1px solid var(--line-1);
+  background: var(--line-1);
 }
-.five__empty {
+.stat { display: grid; gap: 4px; align-content: start; padding: 14px; background: var(--bg-1); }
+.stat--wide { grid-column: 1 / -1; }
+.stat__n { font-size: 30px; line-height: 1; }
+.stat__sub { font-size: 12px; }
+@media (min-width: 640px) {
+  .stats { grid-template-columns: 1fr 1fr 2fr; }
+  .stat--wide { grid-column: auto; }
+}
+
+/* Form: the letter carries it, not the colour alone. */
+.form { display: flex; gap: 6px; }
+.form__pip {
   display: grid;
   place-items: center;
-  aspect-ratio: 63 / 88;
-  border: 1px dashed var(--line-2);
-  border-radius: var(--radius);
-  color: var(--ink-4);
-  font-size: 12px;
-  font-weight: 600;
+  width: 30px;
+  height: 30px;
+  border-radius: 2px;
+  font-stretch: 80%;
+  font-weight: 820;
+  font-size: 14px;
 }
-@media (min-width: 720px) {
-  .five { gap: 12px; }
-}
+.form__pip.is-w { background: var(--bg-3); color: var(--ink-1); box-shadow: inset 0 0 0 1px var(--line-3); }
+.form__pip.is-l { color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--line-2); }
 
-.filters { display: grid; gap: 10px; margin-bottom: 16px; }
-.filters__search { min-height: 44px; font-size: 16px; }
-.filters__roles button { font-size: 11px; }
-.filters__bands { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px; }
-.filters__bands::-webkit-scrollbar { display: none; }
-.cards__count { margin: 0 0 12px; font-size: 12.5px; }
+.block { margin-top: 28px; }
+.sect { margin: 0 0 10px; font-stretch: 92%; font-weight: 720; font-size: 17px; }
+.blurb { font-size: 13.5px; margin: 0 0 10px; }
+.hint { font-size: 12px; margin: 8px 0 0; }
 
-@media (min-width: 1024px) {
-  .cards__layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 36px; align-items: start; }
-  .cards__layout:not(:has(.filters)) { grid-template-columns: minmax(0, 1fr); }
-  .filters { position: sticky; top: calc(var(--appbar-h) + 16px); }
-  .filters__roles { flex-direction: column; }
-  .filters__roles button { justify-content: flex-start; padding: 0 12px; }
-  .filters__bands { flex-direction: column; margin: 0; padding: 0; overflow: visible; }
-  .filters__bands .chip { justify-content: flex-start; }
-  .filters__bands .chip__n { margin-left: auto; }
+.h2h { display: flex; align-items: baseline; gap: 12px; margin: 0; }
+.h2h__n { font-size: 28px; }
+
+.results { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line-1); }
+.result {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 56px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line-1);
 }
+.result__wl { font-stretch: 112%; font-size: 11px; font-weight: 780; letter-spacing: 0.12em; text-transform: uppercase; }
+.result__wl.is-w { color: var(--ink-1); }
+.result__wl.is-l { color: var(--ink-3); }
+.result__what { min-width: 0; font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.result__meta { flex-basis: 100%; font-size: 12px; }
+.result__watch { min-height: 44px; }
 </style>

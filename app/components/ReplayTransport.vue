@@ -16,32 +16,58 @@ const props = withDefaults(defineProps<{
   autoplay?: boolean;
   /** Show the "Skip to result" button. */
   skip?: boolean;
+  /**
+   * Match seconds of the big moments (multikills, aces, Baron, Elder, the nexus). Played
+   * faster than SLOW_TO, the clock eases down to it around each one and back up after.
+   * Left out, the moments MatchWatch provides are used, so a parent that renders this in
+   * MatchWatch's controls slot gets it for free.
+   */
+  moments?: number[];
 }>(), {
-  speeds: () => [1, 2, 4, 60],
+  speeds: () => [1, 4, 8, 16, 60],
   initialSpeed: 60,
   autoplay: false,
   skip: true,
+  moments: undefined,
 });
 
 const emit = defineEmits<{ 'update:clock': [t: number] }>();
 
+const provided = inject<any>('matchMoments', null);
+const momentTimes = computed<number[]>(() => props.moments ?? provided?.value ?? []);
+
+/** The speed a big moment is watched at, and the game seconds either side of it. */
+const SLOW_TO = 8;
+const LEAD = 22;
+const HOLD = 26;
+
 const speed = ref(props.initialSpeed);
 const playing = ref(false);
+/** What the clock is actually running at: the chosen speed, eased down for a moment. */
+const running = ref(props.initialSpeed);
 
 let raf = 0;
 let last = 0;
 // Ticks advance a local copy so a parent that updates `clock` a frame late cannot stall us.
 let now = props.clock;
 
+const nearMoment = (t: number) => momentTimes.value.some((m) => t >= m - LEAD && t <= m + HOLD);
+const slowed = computed(() => playing.value && speed.value > SLOW_TO && running.value < speed.value - 0.5);
+
 function tick(stamp: number) {
   if (!playing.value) return;
   const dt = Math.min(0.25, (stamp - last) / 1000);
   last = stamp;
-  now = Math.min(props.length, now + dt * speed.value);
+  const target = speed.value > SLOW_TO && nearMoment(now) ? SLOW_TO : speed.value;
+  // Exponential ease, so the drop to 8x and the climb back read as a camera, not a cut.
+  running.value += (target - running.value) * Math.min(1, dt * 5);
+  now = Math.min(props.length, now + dt * running.value);
   emit('update:clock', now);
   if (now >= props.length) playing.value = false;
   else raf = requestAnimationFrame(tick);
 }
+
+watch(speed, (s) => { running.value = s; });
 
 function play() {
   now = props.clock >= props.length ? 0 : props.clock;
@@ -81,11 +107,44 @@ const clockText = (seconds: number) => {
 const scrubText = computed(() => `${clockText(props.clock)} of ${clockText(props.length)}`);
 const fill = computed(() => `${Math.min(100, (props.clock / (props.length || 1)) * 100)}%`);
 
+function seekBy(seconds: number) {
+  const t = Math.max(0, Math.min(props.length, props.clock + seconds));
+  now = t;
+  emit('update:clock', t);
+}
+
+/**
+ * Space plays and pauses, the arrows jump ten seconds. Not while someone is typing, and
+ * space is left alone on a focused button, which already answers to it.
+ */
+function onKey(e: KeyboardEvent) {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+  const target = e.target as HTMLElement | null;
+  const tag = target?.tagName;
+  const isScrub = target?.classList?.contains('transport__scrub');
+  if (!isScrub && (tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable
+    || (tag === 'INPUT' && (target as HTMLInputElement).type !== 'range'))) return;
+
+  if (e.key === ' ' || e.code === 'Space') {
+    if (tag === 'BUTTON' || tag === 'A') return;
+    e.preventDefault();
+    toggle();
+  } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    if (tag === 'INPUT' && !isScrub) return;
+    e.preventDefault();
+    seekBy(e.key === 'ArrowRight' ? 10 : -10);
+  }
+}
+
 onMounted(() => {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (props.autoplay && !reduced) play();
+  window.addEventListener('keydown', onKey);
 });
-onBeforeUnmount(() => cancelAnimationFrame(raf));
+onBeforeUnmount(() => {
+  cancelAnimationFrame(raf);
+  window.removeEventListener('keydown', onKey);
+});
 
 defineExpose({ play, pause, playing });
 </script>
@@ -116,10 +175,12 @@ defineExpose({ play, pause, playing });
           :aria-pressed="speed === s" @click="speed = s"
         >{{ s }}×</button>
       </div>
+      <span v-if="slowed" class="transport__slow tnum" aria-hidden="true">{{ SLOW_TO }}× for the moment</span>
       <button v-if="skip && clock < length" class="btn btn--quiet transport__skip" type="button" @click="skipToEnd">
         Skip to result
       </button>
     </div>
+    <p class="transport__keys">Space to play or pause, arrow keys to jump 10 seconds.</p>
   </section>
 </template>
 
@@ -171,6 +232,32 @@ defineExpose({ play, pause, playing });
 .transport__icon.is-pause { background: none; box-sizing: border-box; border-left: 3.5px solid currentColor; border-right: 3.5px solid currentColor; }
 .transport__speed { flex: 0 1 260px; }
 .transport__skip { margin-left: auto; }
+.transport__slow {
+  font-size: 11px;
+  font-weight: 760;
+  font-stretch: 112%;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold-1);
+}
+/* Shown to keyboard and screen-reader users, tucked away for everyone else. */
+.transport__keys {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.transport:focus-within .transport__keys {
+  position: static;
+  width: auto;
+  height: auto;
+  clip: auto;
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
 @media (max-width: 520px) {
   .transport__speed { flex: 1 1 100%; order: 3; }
   .transport__play { flex: 1 1 auto; }

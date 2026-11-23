@@ -17,22 +17,55 @@ export const meanConsistency = (state) =>
   state.players.reduce((n, p) => n + (p.subStats?.consistency ?? 60), 0) / state.players.length;
 
 /**
+ * One fight's bookkeeping: what kind it was, where, and who killed how many. The tally
+ * is what turns three kills by one player into a triple kill rather than three lines.
+ */
+export function newFight(kind, extra = {}) {
+  return { kind, kills: new Map(), deaths: { BLUE: 0, RED: 0 }, ...extra };
+}
+
+/** Drop the keys that carry nothing, so a stored event stays small. */
+const compact = (obj) => {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) if (v !== undefined && v !== null && v !== false) out[k] = v;
+  return out;
+};
+
+/**
+ * The teammates credited with an assist on one kill.
+ *
+ * Only the people who were in the fight, and weighted by role: a support or a jungler
+ * is in on most of their team's kills, a top laner on far fewer. This used to be the
+ * first one or two names in roster order, which handed the top laner every assist in
+ * the game and left the support with almost none.
+ */
+function pickAssists(state, killer, only) {
+  const mates = only
+    ? only.filter((p) => p.team === killer.team && p !== killer)
+    : state.sides[killer.team].players.filter((p) => p.alive && p !== killer);
+
+  const small = mates.length <= 2 ? BALANCE.fight.smallFightAssist : 0;
+  return mates.filter((p) =>
+    state.rng.chance(Math.min(0.96, (BALANCE.fight.assistChance[p.slot] ?? 0.5) + small)));
+}
+
+/**
  * Hand out `count` deaths on `side`, with kills credited to the other team.
  *
  * Victims are drawn by inverse power weighting (docs/04 section 6.4), so the weakest
  * link dies most often. That is deliberately the most legible feedback in the whole
  * engine: a manager who sees their 68-rated top laner with eight deaths knows exactly
  * what to fix, and no other screen tells them that.
+ *
+ * `only` is everyone who was in the fight, both sides. Victims come from this side of
+ * it, killers and assists from the other — never from somebody on the far side of the
+ * map, which is who used to be credited whenever they happened to be strongest.
  */
-export function assignDeaths(state, side, count, phase, pos, only = null) {
-  // `only` is the group that was actually in the fight. Without it a gank in top
-  // lane could kill the support standing in the bottom side of the map, which is
-  // both absurd and the reason the "best player dies less" target was unreachable:
-  // deaths were being spread over players who were never there.
+export function assignDeaths(state, side, count, phase, pos, only = null, fight = null) {
   const victims = only ? only.filter((p) => p.alive && p.team === side.name) : aliveOf(side);
   if (!victims.length || count <= 0) return [];
 
-  const enemy = aliveOf(state.opponent(side));
+  const enemySide = state.opponent(side);
   const taken = [];
 
   for (let i = 0; i < Math.min(count, victims.length); i++) {
@@ -49,21 +82,23 @@ export function assignDeaths(state, side, count, phase, pos, only = null) {
     const weights = powers.map((v) => Math.exp(-BALANCE.fight.deathBias * (v / meanPower - 1)));
     const victim = pool[state.rng.weighted(weights)];
 
-    const killers = enemy.filter((p) => p.alive);
+    // The enemies who were in this fight and are still standing. Only if every one of
+    // them is down does the kill go to whoever arrives late.
+    let killers = only ? only.filter((p) => p.alive && p.team === enemySide.name) : [];
+    if (!killers.length) killers = aliveOf(enemySide);
     const killer = killers.length
       ? killers[state.rng.weighted(killers.map((p) => playerPower(p, phase, state.t)))]
       : null;
 
-    const assists = killers
-      .filter((p) => p !== killer)
-      .slice(0, state.rng.int(0, 2));
-
     if (killer) {
+      const assists = pickAssists(state, killer, only);
+      const shutdown = victim.streak >= 3 ? victim.streak : 0;
+
       awardKill(killer, victim, assists, state.t);
       killer.damage += 100 + state.rng.int(0, 60);
 
-      const type = state.firstBlood ? 'KILL' : 'FIRST_BLOOD';
-      if (!state.firstBlood) {
+      const first = !state.firstBlood;
+      if (first) {
         awardTeam(state.sides[killer.team], BALANCE.economy.firstBloodTeam);
         // And the lane feels it. Gold alone never moved the first-blood win rate off
         // 50%: a lead has to turn into map pressure to still exist at 30 minutes.
@@ -75,17 +110,43 @@ export function assignDeaths(state, side, count, phase, pos, only = null) {
       }
       state.firstBlood = true;
 
-      state.emit(type, {
+      if (fight) {
+        const tally = fight.kills.get(killer.pid) || { player: killer, count: 0 };
+        tally.count += 1;
+        fight.kills.set(killer.pid, tally);
+        fight.deaths[victim.team] += 1;
+      }
+
+      state.emit(first ? 'FIRST_BLOOD' : 'KILL', {
         team: killer.team,
         killer: killer.name,
         victim: victim.name,
+        killerSlot: killer.slot,
+        victimSlot: victim.slot,
+        assistName: assists[0]?.name,
+        assistCount: assists.length,
+        kind: fight?.kind,
+        region: fight?.region,
+        lane: fight?.lane,
+        turned: Boolean(fight?.failed),
+        streak: killer.streak,
+        shutdown,
         actors: { killer: killer.pid, victim: victim.pid, assists: assists.map((a) => a.pid) },
-        pos: jitter(state.rng, pos || LANE_ANCHOR[victim.team][victim.slot], 500),
+        pos: jitter(state.fx, pos || LANE_ANCHOR[victim.team][victim.slot], 500),
+        payload: compact({
+          // When the sim brings them back, so the replay greys the dot for exactly as
+          // long as the engine kept them dead.
+          respawnAt: Math.round(victim.respawnAt),
+          streak: killer.streak >= 3 ? killer.streak : null,
+          shutdown: shutdown || null,
+        }),
       });
     } else {
       victim.alive = false;
       victim.deaths += 1;
+      victim.streak = 0;
       victim.respawnAt = state.t + respawnTime(state.t);
+      if (fight) fight.deaths[victim.team] += 1;
     }
 
     taken.push(victim);
@@ -94,15 +155,37 @@ export function assignDeaths(state, side, count, phase, pos, only = null) {
   return taken;
 }
 
+const MULTI = { 2: 'double', 3: 'triple', 4: 'quadra', 5: 'penta' };
+
+/** Double, triple, quadra, penta: one line per player who took more than one. */
+export function emitMultikills(state, fight) {
+  for (const { player, count } of fight.kills.values()) {
+    if (count < 2) continue;
+    const n = Math.min(5, count);
+    state.emit('MULTIKILL', {
+      team: player.team,
+      killer: player.name,
+      count: n,
+      actors: { killer: player.pid },
+      payload: { count: n, label: MULTI[n] },
+    });
+  }
+}
+
 /** docs/04 section 6.4: an ace buys exactly as long as the bodies stay down. */
 function checkAce(state, side, pos) {
-  if (aliveOf(side).length) return;
+  if (aliveOf(side).length) return false;
 
   const enemy = state.opponent(side);
   const window = side.players.reduce((n, p) => n + Math.max(0, p.respawnAt - state.t), 0) / 5;
 
-  state.emit('ACE', { team: enemy.name, pos });
+  state.emit('ACE', {
+    team: enemy.name,
+    pos,
+    actors: { participants: aliveOf(enemy).map((p) => p.pid) },
+  });
   enemy.pushOpportunity += window * BALANCE.siege.aceBonus;
+  return true;
 }
 
 const bumpMomentum = (winner, loser) => {
@@ -146,23 +229,43 @@ export function resolveFight(state, attacker, defender, opts = {}) {
   );
 
   const inFight = [...attackers, ...defenders];
-  assignDeaths(state, loser, loserDeaths, phase, pos, inFight);
-  assignDeaths(state, winner, winnerDeaths, phase, pos, inFight);
+  const fight = newFight(kind, { region: opts.region, lane: opts.lane });
+
+  // The winner's losses first, while the whole losing side is still standing to take
+  // them, then the collapse. Somebody on the winning side is always left: a fight that
+  // kills everyone on both sides has no winner to speak of, and the last kill of it
+  // used to go to a player who had not been there.
+  const winnersIn = inFight.filter((p) => p.team === winner.name).length;
+  const winnerLosses = Math.min(winnerDeaths, Math.max(0, winnersIn - 1));
+  assignDeaths(state, winner, winnerLosses, phase, pos, inFight, fight);
+  assignDeaths(state, loser, loserDeaths, phase, pos, inFight, fight);
+  emitMultikills(state, fight);
 
   bumpMomentum(winner, loser);
 
   // A won fight is only worth what it buys. Bodies on the floor, net of your own,
   // are the currency: this is the line that turns kills into structures and so into
   // a finite game, and `BALANCE.siege.secondsPerStructure` is its exchange rate.
-  const netBodies = (outcome.won ? loserDeaths : winnerDeaths) - (outcome.won ? winnerDeaths : loserDeaths);
+  const netBodies = loserDeaths - winnerLosses;
   if (netBodies > 0) {
     winner.pushOpportunity += netBodies * respawnTime(state.t) * BALANCE.siege.bodyValue;
   }
 
-  checkAce(state, loser, pos);
+  const aced = checkAce(state, loser, pos);
   checkAce(state, winner, pos);
 
-  return { winner, loser, margin: outcome.margin, pWin: outcome.pWin, loserDeaths, winnerDeaths };
+  return {
+    winner,
+    loser,
+    margin: outcome.margin,
+    pWin: outcome.pWin,
+    /** The chance the side that won had going in: under a half is an upset. */
+    odds: outcome.won ? outcome.pWin : 1 - outcome.pWin,
+    loserDeaths: fight.deaths[loser.name],
+    winnerDeaths: fight.deaths[winner.name],
+    aced,
+    fight,
+  };
 }
 
 /** docs/04 section 6.3. Two or three bodies a side, somewhere the phase makes sense. */
@@ -180,7 +283,7 @@ export function rollSkirmish(state) {
   if (!state.rng.chance(p)) return null;
 
   const region = regionFor(state.rng, phase);
-  const pos = jitter(state.rng, region);
+  const pos = jitter(state.fx, region);
 
   // docs/04 section 6.3: the two or three players *nearest* the region. Taking the
   // first few of the array instead meant top, jungle and mid fought every skirmish
@@ -206,6 +309,7 @@ export function rollSkirmish(state) {
     attackers,
     defenders,
     pos,
+    region: region.name,
   });
   if (!result) return null;
 
@@ -214,9 +318,19 @@ export function rollSkirmish(state) {
   state.emit('SKIRMISH', {
     team: result.winner.name,
     margin: Math.abs(result.margin),
-    region: region.name.toLowerCase().replace('_', ' '),
+    region: region.name,
+    odds: result.odds,
+    wDeaths: result.winnerDeaths,
+    lDeaths: result.loserDeaths,
+    size: Math.max(attackers.length, defenders.length),
     pos,
-    actors: { participants: [...attackers, ...defenders].map((p2) => p2.pid) },
+    // The ones still standing: the fallen are already on their way back to base.
+    actors: { participants: [...attackers, ...defenders].filter((p2) => p2.alive).map((p2) => p2.pid) },
+    payload: {
+      region: region.name,
+      odds: Number(result.odds.toFixed(3)),
+      deaths: { winner: result.winnerDeaths, loser: result.loserDeaths },
+    },
   });
 
   // docs/04 section 6.4: a skirmish with bodies left on both sides can turn into the
@@ -226,7 +340,11 @@ export function rollSkirmish(state) {
     && aliveOf(RED).length >= 4
     && state.rng.chance(BALANCE.escalation)
   ) {
-    runTeamfight(state, result.winner, state.opponent(result.winner), { pos, region: region.name });
+    runTeamfight(state, result.winner, state.opponent(result.winner), {
+      pos,
+      region: region.name,
+      escalated: true,
+    });
   }
 
   return result;
@@ -247,12 +365,25 @@ function pushLane(state, side, regionName) {
 
 /** A named teamfight, with the start/end pair the replay ticker reads. */
 export function runTeamfight(state, attacker, defender, opts = {}) {
-  const region = (opts.region || 'MID_LANE').toLowerCase().replace('_', ' ');
-  state.emit('TEAMFIGHT_START', { team: attacker.name, region, pos: opts.pos });
+  const region = opts.region || 'MID_LANE';
+  const participants = [...aliveOf(attacker), ...aliveOf(defender)].map((p) => p.pid);
+
+  state.emit('TEAMFIGHT_START', {
+    team: attacker.name,
+    region,
+    objective: opts.objective,
+    highStakes: opts.highStakes,
+    escalated: opts.escalated,
+    late: state.t >= BALANCE.phases.mid,
+    pos: opts.pos,
+    actors: { participants },
+    payload: compact({ region, objective: opts.objective }),
+  });
 
   const result = resolveFight(state, attacker, defender, {
     kind: 'TEAMFIGHT',
     pos: opts.pos,
+    region,
     highStakes: opts.highStakes,
   });
 
@@ -260,8 +391,21 @@ export function runTeamfight(state, attacker, defender, opts = {}) {
     state.emit('TEAMFIGHT_END', {
       team: result.winner.name,
       margin: result.margin,
+      odds: result.odds,
+      wDeaths: result.winnerDeaths,
+      lDeaths: result.loserDeaths,
+      aced: result.aced,
+      objective: opts.objective,
+      region,
+      late: state.t >= BALANCE.phases.mid,
       pos: opts.pos,
-      payload: { pWin: Number(result.pWin.toFixed(3)) },
+      actors: { participants: participants.filter((pid) => state.players.find((p) => p.pid === pid)?.alive) },
+      payload: {
+        pWin: Number(result.pWin.toFixed(3)),
+        odds: Number(result.odds.toFixed(3)),
+        region,
+        deaths: { winner: result.winnerDeaths, loser: result.loserDeaths },
+      },
     });
   }
 

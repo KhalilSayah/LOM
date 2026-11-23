@@ -1,7 +1,8 @@
 import { serverSupabaseServiceRole } from '#supabase/server';
 import { requireManager, ensureProfile } from '~~/server/utils/auth';
-import { leagueByCode, membersOf, formatMatchHour } from '~~/server/utils/league';
-import { MAX_MANAGERS } from '~~/shared/league';
+import { leagueByCode, membersOf, formatMatchHour, rosterReadiness } from '~~/server/utils/league';
+import { MAX_MANAGERS, seasonShape } from '~~/shared/league';
+import { ROLES } from '~~/shared/roster';
 
 /**
  * What an invite link shows before you accept it.
@@ -11,6 +12,11 @@ import { MAX_MANAGERS } from '~~/shared/league';
  * is already in it and when they play, and lets you decide. The code is enough to
  * read this and nothing more: no collections, no emails, no uuids that would let the
  * holder of a code act on anybody in it.
+ *
+ * It does say one thing about the person reading it: whether they have anything to
+ * play with yet. A brand-new account arrives here from a group chat with no cards and
+ * a welcome pack it has not opened, and "you bring the collection you already have" is
+ * no help to somebody whose collection is empty.
  */
 export default defineEventHandler(async (event) => {
   const manager = await requireManager(event);
@@ -28,6 +34,16 @@ export default defineEventHandler(async (event) => {
   const byId = new Map((profiles || []).map((p: any) => [p.id, p]));
   const host = byId.get(league.owner_id);
 
+  const [readiness, { count: cards }, { count: gifts }] = await Promise.all([
+    rosterReadiness(db, [profileId]),
+    db.from('collection_cards').select('id', { count: 'exact', head: true }).eq('profile_id', profileId),
+    db.from('pack_gifts').select('id', { count: 'exact', head: true })
+      .eq('profile_id', profileId).is('opened_at', null),
+  ]);
+
+  // The season the reader would be joining: with them in it, if there is a seat.
+  const shape = seasonShape(Math.min(MAX_MANAGERS, members.length + 1));
+
   return {
     league: {
       id: league.id,
@@ -35,7 +51,9 @@ export default defineEventHandler(async (event) => {
       status: league.status,
       timezone: league.timezone,
       matchHour: formatMatchHour(league.match_hour),
-      seasonLengthDays: league.season_length_days,
+      /** Derived from the league's size — see shared/league.ts `seasonShape`. */
+      seasonLengthDays: shape.totalDays,
+      matchDays: shape.matchDays,
       memberCount: members.length,
       maxMembers: MAX_MANAGERS,
     },
@@ -43,5 +61,12 @@ export default defineEventHandler(async (event) => {
     members: members.map((m) => ({ teamName: m.team_name, isOwner: m.is_owner })),
     alreadyIn: members.some((m) => m.profile_id === profileId),
     full: members.length >= MAX_MANAGERS,
+    /** The reader's own state, so the invite can tell a new account what to do first. */
+    me: {
+      cards: cards ?? 0,
+      rosterFilled: readiness.get(profileId) ?? 0,
+      rosterSlots: ROLES.length,
+      packsWaiting: gifts ?? 0,
+    },
   };
 });

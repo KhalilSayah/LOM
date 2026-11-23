@@ -23,11 +23,22 @@
  * image frames, and /map-check.html exists to find those numbers.
  */
 
+import { STRUCTURES } from '~~/packages/sim/src/map.js';
+
 const props = defineProps<{
   positions: any[];
   structures: any;
-  flash?: { x: number; y: number; kind: string } | null;
+  /**
+   * The thing that just happened. `at` is the performance.now() it happened at, and the
+   * ring animates for FLASH_MS of real time from then — not game time, which at 60x would
+   * be gone in a frame. Without `at` it is drawn as a still ring.
+   */
+  flash?: { x: number; y: number; kind: string; at?: number } | null;
 }>();
+
+const FLASH_MS = 700;
+const BIG_FLASH = new Set(['MULTIKILL', 'ACE', 'BARON', 'ELDER', 'SOUL', 'NEXUS', 'FIRST_BLOOD', 'DRAGON', 'INHIBITOR']);
+let reducedMotion = false;
 
 /**
  * The game coordinates the art covers, per axis.
@@ -128,23 +139,12 @@ function sideShape(ctx: CanvasRenderingContext2D, team: string, x: number, y: nu
 /**
  * Turret positions per lane, outer to inhibitor turret, then the inhibitor.
  *
- * Red's are blue's rotated 180 degrees about the centre — but that rotation sends the
- * left edge to the right edge, and the left edge is top lane while the right edge is
- * bot. So red's top turrets are the mirror of blue's *bot* anchors, and vice versa.
- * Mirroring lane-for-lane drew a fallen top turret on the wrong side of the map.
+ * Read from the engine's own table (packages/sim/src/map.js), so the structure that falls
+ * on the map and the ring its event draws are always in the same place. Red's are blue's
+ * rotated 180 degrees with top and bot swapped; the table explains why.
  */
-function lanePoints(team: 'BLUE' | 'RED', lane: 'TOP' | 'MID' | 'BOT') {
-  const anchors: Record<string, [number, number][]> = {
-    TOP: [[980, 10440], [1180, 6430], [1180, 4400], [1050, 3700]],
-    MID: [[5850, 6400], [5050, 4800], [3900, 3600], [3300, 3200]],
-    BOT: [[10500, 1050], [6900, 1220], [4300, 1220], [3700, 1050]],
-  };
-
-  const MIRRORED = { TOP: 'BOT', BOT: 'TOP', MID: 'MID' } as const;
-  const source = team === 'BLUE' ? anchors[lane] : anchors[MIRRORED[lane]];
-
-  return source.map(([x, y]) =>
-    team === 'BLUE' ? { x, y } : { x: 14870 - x, y: 14870 - y });
+function lanePoints(team: 'BLUE' | 'RED', lane: 'TOP' | 'MID' | 'BOT'): { x: number; y: number }[] {
+  return (STRUCTURES as any)[team][lane];
 }
 
 const project = (w: number, h: number, x: number, y: number) => ({
@@ -233,7 +233,32 @@ function draw() {
       ctx.stroke();
     }
 
-    const base = team === 'BLUE' ? p(1500, 1500) : p(14870 - 1500, 14870 - 1500);
+    // Nexus turrets: same shapes as the lane turrets, a touch smaller.
+    const nexusTurrets: { x: number; y: number }[] = (STRUCTURES as any)[team].nexusTurrets;
+    nexusTurrets.forEach((point, i) => {
+      const at = p(point.x, point.y);
+      const alive = i < (built.nexusTurrets ?? 2);
+      const r = unit * 0.009;
+      ctx.beginPath();
+      if (team === 'RED') {
+        const d = r * 1.3;
+        ctx.moveTo(at.x, at.y - d);
+        ctx.lineTo(at.x + d, at.y);
+        ctx.lineTo(at.x, at.y + d);
+        ctx.lineTo(at.x - d, at.y);
+        ctx.closePath();
+      } else {
+        ctx.rect(at.x - r, at.y - r, r * 2, r * 2);
+      }
+      ctx.fillStyle = alive ? colour : 'rgba(8, 12, 20, 0.6)';
+      ctx.fill();
+      ctx.strokeStyle = alive ? 'rgba(5, 8, 14, 0.8)' : 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+
+    const nexus = (STRUCTURES as any)[team].nexus;
+    const base = p(nexus.x, nexus.y);
     ctx.beginPath();
     ctx.arc(base.x, base.y, unit * 0.024, 0, Math.PI * 2);
     ctx.strokeStyle = built.nexus ? colour : 'rgba(255,255,255,0.14)';
@@ -241,14 +266,19 @@ function draw() {
     ctx.stroke();
   }
 
-  // The thing that just happened.
+  // The thing that just happened: a ring that opens out and fades over FLASH_MS of real
+  // time, larger for the moments that matter. Held still under reduced motion.
   if (props.flash) {
     const at = p(props.flash.x, props.flash.y);
+    const big = BIG_FLASH.has(props.flash.kind);
+    const f = props.flash.at && !reducedMotion
+      ? Math.min(1, Math.max(0, (performance.now() - props.flash.at) / FLASH_MS))
+      : 0.35;
     ctx.beginPath();
-    ctx.arc(at.x, at.y, unit * 0.045, 0, Math.PI * 2);
+    ctx.arc(at.x, at.y, unit * (big ? 0.035 + 0.05 * f : 0.03 + 0.03 * f), 0, Math.PI * 2);
     ctx.strokeStyle = COLOURS.FLASH;
-    ctx.globalAlpha = 0.85;
-    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.95 * (1 - f * 0.85);
+    ctx.lineWidth = big ? 3 : 2;
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
@@ -292,6 +322,23 @@ function schedule() {
 watch(() => [props.positions, props.structures, props.flash], schedule);
 
 /**
+ * While a ring is opening, keep drawing even if nothing else moves, so a replay paused on
+ * the moment still shows the ring finish. Stops by itself when the ring is done.
+ */
+let ringFrame = 0;
+function animateRing() {
+  cancelAnimationFrame(ringFrame);
+  const started = props.flash?.at;
+  if (!started || reducedMotion || typeof window === 'undefined') return;
+  const step = () => {
+    draw();
+    if (props.flash?.at === started && performance.now() - started < FLASH_MS) ringFrame = requestAnimationFrame(step);
+  };
+  ringFrame = requestAnimationFrame(step);
+}
+watch(() => props.flash?.at, animateRing);
+
+/**
  * Whatever is in public/map, under any of the names a downloaded render arrives
  * with. Trying in order rather than demanding a .png means dropping in a new map is
  * a file copy and not a file copy plus a rename plus working out why the canvas went
@@ -317,6 +364,7 @@ function loadArt(index = 0) {
 let resizer: ResizeObserver | null = null;
 
 onMounted(() => {
+  reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   readTokens();
   loadArt();
   schedule();
@@ -335,6 +383,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(frame);
+  cancelAnimationFrame(ringFrame);
   frame = 0;
   resizer?.disconnect();
   window.removeEventListener('resize', schedule);

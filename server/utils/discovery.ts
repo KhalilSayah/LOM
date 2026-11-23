@@ -23,14 +23,51 @@ export interface PublicManager {
   joinedAt: string;
 }
 
+export interface ShowcaseCard {
+  /** collection_cards.id, so a page holding the full list can find the card itself. */
+  id: string;
+  cardKey: string;
+  playerName: string;
+  season: number | null;
+  ovr: number;
+  rarity: string;
+  role: string | null;
+  team: string | null;
+}
+
 export interface CollectionSummary {
   total: number;
   bands: Record<string, number>;
   /** The card they would show you first. Null if the collection is empty. */
   best: { playerName: string; season: number | null; ovr: number; rarity: string } | null;
+  /** Up to three cards they starred, rarest first. Empty until they star one. */
+  showcase: ShowcaseCard[];
 }
 
-export const EMPTY_SUMMARY: CollectionSummary = { total: 0, bands: {}, best: null };
+export const EMPTY_SUMMARY: CollectionSummary = { total: 0, bands: {}, best: null, showcase: [] };
+
+/** PostgREST returns at most this many rows per request, whatever the query asks for. */
+export const PAGE = 1000;
+
+/**
+ * Every row a query would return, a page at a time.
+ *
+ * PostgREST caps a response at 1000 rows and says nothing when it does, so any read that
+ * can grow past that — a collection, a catalogue — has to page or it is quietly wrong.
+ * `build` must apply a stable order, or rows can repeat or go missing between pages.
+ */
+export async function readAll<T = any>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await build(from, from + PAGE - 1);
+    if (error) throw createError({ statusCode: 500, statusMessage: error.message });
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
+}
 
 const toPublic = (row: any): PublicManager => ({
   id: row.id,
@@ -87,28 +124,45 @@ export async function managersByIds(db: SupabaseClient, ids: string[]): Promise<
 }
 
 /**
- * Card count, rarity tally and headline card for several managers at once.
+ * Card count, rarity tally, headline card and showcase for several managers at once.
  *
- * One query for the whole list rather than one per manager: the discovery screen
- * renders every found manager with their numbers on it, and that is a query per
- * widget if this takes a single id.
+ * One grouped query for the whole list (collection_summaries, migration 0017): the
+ * discovery screen renders every found manager with their numbers on it, and counting
+ * raw rows here was both a query's worth of rows per card and silently wrong past 1000.
+ *
+ * Until 0017 has been run the function does not exist, so this falls back to reading the
+ * rows a page at a time and counting them here — slower, but right.
  */
 export async function summariseCollections(
   db: SupabaseClient,
   ids: string[],
 ): Promise<Map<string, CollectionSummary>> {
   const out = new Map<string, CollectionSummary>();
-  for (const id of ids) out.set(id, { total: 0, bands: {}, best: null });
+  for (const id of ids) out.set(id, { total: 0, bands: {}, best: null, showcase: [] });
   if (!ids.length) return out;
 
-  const { data, error } = await db
+  const { data, error } = await db.rpc('collection_summaries', { p_ids: ids });
+
+  if (!error) {
+    for (const row of (data || []) as any[]) {
+      out.set(row.profile_id, {
+        total: Number(row.total) || 0,
+        bands: row.bands || {},
+        best: row.best ?? null,
+        showcase: Array.isArray(row.showcase) ? row.showcase : [],
+      });
+    }
+    return out;
+  }
+
+  const rows = await readAll<any>((from, to) => db
     .from('collection_cards')
-    .select('profile_id, card_definitions ( player_name, season, ovr, rarity )')
-    .in('profile_id', ids);
+    .select('id, profile_id, card_definitions ( player_name, season, ovr, rarity )')
+    .in('profile_id', ids)
+    .order('id')
+    .range(from, to));
 
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message });
-
-  for (const row of (data || []) as any[]) {
+  for (const row of rows) {
     const card = row.card_definitions;
     const summary = out.get(row.profile_id);
     if (!card || !summary) continue;

@@ -74,16 +74,47 @@ function ensure(): AudioContext | null {
   return ctx;
 }
 
-/** Called from the first gesture. */
+/**
+ * Any state but running needs a resume: 'suspended' before the first gesture or after the
+ * tab was hidden, and 'interrupted' — Safari's own state — after a phone call, Siri, or
+ * another app taking the audio session.
+ */
+const needsResume = (c: AudioContext) => (c.state as string) !== 'running' && (c.state as string) !== 'closed';
+let primed = false;
+
+/** Called from every gesture (see plugins/sound.client.ts); cheap once audio is running. */
 export function unlockAudio() {
   loadPrefs();
   const c = ensure();
-  if (c && c.state === 'suspended') c.resume().catch(() => {});
+  if (!c) return;
+  if (needsResume(c)) c.resume().catch(() => {});
+  // Older iOS only truly unlocks once a buffer has been started inside the gesture itself.
+  if (!primed) {
+    primed = true;
+    try {
+      const src = c.createBufferSource();
+      src.buffer = c.createBuffer(1, 1, c.sampleRate);
+      src.connect(c.destination);
+      src.start(0);
+    } catch { primed = false; }
+  }
 }
 
+/** Coming back to the tab: wake a context that already exists, never create one. */
+export function resumeAudio() {
+  if (ctx && needsResume(ctx)) ctx.resume().catch(() => {});
+}
+
+/**
+ * Two seconds of white noise, played looped from a random point.
+ *
+ * Looping is what lets one short buffer serve a hiss of any length — before, a long sweep
+ * that started late in a 1.2s buffer simply ran out and cut off. White noise has no
+ * audible seam at the loop point, and the random start keeps two hisses from phasing.
+ */
 function noise(c: AudioContext) {
   if (noiseBuffer) return noiseBuffer;
-  const len = c.sampleRate * 1.2;
+  const len = c.sampleRate * 2;
   noiseBuffer = c.createBuffer(1, len, c.sampleRate);
   const data = noiseBuffer.getChannelData(0);
   for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
@@ -145,7 +176,9 @@ function hiss(c: AudioContext, o: NoiseOpts) {
   const t0 = c.currentTime + (o.at ?? 0);
   const dur = o.dur ?? 0.2;
   const src = c.createBufferSource();
-  src.buffer = noise(c);
+  const buf = noise(c);
+  src.buffer = buf;
+  src.loop = true;
   const f = c.createBiquadFilter();
   f.type = o.type ?? 'bandpass';
   f.frequency.setValueAtTime(o.freq ?? 2000, t0);
@@ -156,7 +189,7 @@ function hiss(c: AudioContext, o: NoiseOpts) {
   g.gain.exponentialRampToValueAtTime(o.gain ?? 0.15, t0 + (o.attack ?? 0.01));
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   src.connect(f).connect(g).connect(master!);
-  src.start(t0, Math.random() * 0.5);
+  src.start(t0, Math.random() * buf.duration);
   src.stop(t0 + dur + 0.05);
 }
 
@@ -284,7 +317,13 @@ export function playSound(name: SoundName) {
   loadPrefs();
   if (!enabled.value || volume.value <= 0) return;
   const c = ensure();
-  if (!c || !master || c.state !== 'running') return;
+  if (!c || !master) return;
+  if (c.state !== 'running') {
+    // Interrupted or suspended behind our back: ask to wake up, and skip this one sound
+    // rather than queueing it to play late.
+    if (needsResume(c)) c.resume().catch(() => {});
+    return;
+  }
   const now = performance.now();
   const gap = MIN_GAP[name] ?? 30;
   if (now - (lastPlayed[name] ?? 0) < gap) return;
@@ -315,4 +354,77 @@ export function useSound() {
     savePrefs();
   }
   return { enabled, volume, play: playSound, setEnabled, setVolume, revealSoundFor };
+}
+
+// --- the match's big moments (appended by the match-watch work) -------------------
+// Kept apart from RECIPES so the library above stays untouched: these are the stings the
+// watch screen plays over its big-moment banner, rarer and louder than a kill ping.
+
+export type MatchSoundName =
+  | 'firstBlood' | 'doubleKill' | 'tripleKill' | 'quadraKill' | 'pentaKill'
+  | 'ace' | 'baronTaken' | 'elderTaken' | 'soulTaken' | 'steal' | 'nexusFall';
+
+/** A rising run of struck notes, one per kill: the ramp a multikill climbs. */
+function killRamp(c: AudioContext, count: number) {
+  tone(c, { freq: 180, to: 60, dur: 0.18, gain: 0.3, attack: 0.002 });
+  hiss(c, { dur: 0.08, gain: 0.12, freq: 2600, q: 2 });
+  for (let i = 0; i < count; i++) chime(c, N(i * 3 + 3, 440), 0.05 + i * 0.09, 0.11, 0.45 + i * 0.08);
+  if (count >= 4) sparkle(c, 0.12 + count * 0.09, count * 2, 1760);
+}
+
+const MATCH_RECIPES: Record<MatchSoundName, (c: AudioContext) => void> = {
+  firstBlood: (c) => {
+    tone(c, { freq: 220, to: 70, dur: 0.22, gain: 0.32, attack: 0.002 });
+    hiss(c, { dur: 0.1, gain: 0.14, freq: 3000, q: 1.5 });
+    chime(c, N(0, 659.25), 0.05, 0.12, 0.4);
+    chime(c, N(5, 659.25), 0.16, 0.12, 0.6);
+  },
+  doubleKill: (c) => killRamp(c, 2),
+  tripleKill: (c) => killRamp(c, 3),
+  quadraKill: (c) => killRamp(c, 4),
+  pentaKill: (c) => { boom(c, 0, 0.45); killRamp(c, 5); [0, 4, 7, 12].forEach((s) => tone(c, { freq: N(s - 12, 523.25), at: 0.5, dur: 1.4, gain: 0.05, type: 'sawtooth', attack: 0.08, release: 0.9 })); },
+  ace: (c) => {
+    boom(c, 0, 0.4);
+    [0, 3, 7, 12].forEach((s, i) => chime(c, N(s, 392), 0.06 + i * 0.07, 0.12, 0.9));
+    tone(c, { freq: N(-12, 392), at: 0.06, dur: 1.1, gain: 0.07, type: 'sawtooth', attack: 0.05, release: 0.7 });
+  },
+  baronTaken: (c) => {
+    boom(c, 0, 0.55);
+    tone(c, { freq: 73.4, dur: 1.3, gain: 0.16, type: 'sawtooth', attack: 0.08, release: 0.8 });
+    tone(c, { freq: 110, at: 0.12, dur: 1.1, gain: 0.11, type: 'sawtooth', attack: 0.08, release: 0.7 });
+    tone(c, { freq: 146.8, at: 0.24, dur: 0.9, gain: 0.08, type: 'sawtooth', attack: 0.08, release: 0.6 });
+    hiss(c, { at: 0.05, dur: 0.9, gain: 0.06, type: 'lowpass', freq: 600, to: 120 });
+  },
+  elderTaken: (c) => {
+    boom(c, 0, 0.4);
+    hiss(c, { dur: 0.9, gain: 0.07, freq: 500, to: 4200, q: 1.2, attack: 0.4 });
+    [0, 5, 10, 15].forEach((s, i) => chime(c, N(s, 330), 0.1 + i * 0.09, 0.11, 1));
+  },
+  soulTaken: (c) => { [0, 4, 7, 11].forEach((s, i) => chime(c, N(s, 523.25), i * 0.08, 0.1, 0.9)); sparkle(c, 0.35, 6, 2093); },
+  steal: (c) => {
+    hiss(c, { dur: 0.35, gain: 0.2, type: 'highpass', freq: 400, to: 6000, q: 0.8, attack: 0.25 });
+    tone(c, { freq: 300, to: 1200, dur: 0.3, gain: 0.08, type: 'triangle', attack: 0.2 });
+    chime(c, N(12, 880), 0.32, 0.13, 0.6);
+    sparkle(c, 0.36, 8, 2349);
+  },
+  nexusFall: (c) => {
+    boom(c, 0, 0.6);
+    boom(c, 0.22, 0.45);
+    hiss(c, { at: 0.05, dur: 1.4, gain: 0.12, type: 'lowpass', freq: 1400, to: 90 });
+    tone(c, { freq: 55, at: 0.1, dur: 1.8, gain: 0.14, type: 'sawtooth', attack: 0.1, release: 1 });
+  },
+};
+
+const lastMatchPlayed: Partial<Record<MatchSoundName, number>> = {};
+
+/** Same gates as playSound: silent until unlocked, off when muted, never throws. */
+export function playMatchSound(name: MatchSoundName) {
+  loadPrefs();
+  if (!enabled.value || volume.value <= 0) return;
+  const c = ensure();
+  if (!c || !master || c.state !== 'running') return;
+  const now = performance.now();
+  if (now - (lastMatchPlayed[name] ?? 0) < 250) return;
+  lastMatchPlayed[name] = now;
+  try { MATCH_RECIPES[name](c); } catch { /* a sound never breaks a screen */ }
 }

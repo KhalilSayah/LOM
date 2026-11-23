@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  phaseOf, watchClock, watchSettled, botThinkSeconds,
+  phaseOf, watchClock, watchSettled, botThinkSeconds, matchEnd, timingOfRow, draftClock, asDifficulty,
   LOBBY_SECONDS, RESULT_GRACE_SECONDS, BOT_THINK_MIN, BOT_THINK_MAX,
   type RoomTiming,
 } from '../duelRoom.ts';
+import { upcoming } from '../draft.ts';
 
 /**
  * The phase contract, tested because three things read it and they must agree.
@@ -162,4 +163,55 @@ test('the agent is not on a metronome', () => {
 
 test('a different duel thinks differently', () => {
   assert.notEqual(botThinkSeconds('duel-abc', 0), botThinkSeconds('duel-xyz', 0));
+});
+
+test('a match ends at its last event, not at gameLength', () => {
+  // The engine stamps the Baron and the nexus up to a minute past gameLength. A clock that
+  // stopped at gameLength cut away before the nexus fell.
+  const result = { gameLength: 1800, events: [{ t: 100 }, { t: 1790 }, { t: 1845 }] };
+  assert.equal(matchEnd(result), 1845);
+  assert.equal(matchEnd({ gameLength: 1800, events: [{ t: 1700 }] }), 1800);
+  assert.equal(matchEnd(null), 0);
+
+  const room = timingOfRow({
+    status: 'WATCHING', starts_at: iso(0), watch_start_at: iso(0), watch_speed: 60, result,
+  });
+  assert.equal(room.gameLength, 1845);
+  // 1845 match seconds at 60x is 30.75 s of wall clock: still on at 30.5 s, over at 31 s.
+  assert.equal(phaseOf(room, at(30.5)), 'WATCH');
+  assert.equal(watchClock(room, at(30.5)), 1830);
+  assert.equal(phaseOf(room, at(31)), 'RESULT');
+});
+
+test('the draft clock runs into bonus time without jumping', () => {
+  const deadlineAt = iso(30);
+  const bonus = { BLUE: 60, RED: 45, staked: null };
+
+  // The action's own 30 seconds, with the pool shown in reserve.
+  assert.deepEqual(draftClock({ deadlineAt, bonus, side: 'BLUE', now: at(10) }),
+    { main: 20, bonus: 60, inBonus: false, shown: 20 });
+  // Past the deadline, before the server has staked the pool: predicted, not a zero.
+  assert.deepEqual(draftClock({ deadlineAt, bonus, side: 'BLUE', now: at(35) }),
+    { main: 0, bonus: 55, inBonus: true, shown: 55 });
+  // Once staked the deadline already contains the pool; the reading is the same.
+  const staked = { BLUE: 0, RED: 45, staked: { side: 'BLUE', amount: 60 } };
+  assert.deepEqual(draftClock({ deadlineAt: iso(90), bonus: staked, side: 'BLUE', now: at(35) }),
+    { main: 0, bonus: 55, inBonus: true, shown: 55 });
+  // The agent playing a side on purpose has no bonus time.
+  assert.equal(draftClock({ deadlineAt, bonus, side: 'RED', botSide: 'RED', now: at(35) })!.inBonus, false);
+});
+
+test('the order is said the way a caster says it', () => {
+  // Step 7 (idx 6) is blue's first pick; red then picks twice.
+  assert.deepEqual(upcoming(6, 'BLUE'), { next: { side: 'RED', kind: 'PICK', count: 2 }, stepsUntilMine: 0 });
+  assert.equal(upcoming(6, 'RED').stepsUntilMine, 1);
+  assert.equal(upcoming(7, 'BLUE').stepsUntilMine, 2);
+  assert.equal(upcoming(19, 'BLUE').next, null);
+  assert.equal(upcoming(19, 'BLUE').stepsUntilMine, null);
+});
+
+test('difficulty defaults to normal', () => {
+  assert.equal(asDifficulty('hard'), 'HARD');
+  assert.equal(asDifficulty(null), 'NORMAL');
+  assert.equal(asDifficulty('nightmare'), 'NORMAL');
 });

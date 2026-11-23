@@ -1,6 +1,6 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
-  phaseOf, watchClock, RESULT_GRACE_SECONDS, WATCH_SPEED,
+  phaseOf, watchClock, matchEnd, draftClock, RESULT_GRACE_SECONDS, WATCH_SPEED,
   type RoomPhase, type RoomTiming,
 } from '~~/shared/duelRoom';
 
@@ -20,9 +20,9 @@ import {
  *     the server makes — a lock, a turn advancing, the draft ending into the watch — arrives
  *     at both clients from the same WAL event, which is as close to simultaneous as two
  *     devices get.
- *   - **Hover by broadcast.** Client to client, never through the database. 0006 made hover a
- *     column with an apology attached ("with polling there is nowhere to forget it to"); on a
- *     channel there is, so hover costs nothing and arrives in one hop.
+ *   - **Hover by broadcast.** Client to client, never through the database. What the
+ *     opponent sees is this; the player's own selection is *also* saved to the server
+ *     (saveSelection), but only so the clock can honour it, never to show anybody.
  *   - **Presence.** Who is actually in the room, which is what lets the screen say "they are
  *     here" rather than guessing from whether actions are arriving.
  *   - **One clock.** `offset` is measured against the server and every countdown and the
@@ -42,8 +42,10 @@ export interface RoomState {
   source: string;
   side: 'BLUE' | 'RED' | null;
   opponent: string;
+  opponentId: string | null;
   isBot: boolean;
   botSide: string | null;
+  difficulty: string | null;
   turn: number;
   length: number;
   order: any[];
@@ -55,29 +57,36 @@ export interface RoomState {
   watchStartAt: string | null;
   watchSpeed: number;
   serverNow: string;
+  updatedAt: string | null;
   bonus: Record<string, any>;
+  myHover: { championKey: string; championName: string; slot: string | null } | null;
   actions: any[];
   blueLineup: any;
   redLineup: any;
-  pool?: Array<{ key: string; name: string }>;
+  composition: { mine: any; theirs: any } | null;
+  pool?: Array<{ key: string; name: string; roles?: string[] }>;
   result: any | null;
+  rewards?: any;
 }
 
 export interface Hover {
   side: string;
   kind: string;
   turn: number;
-  championKey: string;
-  championName: string;
+  championKey: string | null;
+  championName: string | null;
   slot: string | null;
 }
+
+/** How long the channel may be down on first load before the screen says so. */
+const RECONNECT_GRACE_MS = 4000;
 
 export function useDuelRoom(duelId: string) {
   const supabase = useSupabaseClient();
   const me = useManagerId();
 
   const state = ref<RoomState | null>(null);
-  const pool = ref<Array<{ key: string; name: string }>>([]);
+  const pool = ref<Array<{ key: string; name: string; roles?: string[] }>>([]);
   const error = ref('');
   const loading = ref(true);
   /** Their hover, as broadcast. Ours is local and never round-trips. */
@@ -85,6 +94,9 @@ export function useDuelRoom(duelId: string) {
   const opponentHere = ref(false);
   /** False while the channel is down and the room is on its polling fallback. */
   const live = ref(false);
+  /** True once the channel has been up at least once, so a first connect is not a "reconnect". */
+  const everLive = ref(false);
+  const mountedAt = ref(0);
 
   /**
    * Server time minus ours.
@@ -93,18 +105,25 @@ export function useDuelRoom(duelId: string) {
    * arrived, so taking it at face value leaves each device out by its own latency — which is
    * exactly how two phones on different connections came to show different numbers for the
    * same deadline. Charging half the measured round trip puts them within tens of
-   * milliseconds.
+   * milliseconds. Both the resync and the nudge correct this way; the nudge used not to,
+   * and every nudge undid the correction the last resync had made.
    */
   let offset = 0;
   const now = ref(Date.now());
   /** The corrected clock. Everything that compares against a server instant uses this. */
   const clock = computed(() => now.value + offset);
 
+  const sample = (serverNow: string, sentAt: number) => {
+    const arrived = Date.now();
+    offset = new Date(serverNow).getTime() + (arrived - sentAt) / 2 - arrived;
+  };
+
   let channel: RealtimeChannel | null = null;
   let ticker: ReturnType<typeof setInterval> | undefined;
   let fallback: ReturnType<typeof setInterval> | undefined;
   let dueTimer: ReturnType<typeof setTimeout> | undefined;
   let resyncTimer: ReturnType<typeof setTimeout> | undefined;
+  let selectionTimer: ReturnType<typeof setTimeout> | undefined;
   let nudging = false;
 
   // --- the authoritative read ------------------------------------------------
@@ -115,8 +134,7 @@ export function useDuelRoom(duelId: string) {
       const next = await $fetch<RoomState>(
         `/api/duel/${duelId}${withPool ? '?pool=1' : ''}`,
       );
-      const rtt = Date.now() - sentAt;
-      offset = new Date(next.serverNow).getTime() + rtt / 2 - Date.now();
+      sample(next.serverNow, sentAt);
       if (next.pool) pool.value = next.pool;
       state.value = next;
       error.value = '';
@@ -124,7 +142,7 @@ export function useDuelRoom(duelId: string) {
     } catch (e: any) {
       // The last good state stays on screen. A dropped request on a phone is ordinary and
       // blanking a live draft for it is worse than being a moment stale.
-      error.value = e?.data?.statusMessage || e?.message || 'Reconnecting…';
+      error.value = e?.data?.statusMessage || e?.message || 'Could not reach the room.';
     } finally {
       loading.value = false;
     }
@@ -164,8 +182,11 @@ export function useDuelRoom(duelId: string) {
        * the match finds watchSettled() still false, changes nothing, reschedules against an
        * instant that is now in the past, and fires again immediately. The move from WATCH to
        * RESULT needs no nudge at all — it is a clock comparison both clients make locally.
+       *
+       * The match ends at matchEnd(result), the last event, which is what the server settles
+       * against as well.
        */
-      const wall = s.result.gameLength / (s.watchSpeed || WATCH_SPEED);
+      const wall = matchEnd(s.result) / (s.watchSpeed || WATCH_SPEED);
       return new Date(s.watchStartAt).getTime() + (wall + RESULT_GRACE_SECONDS) * 1000;
     }
     return null;
@@ -213,9 +234,10 @@ export function useDuelRoom(duelId: string) {
     if (nudging) return;
     nudging = true;
     try {
+      const sentAt = Date.now();
       const res = await $fetch<any>(`/api/duel/${duelId}/nudge`, { method: 'POST' });
       // A nudge is also a clock sample and a cheap state check, so take both.
-      if (res?.serverNow) offset = new Date(res.serverNow).getTime() - Date.now();
+      if (res?.serverNow) sample(res.serverNow, sentAt);
 
       if (!state.value || res.status !== state.value.status || res.turn !== state.value.turn) {
         await resync();
@@ -231,6 +253,7 @@ export function useDuelRoom(duelId: string) {
        */
       state.value.deadlineAt = res.deadlineAt ?? state.value.deadlineAt;
       state.value.botActsAt = res.botActsAt ?? null;
+      if (res.bonus) state.value.bonus = res.bonus;
       scheduleDue();
     } catch {
       scheduleDue();
@@ -246,13 +269,24 @@ export function useDuelRoom(duelId: string) {
       .channel(`duel:${duelId}`, { config: { presence: { key: me.value || 'anon' } } })
 
       /**
-       * The duel row: the turn, the clock, the phase. Every server write bumps
-       * `updated_at`, so this fires even when the visible change is only a cursor moving.
+       * The duel row: the turn, the clock, the phase. Every server write that changes what a
+       * screen draws bumps `updated_at`, so this fires even when the visible change is only a
+       * cursor moving.
+       *
+       * The one write that does not bump it is a player's selection being saved for the
+       * clock (hover.post.ts). Its push carries the same `updated_at` the screen already
+       * has, and is skipped — otherwise every tap on a champion would cost both players a
+       * full resync.
        */
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'duels', filter: `id=eq.${duelId}` },
-        () => resyncSoon(),
+        (payload: any) => {
+          const stamp = payload?.new?.updated_at;
+          const known = state.value?.updatedAt;
+          if (stamp && known && new Date(stamp).getTime() === new Date(known).getTime()) return;
+          resyncSoon();
+        },
       )
 
       /**
@@ -269,14 +303,22 @@ export function useDuelRoom(duelId: string) {
       )
 
       /**
-       * Hover, client to client. Never persisted, never trusted, never acted on: it is a
-       * thing to look at while somebody decides. The action log still decides what happened.
+       * Hover, client to client. Never trusted, never acted on: it is a thing to look at while
+       * somebody decides. The action log still decides what happened.
+       *
+       * A hover with no champion is a clear, and a hover for a step other than the current
+       * one is stale. Both used to be ignored, which is how "X eyes Ahri" stayed on screen
+       * after X had locked something else, or moved on to the next step.
        */
       .on('broadcast', { event: 'hover' }, ({ payload }) => {
         const h = payload as Hover | null;
-        if (!h || !state.value) return;
-        if (h.side === state.value.side) return;
-        theirHover.value = h.championKey ? h : null;
+        if (!state.value) return;
+        if (h && h.side === state.value.side) return;
+        if (!h || !h.championKey || h.turn !== state.value.turn) {
+          theirHover.value = null;
+          return;
+        }
+        theirHover.value = h;
       })
 
       .on('presence', { event: 'sync' }, () => {
@@ -287,6 +329,7 @@ export function useDuelRoom(duelId: string) {
       .subscribe((status) => {
         live.value = status === 'SUBSCRIBED';
         if (status === 'SUBSCRIBED') {
+          everLive.value = true;
           stopFallback();
           channel?.track({ at: new Date().toISOString() });
           // Whatever was missed between the last read and the subscription being live.
@@ -313,9 +356,34 @@ export function useDuelRoom(duelId: string) {
     fallback = undefined;
   }
 
-  /** Tell the other side what we are considering. Fire and forget, by design. */
+  /**
+   * Tell the other side what we are considering. Fire and forget, by design. `null` clears
+   * it, which is sent as an explicit empty hover so the receiver can tell it apart from a
+   * message it failed to read.
+   */
   function sendHover(h: Hover | null) {
-    channel?.send({ type: 'broadcast', event: 'hover', payload: h });
+    const s = state.value;
+    const payload: Hover = h ?? {
+      side: s?.side ?? '',
+      kind: s?.step?.kind ?? '',
+      turn: s?.turn ?? -1,
+      championKey: null,
+      championName: null,
+      slot: null,
+    };
+    channel?.send({ type: 'broadcast', event: 'hover', payload });
+  }
+
+  /**
+   * Save what is in my hand, so that if the clock beats me it locks this rather than
+   * something the agent picks. Debounced: a player flicking through three champions should
+   * cost one write, not three. Best effort — a failure leaves the old behaviour.
+   */
+  function saveSelection(sel: { turn: number; championKey: string | null; slot: string | null }) {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => {
+      $fetch(`/api/duel/${duelId}/hover`, { method: 'POST', body: sel }).catch(() => {});
+    }, 250);
   }
 
   // --- derived --------------------------------------------------------------
@@ -325,7 +393,8 @@ export function useDuelRoom(duelId: string) {
     startsAt: state.value?.startsAt ?? null,
     watchStartAt: state.value?.watchStartAt ?? null,
     watchSpeed: state.value?.watchSpeed ?? 60,
-    gameLength: state.value?.result?.gameLength ?? null,
+    // The last event, not gameLength: the nexus can fall up to a minute of match time later.
+    gameLength: state.value?.result ? matchEnd(state.value.result) : null,
   }));
 
   const phase = computed<RoomPhase>(() => phaseOf(timing.value, clock.value));
@@ -333,10 +402,22 @@ export function useDuelRoom(duelId: string) {
   /** Where the shared match is, in match seconds. The same number on both screens. */
   const matchClock = computed(() => watchClock(timing.value, clock.value));
 
-  const secondsLeft = computed(() => {
-    if (!state.value?.deadlineAt || phase.value !== 'DRAFT') return null;
-    return Math.max(0, Math.ceil((new Date(state.value.deadlineAt).getTime() - clock.value) / 1000));
+  /**
+   * The clock for the side on the move: its thirty seconds, then its bonus pool, as one
+   * countdown that never jumps (shared/duelRoom.ts draftClock).
+   */
+  const turnClock = computed(() => {
+    if (phase.value !== 'DRAFT' || !state.value?.step) return null;
+    return draftClock({
+      deadlineAt: state.value.deadlineAt,
+      bonus: state.value.bonus,
+      side: state.value.step.side,
+      botSide: state.value.botSide,
+      now: clock.value,
+    });
   });
+
+  const secondsLeft = computed(() => turnClock.value?.shown ?? null);
 
   /** Seconds until the draft opens, while the lobby is up. */
   const lobbyLeft = computed(() => {
@@ -344,11 +425,28 @@ export function useDuelRoom(duelId: string) {
     return Math.max(0, (new Date(state.value.startsAt).getTime() - clock.value) / 1000);
   });
 
+  /**
+   * Whether to tell the player the room is reconnecting.
+   *
+   * Not on the first load: the channel takes a moment to come up on every page open, and
+   * flashing "reconnecting" at somebody who has just arrived says something is wrong when
+   * nothing is. Only once it has been up and dropped, or if it never comes up at all.
+   */
+  const reconnecting = computed(() => {
+    if (live.value || !state.value) return false;
+    if (everLive.value) return true;
+    return mountedAt.value > 0 && now.value - mountedAt.value > RECONNECT_GRACE_MS;
+  });
+
+  // A hover belongs to one step; a new step drops whatever was being shown for the last one.
+  watch(() => state.value?.turn, () => { theirHover.value = null; });
+
   // The phase boundaries are clock-driven, so the screen has to be told when one passes even
   // though nothing arrived. 100 ms keeps the shared watch smooth without a render per frame.
   watch(phase, () => scheduleDue());
 
   onMounted(async () => {
+    mountedAt.value = Date.now();
     await resync(true);
     ticker = setInterval(() => { now.value = Date.now(); }, 100);
     subscribe();
@@ -371,15 +469,16 @@ export function useDuelRoom(duelId: string) {
     clearInterval(ticker);
     clearTimeout(dueTimer);
     clearTimeout(resyncTimer);
+    clearTimeout(selectionTimer);
     stopFallback();
     if (import.meta.client) document.removeEventListener('visibilitychange', onVisible);
     if (channel) supabase.removeChannel(channel);
   });
 
   return {
-    state, pool, error, loading, live,
-    phase, clock, matchClock, secondsLeft, lobbyLeft,
+    state, pool, error, loading, live, reconnecting,
+    phase, clock, matchClock, secondsLeft, turnClock, lobbyLeft,
     theirHover, opponentHere,
-    sendHover, resync, nudge,
+    sendHover, saveSelection, resync, nudge,
   };
 }

@@ -9,13 +9,20 @@
 export function useWallet() {
   const credits = useState<number | null>('wallet-credits', () => null);
   const started = useState('wallet-started', () => false);
-  const { packReady } = usePackSignal();
+  const { packReady, packsWaiting, questsReady } = usePackSignal();
 
   async function refresh() {
     try {
-      const status = await $fetch<{ credits: number; available: boolean }>('/api/pack/status');
+      const status = await $fetch<{
+        credits: number;
+        available: boolean;
+        waiting?: number;
+        quests?: { claimable: number };
+      }>('/api/pack/status');
       credits.value = status.credits;
       packReady.value = status.available;
+      packsWaiting.value = status.waiting ?? (status.available ? 1 : 0);
+      questsReady.value = status.quests?.claimable ?? 0;
     } catch {
       // Signed out or offline: the pill just stays empty.
     }

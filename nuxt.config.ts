@@ -72,15 +72,39 @@ export default defineNuxtConfig({
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
-        { name: 'theme-color', content: '#070b14' },
+        { name: 'theme-color', content: '#04070d' },
+        { name: 'color-scheme', content: 'dark' },
         { name: 'description', content: 'Collect player-season cards from pro League of Legends. One pack a day.' },
+        { name: 'apple-mobile-web-app-title', content: 'LOM' },
+        { name: 'mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
       ],
       link: [
+        { rel: 'icon', href: '/favicon.ico', sizes: '48x48' },
+        { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
+        { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
+        { rel: 'manifest', href: '/manifest.webmanifest' },
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
         {
           rel: 'stylesheet',
           href: 'https://fonts.googleapis.com/css2?family=Mona+Sans:ital,wdth,wght@0,75..125,200..900;1,75..125,200..900&display=swap',
+        },
+      ],
+      script: [
+        {
+          /**
+           * The "Reduce motion" switch in Settings, applied before first paint.
+           *
+           * It sets html[data-motion="reduce"], which main.css reads to calm every transition
+           * and animation. The card engine and a few screens check
+           * matchMedia('(prefers-reduced-motion: reduce)') in script, so while the switch is on
+           * that one query answers "matches" too — the same as if the device were set that
+           * way. Every other query goes to the real matchMedia untouched.
+           */
+          key: 'lom-motion',
+          tagPosition: 'head',
+          innerHTML: "(function(){try{var d=document.documentElement;if(localStorage.getItem('lom-motion')==='reduce')d.setAttribute('data-motion','reduce');var mm=window.matchMedia&&window.matchMedia.bind(window);if(!mm)return;window.matchMedia=function(q){if(d.getAttribute('data-motion')==='reduce'&&/prefers-reduced-motion\\s*:\\s*reduce/.test(q)){return{matches:true,media:q,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}}}return mm(q)}}catch(e){}})();",
         },
       ],
     },
