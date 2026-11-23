@@ -110,7 +110,7 @@ function measure() {
   const w = el.clientWidth;
   const h = stage?.clientHeight ?? 0;
   if (!w || !h) return;
-  ring.pw = Math.round(Math.min(w * 0.57, (h * 0.8) / 1.52, 320));
+  ring.pw = Math.round(Math.min(w * 0.72, h * 0.6, 400));
   ring.R = ring.pw * 1.02;
   ring.dip = ring.pw * 0.075;
   el.style.setProperty('--rw', `${ring.pw / COVER_SIZE.packShare}px`);
@@ -263,8 +263,9 @@ onBeforeUnmount(() => {
   transform: translateX(var(--sh, 0%));
 }
 .dots { display: flex; justify-content: center; }
-.dots button { width: 30px; height: 30px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; }
+.dots button { position: relative; width: 30px; height: 20px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; }
+.dots button::after { content: ''; position: absolute; inset: -9px 0; }
 .dots i { width: 7px; height: 7px; transform: rotate(45deg); box-shadow: inset 0 0 0 1px var(--ink-3); transition: background .14s linear, scale .18s ease; }
 .dots button[aria-current='true'] i { background: var(--gold-2); box-shadow: none; scale: 1.45; }
-@media (pointer: coarse) { .dots button { width: 36px; height: 36px; } }
+@media (pointer: coarse) { .dots button { width: 36px; } }
 </style>

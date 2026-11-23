@@ -155,25 +155,26 @@ function tapFront() {
   requestAnimationFrame(() => { nudged.value = true; });
 }
 
-/** Odds as whole percentages, so the bar and the label agree. */
+const pct = (n: number) => `${+n.toFixed(1)}%`;
+
+/** Odds per card, so the bar and the label agree. */
 const odds = computed(() => {
   const p = pack.value;
   if (!p) return [];
   const total = BANDS.reduce((n, b) => n + (p.weights[b] ?? 0), 0) || 1;
-  return BANDS
-    .map((band) => ({ band, pct: ((p.weights[band] ?? 0) / total) * 100 }))
-    .filter((o) => o.pct > 0);
+  return BANDS.map((band) => ({ band, pct: ((p.weights[band] ?? 0) / total) * 100 }));
 });
-const oddsLabel = computed(() => `Odds per card: ${odds.value.map((o) => `${BAND_LABEL[o.band]} ${o.pct.toFixed(o.pct < 1 ? 1 : 0)}%`).join(', ')}`);
+const oddsLabel = computed(() => `Odds per card: ${odds.value.filter((o) => o.pct > 0).map((o) => `${BAND_LABEL[o.band]} ${pct(o.pct)}`).join(', ')}`);
 
-const chips = computed(() => {
+/** Always the same three facts in the same three places, so nothing moves on a turn. */
+const facts = computed(() => {
   const p = pack.value;
   if (!p) return [];
-  const out = [p.one_per_role ? `${p.slots} cards, one per lane` : p.slots === 1 ? '1 card' : `${p.slots} cards`];
-  if (p.floor_band) out.push(`1 ${BAND_LABEL[p.floor_band]} or better`);
-  else if (p.max_band) out.push(`${BAND_LABEL[p.max_band]} at most`);
-  if (p.daily_limit) out.push(`${p.remainingToday} of ${p.daily_limit} left today`);
-  return out;
+  return [
+    p.one_per_role ? `${p.slots}, one per lane` : p.slots === 1 ? '1 card' : `${p.slots} cards`,
+    p.floor_band ? `1 ${BAND_LABEL[p.floor_band]}+` : p.max_band ? `Up to ${BAND_LABEL[p.max_band]}` : 'All rarities',
+    p.daily_limit ? `${p.remainingToday} of ${p.daily_limit} today` : 'No daily limit',
+  ];
 });
 
 const buyLabel = computed(() => {
@@ -200,11 +201,6 @@ onMounted(() => {
   </main>
 
   <main v-else class="page--screen shop">
-    <header class="shop__head">
-      <h1>Shop</h1>
-      <NuxtLink class="btn btn--quiet" to="/pack" data-sound="back">Daily pack</NuxtLink>
-    </header>
-
     <p v-if="error" class="notice notice--bad shop__error" role="alert">{{ error }}</p>
 
     <section v-if="gift" class="shop__gift" aria-label="Gift">
@@ -215,6 +211,24 @@ onMounted(() => {
       </button>
     </section>
 
+    <header class="shop__top">
+      <div class="shop__bar">
+        <h1>Shop</h1>
+        <h2 v-if="pack" :key="pack.key" class="shop__name" aria-live="polite">{{ pack.name }}</h2>
+        <NuxtLink class="shop__daily" to="/pack" data-sound="back" aria-label="Back to the daily pack">Daily</NuxtLink>
+      </div>
+
+      <template v-if="pack && !loading">
+        <!-- Every description sits in the same cell, so the cell is always as tall as the longest. -->
+        <div class="shop__blurbs">
+          <p v-for="p in packs" :key="p.key" :class="{ 'is-on': p.key === pack.key }" :aria-hidden="p.key !== pack.key">{{ p.blurb }}</p>
+        </div>
+        <ul class="shop__facts">
+          <li v-for="(f, i) in facts" :key="i">{{ f }}</li>
+        </ul>
+      </template>
+    </header>
+
     <div v-if="loading" class="skeleton shop__skeleton" />
 
     <template v-else-if="pack">
@@ -222,19 +236,16 @@ onMounted(() => {
         <PackCarousel ref="carousel" v-model="selected" :packs="packs" @front="tapFront" />
       </div>
 
-      <section class="shop__info" aria-live="polite">
-        <h2 class="shop__name">{{ pack.name }}</h2>
-        <p v-if="pack.blurb" class="shop__blurb">{{ pack.blurb }}</p>
-        <ul class="shop__chips">
-          <li v-for="c in chips" :key="c">{{ c }}</li>
-        </ul>
-
+      <section class="shop__bottom" aria-label="Buy this pack">
         <div class="shop__odds">
           <div class="odds" role="img" :aria-label="oddsLabel">
-            <span v-for="o in odds" :key="o.band" class="odds__band" :class="`odds__band--${o.band.toLowerCase()}`" :style="{ flexGrow: Math.max(o.pct, 1.2) }" />
+            <span
+              v-for="o in odds" v-show="o.pct > 0" :key="o.band" class="odds__band"
+              :class="`odds__band--${o.band.toLowerCase()}`" :style="{ flexGrow: Math.max(o.pct, 1.2) }"
+            />
           </div>
           <ul class="legend" aria-hidden="true">
-            <li v-for="o in odds" :key="o.band"><i class="gem" :class="`gem--${o.band.toLowerCase()}`" />{{ o.pct.toFixed(o.pct < 1 ? 1 : 0) }}%</li>
+            <li v-for="o in odds" :key="o.band" :class="{ 'is-off': !o.pct }"><i class="gem" :class="`gem--${o.band.toLowerCase()}`" />{{ o.pct ? pct(o.pct) : '–' }}</li>
           </ul>
         </div>
 
@@ -247,26 +258,32 @@ onMounted(() => {
           >{{ buyLabel }}</button>
           <button v-if="confirming && buying === null" class="btn btn--ghost btn--lg" type="button" @click="confirming = false">Cancel</button>
         </div>
-        <p v-if="confirming && buying === null" class="shop__note" role="status">
-          You will have {{ ((shop?.credits ?? 0) - pack.price).toLocaleString('en') }} left.
-        </p>
-      </section>
 
-      <footer v-if="shop?.pity" class="shop__foot">
-        <div class="shop__meter">
-          <p><span>Legendary within</span><b class="tnum">{{ shop.pity.legendaryIn }}</b></p>
-          <div class="meter"><i :style="{ width: share(shop.pity.legendaryIn, shop.pity.legendaryEvery) }" /></div>
+        <!-- The confirmation takes the guarantees' place, so the button never pushes anything. -->
+        <div class="shop__after">
+          <footer v-if="shop?.pity" class="shop__foot" :class="{ 'is-under': confirming && buying === null }">
+            <div class="shop__meter">
+              <p><span>Legendary within</span><b class="tnum">{{ shop.pity.legendaryIn }}</b></p>
+              <div class="meter"><i :style="{ width: share(shop.pity.legendaryIn, shop.pity.legendaryEvery) }" /></div>
+            </div>
+            <div class="shop__meter">
+              <p><span>Icon within</span><b class="tnum">{{ shop.pity.iconIn }}</b></p>
+              <div class="meter meter--prism"><i :style="{ width: share(shop.pity.iconIn, shop.pity.iconEvery) }" /></div>
+            </div>
+            <!-- Split around the raised Battle button in the tab bar. -->
+            <nav class="shop__links" aria-label="More about Credits">
+              <NuxtLink to="/odds">Odds and pity</NuxtLink>
+              <span>
+                <NuxtLink to="/sponsors">Sponsors</NuxtLink>
+                <NuxtLink to="/wallet">Wallet</NuxtLink>
+              </span>
+            </nav>
+          </footer>
+          <p v-if="confirming && buying === null" class="shop__note" role="status">
+            You will have <b class="tnum">{{ ((shop?.credits ?? 0) - pack.price).toLocaleString('en') }}</b> left.
+          </p>
         </div>
-        <div class="shop__meter">
-          <p><span>Icon within</span><b class="tnum">{{ shop.pity.iconIn }}</b></p>
-          <div class="meter meter--prism"><i :style="{ width: share(shop.pity.iconIn, shop.pity.iconEvery) }" /></div>
-        </div>
-        <nav class="shop__links" aria-label="More about Credits">
-          <NuxtLink to="/odds">Odds and pity</NuxtLink>
-          <NuxtLink to="/sponsors">Sponsors</NuxtLink>
-          <NuxtLink to="/wallet">Wallet</NuxtLink>
-        </nav>
-      </footer>
+      </section>
     </template>
 
     <div v-else class="empty shop__skeleton"><p>No packs are on sale right now.</p></div>
@@ -274,59 +291,87 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.shop { display: flex; flex-direction: column; gap: 6px; padding: 0 max(16px, env(safe-area-inset-left, 0px)) 2px; overflow: hidden; }
-.shop__head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(100%, 720px); min-height: 50px; margin-inline: auto; }
-.shop__head h1 { font-size: 30px; font-stretch: 76%; font-weight: 850; }
-.shop__head .btn { min-height: 38px; padding: 0 13px; }
+/* What it is, on top. The pack, as large as the screen allows. What it costs, below. */
+.shop { --shop-w: min(100%, 440px); display: flex; flex-direction: column; gap: 6px; padding: 4px max(16px, env(safe-area-inset-left, 0px)) 2px; overflow: hidden; }
 .shop__error { flex: none; margin: 0; }
 .shop__skeleton { flex: 1; min-height: 0; }
 
-.shop__gift { flex: none; display: flex; align-items: center; gap: 10px; width: min(100%, 460px); margin-inline: auto; padding: 7px 8px 7px 11px; background: linear-gradient(165deg, #1a2235, #0c121e 70%); border: 1px solid rgba(216, 176, 100, 0.35); border-radius: var(--radius); }
+.shop__gift { flex: none; display: flex; align-items: center; gap: 10px; width: var(--shop-w); margin-inline: auto; padding: 5px 6px 5px 10px; background: linear-gradient(165deg, #1a2235, #0c121e 70%); border: 1px solid rgba(216, 176, 100, 0.35); border-radius: var(--radius); }
 .shop__gift p { flex: 1; min-width: 0; display: grid; margin: 0; line-height: 1.2; }
-.shop__gift b { overflow: hidden; font-size: 13.5px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
-.shop__gift span.faint { font-size: 12px; }
+.shop__gift b { overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.shop__gift span.faint { font-size: 11.5px; }
+
+.shop__top { flex: none; display: grid; gap: 5px; width: var(--shop-w); margin-inline: auto; }
+.shop__bar { display: grid; grid-template-columns: minmax(52px, 1fr) minmax(0, auto) minmax(52px, 1fr); align-items: center; gap: 6px; min-height: 36px; }
+.shop__bar h1 { grid-column: 1; font-size: 15px; font-stretch: 100%; font-weight: 720; color: var(--ink-3); }
+.shop__name { grid-column: 2; margin: 0; overflow: hidden; font-size: clamp(27px, 8vw, 34px); line-height: 1.05; font-stretch: 76%; font-weight: 850; text-align: center; text-overflow: ellipsis; white-space: nowrap; animation: shop-in 180ms var(--ease-out); }
+.shop__daily { grid-column: 3; justify-self: end; padding: 8px 0 8px 8px; font-size: 13px; font-weight: 650; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--line-3); text-underline-offset: 3px; }
+.shop__daily:hover { color: var(--ink-1); }
+@keyframes shop-in { from { opacity: 0; } }
+
+.shop__blurbs { display: grid; text-align: center; }
+.shop__blurbs p { grid-area: 1 / 1; margin: 0 auto; max-width: 44ch; font-size: 13px; line-height: 1.32; color: var(--ink-2); text-wrap: balance; visibility: hidden; opacity: 0; transition: opacity 180ms linear; }
+.shop__blurbs p.is-on { visibility: visible; opacity: 1; }
+
+.shop__facts { display: grid; grid-template-columns: 1fr 1fr 1fr; margin: 0; padding: 0; list-style: none; border-block: 1px solid var(--line-1); }
+.shop__facts li { min-width: 0; padding: 4px 3px; overflow: hidden; font-size: 12.5px; font-stretch: 86%; font-weight: 680; line-height: 1.25; text-align: center; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-1); }
+.shop__facts li + li { border-left: 1px solid var(--line-1); }
 
 .shop__ring { flex: 1; min-height: 0; margin-inline: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); }
 
-.shop__info { flex: none; display: grid; justify-items: center; gap: 5px; text-align: center; }
-.shop__name { margin: 0; font-size: clamp(26px, 7.4vw, 33px); line-height: 1; font-stretch: 76%; font-weight: 850; }
-.shop__blurb { margin: 0; max-width: 42ch; font-size: 13.5px; line-height: 1.32; color: var(--ink-2); text-wrap: balance; }
-.shop__chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; margin: 1px 0 0; padding: 0; list-style: none; }
-.shop__chips li { padding: 2px 7px; border: 1px solid var(--line-2); border-radius: 2px; background: var(--bg-2); font-size: 11.5px; font-weight: 620; }
-
-.shop__odds { display: grid; gap: 4px; width: min(100%, 380px); margin-top: 2px; }
+.shop__bottom { flex: none; display: grid; gap: 6px; width: min(100%, 400px); margin-inline: auto; }
+.shop__odds { display: grid; gap: 4px; }
 .odds { display: flex; gap: 2px; height: 5px; border-radius: 3px; overflow: hidden; background: var(--bg-4); }
-.odds__band { display: block; min-width: 3px; }
+.odds__band { display: block; min-width: 3px; flex-basis: 0; transition: flex-grow 220ms var(--ease-out); }
 .odds__band--common { background: var(--r-common); }
 .odds__band--rare { background: var(--r-rare); }
 .odds__band--epic { background: var(--r-epic); }
 .odds__band--legendary { background: var(--r-legendary); }
 .odds__band--icon { background: var(--prism); }
-.legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 10px; margin: 0; padding: 0; list-style: none; font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.legend li { display: inline-flex; align-items: center; gap: 4px; }
-.legend .gem { width: 8px; height: 8px; }
+.legend { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; padding: 0; list-style: none; font-size: 11.5px; line-height: 1.2; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.legend li { display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
+.legend li.is-off { opacity: 0.32; }
+.legend .gem { flex: none; width: 8px; height: 8px; }
 
-.shop__cta { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; width: min(100%, 380px); margin-top: 3px; }
+.shop__cta { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .shop__buy { grid-column: 1 / -1; width: 100%; }
 .shop__cta.is-pair .shop__buy { grid-column: auto; padding-inline: 10px; }
 .shop__buy.is-nudged { animation: nudge 0.34s var(--ease-out); }
 @keyframes nudge { 40% { transform: translateY(-3px); } }
-.shop__note { margin: 0; font-size: 12.5px; color: var(--ink-2); }
 
-.shop__foot { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 3px 14px; width: min(100%, 380px); margin: 2px auto 0; }
-.shop__meter p { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 3px; font-size: 11.5px; color: var(--ink-3); }
+.shop__after { display: grid; }
+.shop__foot, .shop__note { grid-area: 1 / 1; }
+.shop__foot { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; }
+.shop__foot.is-under { visibility: hidden; }
+.shop__note { align-self: center; margin: 0; font-size: 13px; line-height: 1.1; text-align: center; color: var(--ink-2); }
+.shop__note b { color: var(--gold-1); }
+.shop__meter p { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 3px; font-size: 11.5px; line-height: 1.2; color: var(--ink-3); }
 .shop__meter b { font-size: 12px; color: var(--ink-1); }
-.shop__links { grid-column: 1 / -1; display: flex; justify-content: center; gap: 14px; font-size: 12px; color: var(--ink-3); }
-.shop__links a { padding: 3px 2px; text-decoration: underline; text-underline-offset: 3px; }
+.shop__links { grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
+.shop__links span { display: inline-flex; gap: 12px; }
+.shop__links a { padding: 2px; text-decoration: underline; text-underline-offset: 3px; }
 .shop__links a:hover { color: var(--ink-1); }
 
-@media (max-height: 760px) { .shop__blurb { display: none; } }
-@media (max-height: 680px) {
-  .shop__head { min-height: 42px; }
-  .shop__head h1 { font-size: 25px; }
-  .legend, .shop__links { display: none; }
-  .shop__buy, .shop__cta .btn { min-height: 46px; }
+/* Short phones: the words go first, then the links. The pack keeps its room. */
+@media (max-height: 720px) {
+  .shop__blurbs, .shop__links { display: none; }
+  .shop__meter .meter { display: none; }
+  .shop__meter p { margin: 0; }
+  /* Clear the raised Battle button once the links stop doing it. */
+  .shop { padding-bottom: 20px; }
 }
-@media (max-height: 590px) { .shop__foot { display: none; } }
-@media (prefers-reduced-motion: reduce) { .shop__buy.is-nudged { animation: none; } }
+@media (max-height: 720px) and (min-width: 1024px) { .shop { padding-bottom: 2px; } }
+@media (max-height: 640px) {
+  .shop { gap: 4px; padding-top: 2px; }
+  .shop__bar { min-height: 32px; }
+  .shop__name { font-size: 25px; }
+  .shop__gift { padding-block: 3px; }
+  .shop__gift span.faint { display: none; }
+  .shop__gift .btn { min-height: 30px; }
+  .shop__buy, .shop__cta .btn { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shop__buy.is-nudged, .shop__name { animation: none; }
+  .shop__blurbs p, .odds__band { transition: none; }
+}
 </style>
