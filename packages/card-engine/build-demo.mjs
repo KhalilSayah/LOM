@@ -44,6 +44,8 @@ const MODULES = [
   'src/template.js',
   'src/tilt.js',
   'src/card.js',
+  'src/pack-art.js',
+  'src/pack-foil.js',
   'src/pack.js',
   'src/index.js',
   'samples/cards.js',

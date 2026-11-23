@@ -1,8 +1,4 @@
 <script setup lang="ts">
-import { SAMPLE_CARDS } from '~~/packages/card-engine/samples/cards.js';
-
-/** Three real player-seasons fanned behind the door: the art, never the placeholder numbers. */
-const fan = [SAMPLE_CARDS[2], SAMPLE_CARDS[4], SAMPLE_CARDS[3]];
 const supabase = useSupabaseClient();
 const user = useSupabaseUser();
 const route = useRoute();
@@ -90,6 +86,13 @@ const error = ref('');
 const needsConfirm = ref(false);
 const info = ref('');
 
+/** The landing page is one screen. The account form slides over it when it is asked for. */
+const accountOpen = ref(asked === 'in' || asked === 'up' || asked === 'forgot');
+function openAccount(m: 'in' | 'up') {
+  setMode(m);
+  accountOpen.value = true;
+}
+
 /** Set while the name step is about to show, so the redirect below does not fire first. */
 const holding = ref(false);
 
@@ -98,7 +101,10 @@ watchEffect(() => {
 });
 
 // The name step is a full-screen moment: no tab bar under it to wander off through.
-watch(mode, (m) => { focus.value = m === 'name'; });
+watch(mode, (m) => {
+  focus.value = m === 'name';
+  if (m === 'name') accountOpen.value = true;
+});
 onBeforeUnmount(() => { focus.value = false; });
 
 function setMode(m: Mode) {
@@ -276,19 +282,41 @@ useSeoMeta({
 
 <template>
   <main class="door">
-    <section class="door__show" aria-hidden="true">
-      <div class="fan">
-        <div v-for="(c, i) in fan" :key="c!.cardKey" class="fan__card" :class="`fan__card--${i}`">
-          <LomCard :card="c!" compact :interactive="false" />
-        </div>
-      </div>
-    </section>
+    <h1 class="brand">
+      <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="#d8b064" stroke-width="1.6" /><path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="#d8b064" /></svg>
+      <b>LOM</b>
+      <small>League of Managers</small>
+    </h1>
 
-    <section class="door__panel">
-      <span class="logo door__logo">
-        <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 2l12 12-12 12L2 14z" fill="none" stroke="#d8b064" stroke-width="1.6" /><path d="M14 7.5L20.5 14 14 20.5 7.5 14z" fill="#d8b064" /></svg>
-        <b>LOM</b>
+    <button class="door__pack" type="button" data-sound="select" aria-label="Play and open your first pack" @click="openAccount('up')">
+      <span class="door__packart"><ClientOnly><PackCover kind="DAILY" /></ClientOnly></span>
+    </button>
+
+    <p v-if="invite" class="door__invite">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v4.5a5 5 0 0 1-10 0zM7 6H4.5a2.5 2.5 0 0 0 2.6 3.4M17 6h2.5a2.5 2.5 0 0 1-2.6 3.4M12 13.5V17M8.5 20h7l-1-3h-5z" /></svg>
+      <span>
+        <b>{{ invite.host }}</b> invited you to <b>{{ invite.league }}</b>
+        <small class="faint">{{ invite.memberCount }} of {{ invite.maxMembers }} managers so far<template v-if="!invite.open"> · the invite has closed</template></small>
       </span>
+    </p>
+    <p v-else-if="sharer" class="door__invite">
+      <span><b>{{ sharer.name }}</b> shared their collection with you.<small class="faint">Sign in to see their cards.</small></span>
+    </p>
+    <p v-else class="door__line">Collect the players who actually played.</p>
+
+    <div class="door__cta">
+      <button class="btn btn--lg btn--block" type="button" data-sound="select" @click="openAccount('up')">Play</button>
+      <button class="btn btn--ghost btn--block" type="button" @click="openAccount('in')">I have an account</button>
+      <p class="door__foot">
+        A private, non-commercial fan project. Not affiliated with or endorsed by Riot Games.
+        Champion art from Riot's Data Dragon.
+      </p>
+    </div>
+
+    <section class="acct" :class="{ 'is-open': accountOpen }" :aria-hidden="!accountOpen" aria-label="Your account">
+      <button v-if="mode !== 'name'" class="icon-btn acct__close" type="button" data-sound="back" aria-label="Close" @click="accountOpen = false">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+      </button>
 
       <!-- The step after sign-up: a name you chose, not one read off your email. -->
       <template v-if="mode === 'name'">
@@ -315,29 +343,8 @@ useSeoMeta({
       </template>
 
       <template v-else>
-        <header class="door__head">
-          <template v-if="invite">
-            <p class="door__invite">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v4.5a5 5 0 0 1-10 0zM7 6H4.5a2.5 2.5 0 0 0 2.6 3.4M17 6h2.5a2.5 2.5 0 0 1-2.6 3.4M12 13.5V17M8.5 20h7l-1-3h-5z" /></svg>
-              <span>
-                <b>{{ invite.host }}</b> invited you to <b>{{ invite.league }}</b>
-                <small class="faint">{{ invite.memberCount }} of {{ invite.maxMembers }} managers so far<template v-if="!invite.open"> · the invite has closed</template></small>
-              </span>
-            </p>
-            <h1>Make an account, then take your seat.</h1>
-          </template>
-          <template v-else-if="sharer">
-            <p class="door__invite">
-              <span><b>{{ sharer.name }}</b> shared their collection with you.<small class="faint">Sign in to see their cards.</small></span>
-            </p>
-            <h1>Collect the players who actually played.</h1>
-          </template>
-          <h1 v-else>Collect the players who actually played.</h1>
-          <p class="door__lede">
-            Every card is a real player-season from pro League of Legends. Faker 2016 and Faker 2023
-            are different cards, with different champion pools and different numbers. One pack a day,
-            a five to field, friends to draft against.
-          </p>
+        <header v-if="mode === 'up' || mode === 'in'" class="door__head">
+          <h2>{{ mode === 'up' ? 'Create your account' : 'Welcome back' }}</h2>
         </header>
 
         <!-- Forgotten password: one field, one link. -->
@@ -428,60 +435,89 @@ useSeoMeta({
         </p>
       </template>
 
-      <p class="door__foot">
-        A private, non-commercial fan project. Not affiliated with or endorsed by Riot Games.
-        Champion art from Riot's Data Dragon.
-      </p>
     </section>
   </main>
 </template>
 
 <style scoped>
+/* One screen: the name, the pack, play. Nothing here scrolls. */
 .door {
-  min-height: 100svh;
+  position: relative;
+  height: 100vh;
+  height: 100dvh;
   display: grid;
-  align-content: center;
-  gap: 8px;
-  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  justify-items: center;
+  gap: 14px;
+  overflow: hidden;
+  overflow: clip;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
 }
+.brand { display: grid; justify-items: center; gap: 7px; margin: 0; }
+.brand svg { width: 34px; height: 34px; }
+.brand b { font-stretch: 125%; font-size: clamp(34px, 11vw, 48px); font-weight: 860; letter-spacing: 0.24em; text-indent: 0.24em; line-height: 1; color: var(--ink-1); }
+.brand small { font-stretch: 118%; font-size: clamp(11px, 3.3vw, 14px); font-weight: 700; letter-spacing: 0.26em; text-indent: 0.26em; text-transform: uppercase; color: var(--gold-2); white-space: nowrap; }
+.door__pack { position: relative; width: 100%; min-height: 0; padding: 0; border: 0; background: none; cursor: pointer; }
+.door__packart { position: absolute; left: 50%; top: 50%; display: block; height: 100%; max-width: 100%; aspect-ratio: 580 / 850; transform: translate(-50%, -50%); }
+.door__line { margin: 0; color: var(--ink-2); font-size: 14.5px; text-align: center; }
+.door__cta { display: grid; gap: 9px; width: min(100%, 380px); }
+.door__foot { margin: 0; font-size: 11px; line-height: 1.4; color: var(--ink-3); text-align: center; max-width: 44ch; justify-self: center; }
 
-.door__show { display: grid; place-items: center; padding: 8px 0 4px; }
-.fan { position: relative; width: 260px; height: 180px; }
-.fan__card { position: absolute; top: 0; width: 112px; }
-.fan__card--0 { left: 10px; top: 22px; transform: rotate(-9deg); }
-.fan__card--1 { left: 74px; z-index: 2; width: 120px; }
-.fan__card--2 { left: 142px; top: 22px; transform: rotate(9deg); }
+/* The invite: a gold-cornered card, the same mark the invite screen uses. */
+.door__invite {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(100%, 380px);
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(216, 176, 100, 0.34);
+  border-radius: var(--radius);
+  background: rgba(216, 176, 100, 0.06);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.door__invite .ico { flex: none; width: 24px; height: 24px; stroke: var(--gold-2); }
+.door__invite b { color: var(--gold-1); font-weight: 720; }
+.door__invite small { display: block; margin-top: 2px; font-size: 12.5px; }
 
-.door__panel { width: 100%; max-width: 420px; margin: 0 auto; display: grid; gap: 22px; }
-.door__logo { display: none; }
-.door__head h1 { font-size: clamp(30px, 8vw, 46px); line-height: 0.98; font-stretch: 78%; font-weight: 850; }
-.door__lede { margin: 12px 0 0; color: var(--ink-2); font-size: 14.5px; line-height: 1.55; max-width: 44ch; }
-.door__step { margin: 0 0 10px; color: var(--gold-2); }
+/* The account form, over the landing page. It may scroll: a phone keyboard takes half the screen. */
+.acct {
+  position: absolute;
+  z-index: 12;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 14px;
+  max-width: 460px;
+  max-height: 100%;
+  margin-inline: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px max(20px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+  border: 1px solid var(--line-2);
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--bg-2);
+  box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.55);
+  transform: translateY(103%);
+  visibility: hidden;
+  transition: transform 0.28s var(--ease-sheet), visibility 0s linear 0.28s;
+}
+.acct.is-open { transform: none; visibility: visible; transition: transform 0.28s var(--ease-sheet); }
+.acct__close { position: absolute; top: 8px; right: 8px; }
+.acct__close svg { width: 19px; height: 19px; }
+.door__head { padding-right: 44px; }
+.door__head h1, .door__head h2 { font-size: 25px; line-height: 1; font-stretch: 78%; font-weight: 850; }
+.door__lede { margin: 8px 0 0; color: var(--ink-2); font-size: 14px; line-height: 1.45; }
+.door__step { margin: 0 0 8px; color: var(--gold-2); }
 .door__form { display: grid; gap: 14px; }
 .door__fields { display: grid; gap: 14px; }
 .door__formhead { font-size: 22px; }
 .door__small { margin: 0; font-size: 13px; line-height: 1.5; }
-.door__foot { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ink-3); }
-.door__how { margin: -6px 0 0; font-size: 13.5px; color: var(--ink-2); }
+.door__how { margin: -4px 0 0; font-size: 13.5px; color: var(--ink-2); }
 .door__how a { color: var(--ink-1); text-decoration: underline; text-decoration-color: var(--line-3); text-underline-offset: 3px; }
-
-/* The invite: a gold-cornered card, the same mark the invite screen uses. */
-.door__invite {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 0 0 16px;
-  padding: 12px 14px;
-  border: 1px solid rgba(216, 176, 100, 0.34);
-  border-radius: var(--radius);
-  background: rgba(216, 176, 100, 0.06);
-  font-size: 14.5px;
-  line-height: 1.4;
-}
-.door__invite .ico { flex: none; width: 26px; height: 26px; stroke: var(--gold-2); }
-.door__invite b { color: var(--gold-1); font-weight: 720; }
-.door__invite small { display: block; margin-top: 2px; font-size: 12.5px; }
 
 /* Tabs: same look as .seg, keyed on aria-selected because these are real tabs. */
 .door__tabs button[aria-selected='true'] { background: var(--bg-3); color: var(--ink-1); box-shadow: inset 0 -2px 0 var(--gold-2); }
@@ -525,19 +561,11 @@ useSeoMeta({
 .pw__toggle svg { width: 20px; height: 20px; }
 .pw__toggle:hover, .pw__toggle[aria-pressed='true'] { color: var(--ink-1); }
 
-@media (min-width: 900px) {
-  .door { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 0; padding: 0; }
-  .door__show {
-    min-height: 100svh;
-    background: radial-gradient(60% 50% at 50% 50%, rgba(216, 176, 100, 0.08), transparent 70%);
-    border-right: 1px solid var(--line-1);
-  }
-  .fan { width: 520px; height: 420px; }
-  .fan__card { width: 220px; }
-  .fan__card--0 { left: 10px; top: 60px; }
-  .fan__card--1 { left: 150px; width: 236px; }
-  .fan__card--2 { left: 290px; top: 60px; }
-  .door__panel { padding: 48px; max-width: 480px; }
-  .door__logo { display: inline-flex; }
+
+@media (max-height: 640px) {
+  .door { gap: 9px; padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+  .brand svg, .door__line { display: none; }
+  .door__cta .btn { min-height: 46px; }
 }
+@media (prefers-reduced-motion: reduce) { .acct { transition: none; } }
 </style>

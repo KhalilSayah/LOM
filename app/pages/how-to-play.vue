@@ -32,6 +32,8 @@ useSeoMeta({
       <NuxtLink class="backlink" :to="home" data-sound="back"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>{{ user ? 'Home' : 'Sign in' }}</NuxtLink>
     </header>
 
+    <FirstRunChecklist v-if="user" />
+
     <h1 class="how__title">How to play</h1>
     <p class="muted how__lede">Collect real pro players, field five, out-draft your friends.</p>
 

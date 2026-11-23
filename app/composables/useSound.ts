@@ -415,6 +415,148 @@ const MATCH_RECIPES: Record<MatchSoundName, (c: AudioContext) => void> = {
   },
 };
 
+// --- the pack opening: recorded foley ----------------------------------------------
+// The one place sound is sampled rather than synthesised: paper and foil are the sounds a
+// synthesiser fakes worst. Clips are Kenney's CC0 packs, see public/sfx/pack/LICENSE.txt.
+// They load in the background, and until they have, a cue is silence rather than a beep.
+
+const PACK_CLIPS = ['bell', 'bell2', 'crinkle', 'crinkle2', 'drop', 'flip', 'flip2', 'metal', 'place', 'plate', 'pull', 'punch', 'rip', 'shove', 'thud', 'tick'] as const;
+type PackClip = typeof PACK_CLIPS[number];
+interface ClipOpts { rate?: number; gain?: number; at?: number; verb?: number; offset?: number; dur?: number }
+
+const packBuffers: Partial<Record<PackClip, AudioBuffer>> = {};
+let packLoading: Promise<void> | null = null;
+let packRoom: ConvolverNode | null = null;
+
+/** Safe to call from every screen that shows a pack: the work happens once. */
+export function preloadPackSounds() {
+  if (typeof window === 'undefined' || packLoading) return;
+  const Offline = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+  if (!Offline) return;
+  // Decoding needs no user gesture on an offline context, so the clips are ready before the
+  // first tap, and an AudioBuffer is not tied to the context that decoded it.
+  const decoder = new Offline(1, 1, 44100);
+  packLoading = Promise.all(PACK_CLIPS.map(async (name) => {
+    try {
+      const res = await fetch(`/sfx/pack/${name}.mp3`);
+      if (res.ok) packBuffers[name] = await decoder.decodeAudioData(await res.arrayBuffer());
+    } catch { /* that one clip stays silent */ }
+  })).then(() => {});
+}
+
+/** A small room, generated rather than shipped, so the big hits have a tail. */
+function roomFor(c: AudioContext) {
+  if (packRoom) return packRoom;
+  const n = Math.floor(c.sampleRate * 1.5);
+  const ir = c.createBuffer(2, n, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = ir.getChannelData(ch);
+    let lp = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / n;
+      lp += ((Math.random() * 2 - 1) - lp) * (0.5 - t * 0.36);
+      d[i] = lp * Math.exp(-t * 6.2) * (i < 300 ? i / 300 : 1);
+    }
+  }
+  packRoom = c.createConvolver();
+  packRoom.buffer = ir;
+  const wet = c.createGain();
+  wet.gain.value = 0.5;
+  packRoom.connect(wet).connect(master!);
+  return packRoom;
+}
+
+function clip(c: AudioContext, name: PackClip, o: ClipOpts = {}) {
+  const buffer = packBuffers[name];
+  if (!buffer) return;
+  const src = c.createBufferSource();
+  src.buffer = buffer;
+  src.playbackRate.value = o.rate ?? 1;
+  const g = c.createGain();
+  const t0 = c.currentTime + (o.at ?? 0);
+  const peak = o.gain ?? 0.8;
+  if (o.dur) {
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(peak, t0 + 0.005);
+    g.gain.linearRampToValueAtTime(0, t0 + o.dur);
+  } else {
+    g.gain.value = peak;
+  }
+  src.connect(g).connect(master!);
+  if (o.verb) {
+    const send = c.createGain();
+    send.gain.value = o.verb;
+    g.connect(send).connect(roomFor(c));
+  }
+  src.start(t0, o.offset ?? 0, o.dur);
+}
+
+function landing(c: AudioContext, rarity: string) {
+  switch (rarity) {
+    case 'RARE':
+      clip(c, 'place', { gain: 0.9 });
+      clip(c, 'metal', { rate: 1.5, gain: 0.28, verb: 0.3 });
+      break;
+    case 'EPIC':
+      clip(c, 'punch', { rate: 1.22, gain: 0.42 });
+      clip(c, 'plate', { gain: 0.46, verb: 0.3 });
+      clip(c, 'metal', { rate: 1.18, gain: 0.3, at: 0.02, verb: 0.5 });
+      break;
+    case 'LEGENDARY':
+      clip(c, 'punch', { rate: 0.84, gain: 0.78 });
+      clip(c, 'plate', { rate: 0.8, gain: 0.52, verb: 0.4 });
+      clip(c, 'bell', { gain: 0.46, verb: 0.7 });
+      break;
+    case 'ICON':
+      clip(c, 'punch', { rate: 0.7, gain: 0.95 });
+      clip(c, 'thud', { rate: 0.62, gain: 0.7 });
+      clip(c, 'plate', { rate: 0.66, gain: 0.5, verb: 0.5 });
+      clip(c, 'bell', { rate: 0.75, gain: 0.55, verb: 0.9 });
+      clip(c, 'bell2', { rate: 1.125, gain: 0.34, at: 0.07, verb: 0.9 });
+      clip(c, 'bell', { rate: 1.5, gain: 0.22, at: 0.15, verb: 1 });
+      break;
+    default:
+      clip(c, 'place', { gain: 0.9 });
+  }
+}
+
+/** What each moment of the pack scene sounds like. Same gates as playSound. */
+export function playPackCue(name: string, d: { i?: number; at?: number; speed?: number; rarity?: string; light?: boolean } = {}) {
+  loadPrefs();
+  if (!enabled.value || volume.value <= 0) return;
+  const c = ensure();
+  if (!c || !master || c.state !== 'running') return;
+  const i = d.i ?? 0;
+  try {
+    switch (name) {
+      case 'drop': clip(c, 'drop', { rate: 0.74, gain: 0.9 }); clip(c, 'thud', { rate: 1.1, gain: 0.42 }); break;
+      case 'settle': clip(c, 'place', { rate: 0.8, gain: 0.62 }); break;
+      case 'grain': {
+        const speed = d.speed ?? 0;
+        clip(c, Math.random() < 0.5 ? 'crinkle' : 'crinkle2', {
+          offset: Math.random() * 0.42,
+          dur: 0.05 + Math.random() * 0.055,
+          rate: 1.1 + Math.random() * 0.55 + speed * 0.45,
+          gain: 0.5 + speed * 0.3,
+        });
+        break;
+      }
+      case 'rip': clip(c, 'rip', { gain: 0.92 }); break;
+      case 'pull': clip(c, 'pull', { gain: 0.85 }); break;
+      case 'shove': clip(c, 'shove', d.light ? { gain: 0.3, rate: 1.25 } : { gain: 0.46, rate: 0.86 }); break;
+      case 'tick': clip(c, 'tick', { rate: 0.86 + i * 0.17, gain: 0.6 + i * 0.09, verb: i > 2 ? 0.22 : 0 }); break;
+      case 'clue': clip(c, 'plate', { rate: 0.68 + i * 0.045, gain: 0.3 }); clip(c, 'thud', { rate: 0.92, gain: 0.42 }); break;
+      case 'flip': clip(c, i % 2 ? 'flip2' : 'flip', { at: d.at ?? 0, rate: 1.05 + i * 0.06, gain: 0.62 }); break;
+      case 'land': landing(c, d.rarity ?? 'COMMON'); break;
+      case 'next': clip(c, 'flip2', { gain: 0.4, rate: 0.9 }); break;
+      case 'slot': clip(c, 'place', { gain: 0.42, rate: 1.3 }); break;
+      case 'summary': clip(c, 'place', { gain: 0.5, rate: 0.9 }); break;
+      case 'turn': clip(c, 'flip2', { gain: 0.22, rate: 1.42, dur: 0.09 }); break;
+      default: break;
+    }
+  } catch { /* a sound never breaks a screen */ }
+}
+
 const lastMatchPlayed: Partial<Record<MatchSoundName, number>> = {};
 
 /** Same gates as playSound: silent until unlocked, off when muted, never throws. */
