@@ -691,10 +691,59 @@ champion at mastery *m*:
 So mastery buys a few more OVR points of deficit than it did, but **it is still a
 tiebreaker between near-equals, not a way to field cheaper cards.** The multiplier spans
 0.70–1.00; it can never cover a 20-OVR gap on its own. The lever that actually bit is
-`roleFit`: a 92 OVR on a mastery-70 champion played out of its lane now lands at 60.3,
-below the same card on a champion it has never touched in its own lane.
+`roleFit`, and it bit somewhere other than where you would guess — see [7.2](#72-off-role-is-a-pairing-not-a-consequence-of-being-banned-out).
 
-### 7.2 What this did not change
+### 7.2 Off-role is a pairing, not a consequence of being banned out
+
+Worth spelling out, because it is easy to say "a ban forces a card off-role" and that is
+**not what happens**. `roleFit` is decided entirely by
+`roleForFit(roles, championKey, slot)` in `server/utils/championRoles.ts`: a champion is
+free in a slot when it is *flex* there — at least 10% of professional games on it were
+played in that slot — and costs 0.72 otherwise. A ban appears nowhere in that calculation.
+
+What a ban does is remove a champion from `available`. The draft then scores every
+remaining option, and `autoPick` in `server/utils/duel.ts` loops over *every available
+champion × every open slot*:
+
+```js
+for (const champ of available)
+  for (const slot of openSlots)
+```
+
+Nothing restricts a pick to the card's own pool or its own lane. So bans shrink the menu;
+they never assign a role. Whether the best remaining option happens to belong to another
+lane is an outcome, not a mechanic.
+
+How often it comes up at all, recomputing the 10% flex rule over `data/catalogue.json`:
+
+| the pairing | share | roleFit |
+|---|---|---|
+| any champion × any slot | **71.6%** off-role | 0.72 |
+| a card's own pool, in its own slot — native | 84.6% | 1.00 |
+| — flex into that slot | 10.0% | 1.00 |
+| — **off-role** | **5.5%** | 0.72 |
+
+The second block is the one that matters: drafting out of your own pool into your own lane,
+off-role fires 5.5% of the time, because a player's pool is overwhelmingly champions from
+their own lane. It bites when a pick reaches *outside* that lane — and at that point you
+are usually at mastery 0 as well, so the two penalties compound: `0.70 × 0.72 = 0.504`.
+
+For a 92 OVR support:
+
+| | before | after |
+|---|---|---|
+| off-role, mastery 95 | 80.0 | **65.2** |
+| off-role, mastery 0 | 56.7 | **46.4** |
+| native, mastery 0 | 64.4 | 64.4 |
+
+Read it as the decision the draft actually faces — *a native champion I barely know, or a
+mastered one from the wrong lane?* The native champion wins from **mastery 47** under the
+old constants, and from **mastery 3** under these. Off-role has gone from a real tactical
+option to one you essentially never take. `autoPick` scores on `rating`, so the bot moves
+the same way: it will now eat a deep mastery penalty in lane rather than lane-swap, unless
+its comp or denial weights are large enough to override the loss.
+
+### 7.3 What this did not change
 
 `npm run sim:balance` is identical to [section 5](#5-who-wins), row for row. That is
 expected and worth stating plainly: the harness builds its squads by setting `effRating`
@@ -702,7 +751,7 @@ directly, so it never calls `masteryFactor` or `roleFit` at all. **These constan
 what a collection is worth; the harness only measures what a rating edge is worth once you
 have it.** Nothing in section 5 is evidence either way about this change.
 
-### 7.3 What it did to the catalogue
+### 7.4 What it did to the catalogue
 
 Measured over all 3,730 cards, each on its own best champion in its own role:
 
@@ -726,6 +775,18 @@ About 11% more spread in every band. That is the design goal moving in the right
 direction, and it is honest to say it is a nudge rather than a reversal — OVR still
 correlates with effRating at 0.988, because OVR is still the multiplicand.
 
-The thing to watch instead is draft behaviour against the real catalogue — whether bans
-now bite, and whether the Team screen's `DEPTH_MASTERY` threshold of 70 still names the
-right cards. See docs/10 §4 and the follow-up work on fearless drafting.
+The thing to watch instead is draft behaviour against the real catalogue. Two questions,
+both open:
+
+- **Does banning out a deep pool now hurt enough?** Not through `roleFit` — [7.2](#72-off-role-is-a-pairing-not-a-consequence-of-being-banned-out)
+  explains why bans never touch it — but through the mastery curve, which is the only
+  thing a ban can reach. `banRisk` in `shared/roster.ts` is the screen that makes the
+  claim; it counts champions at `DEPTH_MASTERY` 70+, and that threshold was chosen against
+  the old curve.
+- **Is off-role now too cheap to ever be interesting?** A crossover at mastery 3 means the
+  tier effectively has two values, not three. If lane-swapping should be a real draft
+  option rather than a trap, 0.72 is the number to argue with — and docs/02 §2.4's
+  separate flex tier, which this codebase still approximates with an adjacent-lane table,
+  is where that argument belongs.
+
+See docs/10 §4 and the follow-up work on fearless drafting.
