@@ -270,8 +270,11 @@ const mineLine = computed(() => {
   const k = order.value.stepsUntilMine;
   if (k === null) return 'You are done';
   if (k === 0) return 'Your turn now';
-  return k === 1 ? 'You are up next' : `Your next action in ${k} steps`;
+  return k === 1 ? 'You are up next' : `You in ${k} steps`;
 });
+const bonusLine = computed(() => (state.value?.step?.side === mySide.value
+  ? 'At 0, your selection locks or the agent picks'
+  : 'At 0, the agent picks for them'));
 const seqLabel = computed(() => {
   const t = Math.min((state.value?.turn ?? 0) + 1, 20);
   const step = state.value?.step;
@@ -706,7 +709,14 @@ useHead(() => ({
                 <template v-else>{{ state.opponent }} is {{ isPick ? 'picking' : 'banning' }}</template>
               </p>
               <p class="turn__phase">
-                {{ state.step ? PHASE_LABEL[state.step.phase] : 'Draft' }} · step {{ Math.min((state.turn ?? 0) + 1, 20) }} of 20
+                <template v-if="inBonus">{{ bonusLine }}</template>
+                <template v-else>
+                  <span>{{ state.step ? PHASE_LABEL[state.step.phase] : 'Draft' }} · step {{ Math.min((state.turn ?? 0) + 1, 20) }} of 20</span>
+                  <span
+                    class="bonuschip tnum"
+                    title="Bonus time: once a turn's 30 seconds run out, this pool is spent before the agent steps in. It lasts the whole draft."
+                  >+{{ myBonus }}s<span class="bonuschip__word"> bonus</span></span>
+                </template>
               </p>
             </div>
             <div class="timer" :class="{ 'is-low': lowTime, 'is-bonus': inBonus }">
@@ -718,30 +728,31 @@ useHead(() => ({
 
           <p v-if="error" class="notice notice--bad dhead__err" role="alert">{{ error }}</p>
 
-          <p v-if="inBonus" class="bonusnote">
-            The 30 seconds are up: {{ state.step?.side === mySide ? 'you are' : `${state.opponent} is` }} now on bonus time,
-            one pool per side for the whole draft. When it runs out, {{ state.step?.side === mySide ? 'your selection locks, or the agent picks' : 'the agent picks for them' }}.
-          </p>
-
           <div class="seq" role="img" :aria-label="seqLabel">
             <i v-for="s in seq" :key="s.i" :class="[s.side, s.state, { ban: s.ban }]" />
           </div>
-          <p class="order" aria-hidden="true">
-            <span>{{ nextLine }}</span>
-            <span class="order__mine" :class="{ 'is-now': order.stepsUntilMine === 0 }">{{ mineLine }}</span>
-            <span
-              class="bonuschip tnum"
-              title="Bonus time: once a turn's 30 seconds run out, this pool is spent before the agent steps in. It lasts the whole draft."
-            >+{{ myBonus }}s bonus</span>
-          </p>
 
-          <!-- On a phone the board scrolls away; the bans stay with the header. -->
-          <div class="dhead__bans" aria-hidden="true">
-            <span v-for="side in [mySide || 'BLUE', theirSide]" :key="side" class="dhead__banrow" :class="`is-${side.toLowerCase()}`">
-              <span v-for="n in 5" :key="n" class="ban ban--s" :class="{ 'is-empty': !sideActions(side, 'BAN')[n - 1] }">
-                <img v-if="sideActions(side, 'BAN')[n - 1]" :src="art(sideActions(side, 'BAN')[n - 1].championKey)" alt="">
+          <!-- On a phone: blue bans, what is next, red bans, on one line that stays in sight. -->
+          <div class="dhead__strip">
+            <p class="order" aria-hidden="true">
+              <span class="order__next">{{ nextLine }}</span>
+              <span class="order__mine" :class="{ 'is-now': order.stepsUntilMine === 0 }">{{ mineLine }}</span>
+            </p>
+            <div class="dhead__bans">
+              <span
+                v-for="side in ['BLUE', 'RED']" :key="side"
+                class="dhead__banrow" :class="`is-${side.toLowerCase()}`"
+                role="group" :aria-label="`${nameOf(side)} bans`"
+              >
+                <span v-for="n in 5" :key="n" class="ban ban--s" :class="{ 'is-empty': !sideActions(side, 'BAN')[n - 1] }">
+                  <img
+                    v-if="sideActions(side, 'BAN')[n - 1]"
+                    :src="art(sideActions(side, 'BAN')[n - 1].championKey)"
+                    :alt="`${sideActions(side, 'BAN')[n - 1].championName} banned`"
+                  >
+                </span>
               </span>
-            </span>
+            </div>
           </div>
         </div>
 
@@ -749,7 +760,7 @@ useHead(() => ({
         <section class="board">
           <div v-for="side in ['BLUE', 'RED']" :key="side" class="col" :class="`col--${side.toLowerCase()}`">
             <div class="col__head">
-              <b>{{ nameOf(side) }}</b>
+              <b :title="nameOf(side)">{{ nameOf(side) }}</b>
               <span class="bans">
                 <span v-for="n in 5" :key="n" class="ban" :class="{ 'is-empty': !sideActions(side, 'BAN')[n - 1] }">
                   <img
@@ -1040,7 +1051,7 @@ useHead(() => ({
 .turn__main { min-width: 0; }
 .turn__who { margin: 0; font-stretch: 80%; font-weight: 840; font-size: 20px; line-height: 1.05; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .turn.is-mine .turn__who { color: var(--teal-1); }
-.turn__phase { margin: 3px 0 0; font-size: 12px; color: var(--ink-3); }
+.turn__phase { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin: 3px 0 0; font-size: 12px; color: var(--ink-3); }
 .timer { display: grid; justify-items: end; gap: 5px; min-width: 64px; }
 .timer b { font-size: 34px; line-height: 0.85; }
 .timer__label { font-stretch: 112%; font-size: 10px; font-weight: 760; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold-1); }
@@ -1050,8 +1061,6 @@ useHead(() => ({
 .timer.is-bonus .timer__bar i { background: var(--gold-2); }
 .timer.is-low b { color: var(--warn-2); }
 .timer.is-low .timer__bar i { background: var(--warn-2); }
-
-.bonusnote { margin: 0 16px 8px; font-size: 12px; color: var(--ink-2); }
 
 .seq { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; padding: 4px 16px 6px; }
 .seq i { height: 4px; background: var(--bg-4); }
@@ -1063,21 +1072,22 @@ useHead(() => ({
 .order { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0; padding: 0 16px 8px; font-size: 12px; color: var(--ink-3); }
 .order__mine { color: var(--ink-2); }
 .order__mine.is-now { color: var(--teal-1); font-weight: 650; }
-.bonuschip { margin-left: auto; padding: 1px 6px; border-radius: 2px; background: var(--bg-3); color: var(--gold-1); font-weight: 700; cursor: help; }
+.bonuschip { padding: 0 5px; border-radius: 2px; background: var(--bg-3); color: var(--gold-1); font-weight: 700; cursor: help; }
 
-.dhead__bans { display: flex; justify-content: space-between; gap: 8px; padding: 0 16px 8px; }
+.dhead__bans { display: none; }
 .dhead__banrow { display: flex; gap: 3px; }
 .dhead__banrow.is-red { flex-direction: row-reverse; }
 .ban--s { width: 18px !important; height: 18px !important; }
 
-.board { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 12px 10px 0; }
-.col { display: grid; gap: 4px; align-content: start; min-width: 0; }
+/* Each column's own track is minmax(0, 1fr) too: a long name must shorten, never widen its side. */
+.board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 12px 10px 0; }
+.col { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; align-content: start; min-width: 0; }
 .col__head { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; }
-.col__head b { font-size: 12.5px; font-weight: 720; }
+.col__head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 720; }
 .col--blue .col__head b { color: var(--blue-2); }
 .col--red .col__head { flex-direction: row-reverse; }
 .col--red .col__head b { color: var(--red-2); }
-.bans { display: flex; gap: 3px; }
+.bans { display: flex; flex: none; gap: 3px; }
 .col--red .bans { flex-direction: row-reverse; }
 .ban { position: relative; width: 22px; height: 22px; overflow: hidden; border-radius: 2px; background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-1); }
 .ban img { width: 100%; height: 100%; object-fit: cover; filter: grayscale(1) brightness(0.7); }
@@ -1192,11 +1202,29 @@ useHead(() => ({
 .lockbar__text span { display: block; font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lockbar__go { min-height: 44px; }
 
+/* --- phone and tablet: the sticky header stays small, the grid gets the screen ---- */
+@media (max-width: 1023px) {
+  .timer.is-bonus { grid-template-columns: auto auto; align-items: end; column-gap: 6px; }
+  .timer.is-bonus .timer__bar { grid-column: 1 / -1; }
+  .dhead__strip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 0 16px 8px; }
+  .dhead__strip .order { grid-area: 1 / 2; justify-content: center; flex-wrap: nowrap; padding: 0; white-space: nowrap; }
+  .order__next { display: none; }
+  .order__mine { overflow: hidden; text-overflow: ellipsis; }
+  .dhead__bans { display: contents; }
+  .dhead__banrow.is-blue { grid-area: 1 / 1; }
+  .dhead__banrow.is-red { grid-area: 1 / 3; }
+  .col__head .bans { display: none; }
+}
+@media (max-width: 359px) {
+  .dhead__banrow { gap: 2px; }
+  .ban--s { width: 16px !important; height: 16px !important; }
+  .bonuschip__word { display: none; }
+}
+
 /* --- desktop: two sides facing a central stage ---------------------------------- */
 @media (min-width: 1024px) {
   .room__body { padding: 0 32px 32px; }
   .dhead { position: static; margin-top: 16px; border: 0; border-radius: var(--radius); background: var(--bg-2); }
-  .dhead__bans { display: none; }
   .turn { padding: 16px 24px 10px; border-radius: var(--radius) var(--radius) 0 0; }
   .turn__who { font-size: 32px; }
   .turn__phase { font-size: 12.5px; }
@@ -1204,7 +1232,7 @@ useHead(() => ({
   .timer__bar { width: 96px; }
   .seq { padding: 6px 24px 8px; }
   .order { padding: 0 24px 12px; font-size: 12.5px; }
-  .bonusnote, .dhead__err { margin-left: 24px; margin-right: 24px; }
+  .dhead__err { margin-left: 24px; margin-right: 24px; }
   .room--draft .room__body {
     display: grid;
     grid-template-columns: 300px minmax(0, 1fr) 300px;
