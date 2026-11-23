@@ -89,10 +89,11 @@ export async function championRoles(
  * The champion role to hand `effRating`.
  *
  * `roleFit` in packages/core takes one role and scores an exact match at 1.0, an adjacent
- * lane at 0.94 and anything else at 0.88. It has no separate flex tier, so a champion played
- * in a lane often enough to count as flex is charged nothing for it here — which is the
- * closest honest reading available, and a little kinder than the 0.90 docs/02 section 2.4
- * describes. Worth revisiting together with roleFit rather than faked from this side.
+ * lane at 0.90 and anything else at 0.72 — the docs/02 section 2.4 values. It has no separate
+ * flex tier: the adjacent-lane table stands in for the spec's ">=10% pro presence in that
+ * role", so a champion genuinely flexed into a non-adjacent lane is charged the full off-role
+ * 0.72 here. That is now a 28% penalty rather than the 12% it used to be, so it is worth more
+ * than it was — but it is still a question for roleFit, not something to fake from this side.
  *
  * A champion nobody has played in this catalogue is treated as native wherever it is put.
  * Charging an off-role penalty for the pipeline's ignorance would be the pipeline's mistake

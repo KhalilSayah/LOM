@@ -26,9 +26,11 @@ export const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
  */
 export function masteryFactor(mastery) {
   const m = clamp(Number(mastery) || 0, 0, 100);
-  // 0.70 at zero mastery, 1.0 at 100, steepest through the middle where the
-  // difference between "can play it" and "mains it" actually lives.
-  return 0.7 + 0.3 * Math.pow(m / 100, 0.75);
+  // Linear, as docs/02 section 2.4 specifies: 0.70 at zero mastery, 1.00 at 100.
+  // It shipped for a while as `Math.pow(m / 100, 0.75)`, which softened the low end
+  // (m=70 read 0.930 instead of 0.910) and quietly made raw OVR the thing that
+  // mattered. Straight line restores the crossover the collection design rests on.
+  return 0.7 + 0.3 * (m / 100);
 }
 
 /** Playing off-role costs you (docs/02). Exact match is free, anything else is not. */
@@ -41,7 +43,10 @@ export function roleFit(championRole, slot) {
     BOT: ['SUP'],
     SUP: ['BOT'],
   };
-  return (adjacent[slot] || []).includes(championRole) ? 0.94 : 0.88;
+  // docs/02 section 2.4: flex 0.90, off-role 0.72. The adjacent-lane table above is
+  // this codebase's stand-in for the spec's ">=10% pro presence in that role" flex
+  // tier — see server/utils/championRoles.ts for why there is no third tier yet.
+  return (adjacent[slot] || []).includes(championRole) ? 0.9 : 0.72;
 }
 
 /** docs/01 section 5: a level is worth 0.4 effective rating, capped at +3.6. */

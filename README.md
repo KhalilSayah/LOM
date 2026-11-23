@@ -252,6 +252,11 @@ out.
 | 10 | [Roadmap](docs/10-roadmap.md) | Build order for v1, then the management layer |
 | 11 | [Card assets & caching](docs/11-card-assets-and-caching.md) | Art derivatives, the catalogue bundle, what makes a preview open instantly |
 | 12 | [Sponsors](docs/12-sponsors.md) | Contracts, demands, slots and terms, and what a match pays |
+| 13 | [How the engine works](docs/13-how-the-engine-works.md) | Explainer, not spec: OVR vs mastery, effRating, the tick loop, who wins |
+
+Docs 00–12 are **specifications** — what the game should be. Doc 13 is an **explainer** of the
+code that is actually running, with every number read out of it; where the two disagree, 13 says
+so and 13 is right.
 
 ## Open questions tracked
 
